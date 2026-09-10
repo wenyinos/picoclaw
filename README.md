@@ -1,3 +1,38 @@
+> [!IMPORTANT]
+> **本仓库是 [sipeed/picoclaw](https://github.com/sipeed/picoclaw) 的 fork**，基于官方 `main`（含 `v0.3.1` 之后的 50 个提交），并额外修复了下列问题。
+> 对应发布版本：**[v0.3.2](https://github.com/wenyinos/picoclaw/releases/tag/v0.3.2)**（仅二进制包）
+>
+> ### 相比官方 v0.3.1 修复的问题
+>
+> | # | 问题 | 官方 v0.3.1 | 修复位置 |
+> |---|---|---|---|
+> | 1 | QQ 机器人启动即失败，服务端一直显示"未链接" | ❌ 缺陷存在 | `pkg/channels/qq/qq.go` |
+> | 2 | 前端 lockfile 重复键导致构建/发布失败 | ➖ 官方 `main` 引入 | `web/frontend/pnpm-lock.yaml` |
+> | 3 | 发布流程依赖 Docker 凭据 | ➖ 非缺陷（打包调整） | `.goreleaser.yaml`、`.github/workflows/` |
+>
+> **1. QQ 通道无法连接（`code:401` / `11241 请求头Authorization参数格式错误`）**
+>
+> 官方 v0.3.1 与官方 `main` 均存在。启动日志为：
+>
+> ```text
+> ERR channels Failed to start channel
+>   error="failed to get websocket info: code:401,
+>   text:{\"message\":\"请求头Authorization参数格式错误\",\"code\":11241,\"err_code\":40011005}" channel=qq
+> ```
+>
+> * **根因**：依赖 `resty v2.17.1` 在"客户端级 token"分支里，用**请求创建时的 scheme 快照**拼接认证头（`r.AuthScheme + " " + c.Token`，即 `Bearer <token>`），而 botgo 是在请求前置钩子里才把 scheme 改成 `QQBot`。`WS()` 恰好是新建客户端发出的**第一个请求**，于是首次请求必然携带错误的 scheme，被 QQ 以 `11241` 拒绝。
+> * **修复**：新增 `websocketInfo()`，识别 `11241` 后重试一次 —— 此时钩子已把 scheme 纠正为 `QQBot`，重试必然成功。其他错误照常上报，重试不会掩盖真实故障；待上游 `resty` 修复后该重试自动失效。
+>
+> **2. `web/frontend/pnpm-lock.yaml` 重复键**
+>
+> `semver@7.8.5` 在 `packages` 与 `snapshots` 段各重复一次，`pnpm install --frozen-lockfile` 直接报 `ERR_PNPM_BROKEN_LOCKFILE`，阻断前端构建与 release 流程。该问题由官方 `main` 引入（v0.3.1 时该依赖为 `semver@7.8.0`，无重复）；此处删除内容完全相同的重复条目。
+>
+> **3. 发布只产出二进制包**
+>
+> 移除 Docker / ghcr / Docker Hub 与 Android bundle 环节，`v0.3.2` 仅发布 `tar.gz`、`deb`、`rpm`、`zip`：18 个平台，每个平台含 `picoclaw` 与 `picoclaw-launcher` 两个二进制（共 36 个构建目标）。
+>
+> 除上述改动外，本 fork 未修改任何其他功能代码。
+
 <div align="center">
 <img src="assets/logo.webp" alt="PicoClaw" width="512">
 
