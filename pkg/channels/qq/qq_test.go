@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tencent-connect/botgo/dto"
+	"github.com/tencent-connect/botgo/errs"
 	"github.com/tencent-connect/botgo/openapi/options"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -744,4 +746,110 @@ func writeWAVFile(t *testing.T, dir, name string, duration time.Duration) string
 	buf.Write(make([]byte, dataSize))
 
 	return writeTempFile(t, dir, name, buf.Bytes())
+}
+
+// scriptedWSAPI serves a scripted sequence of WebSocket endpoint responses so
+// the auth-scheme retry in websocketInfo can be exercised.
+type scriptedWSAPI struct {
+	*fakeQQAPI
+
+	failures int
+	calls    int
+	result   *dto.WebsocketAP
+	failErr  error
+}
+
+func (f *scriptedWSAPI) WS(
+	_ context.Context,
+	_ map[string]string,
+	_ string,
+) (*dto.WebsocketAP, error) {
+	f.calls++
+	if f.failErr != nil {
+		return nil, f.failErr
+	}
+	if f.calls <= f.failures {
+		return nil, errs.New(
+			http.StatusUnauthorized,
+			`{"message":"请求头Authorization参数格式错误","code":11241,`+
+				`"err_code":40011005,"trace_id":"trace-1"}`,
+			"trace-1",
+		)
+	}
+
+	return f.result, nil
+}
+
+func TestWebsocketInfo_RetriesStaleAuthScheme(t *testing.T) {
+	api := &scriptedWSAPI{
+		fakeQQAPI: &fakeQQAPI{},
+		failures:  1,
+		result:    &dto.WebsocketAP{URL: "wss://api.sgroup.qq.com/websocket", Shards: 1},
+	}
+	ch := &QQChannel{api: api}
+
+	wsInfo, err := ch.websocketInfo(context.Background())
+	if err != nil {
+		t.Fatalf("websocketInfo() error = %v, want nil after retry", err)
+	}
+	if wsInfo == nil || wsInfo.URL != api.result.URL {
+		t.Fatalf("websocketInfo() = %+v, want %+v", wsInfo, api.result)
+	}
+	if api.calls != 2 {
+		t.Fatalf("WS() calls = %d, want 2 (original + retry)", api.calls)
+	}
+}
+
+func TestWebsocketInfo_ReportsPersistentAuthSchemeError(t *testing.T) {
+	api := &scriptedWSAPI{fakeQQAPI: &fakeQQAPI{}, failures: 2}
+	ch := &QQChannel{api: api}
+
+	if _, err := ch.websocketInfo(context.Background()); err == nil {
+		t.Fatal("websocketInfo() error = nil, want the platform error")
+	}
+	if api.calls != 2 {
+		t.Fatalf("WS() calls = %d, want 2 (one retry, no more)", api.calls)
+	}
+}
+
+func TestWebsocketInfo_DoesNotRetryOtherErrors(t *testing.T) {
+	api := &scriptedWSAPI{fakeQQAPI: &fakeQQAPI{}, failures: 1}
+	api.failures = 0
+	api.failErr = errors.New("boom")
+	ch := &QQChannel{api: api}
+
+	if _, err := ch.websocketInfo(context.Background()); err == nil {
+		t.Fatal("websocketInfo() error = nil, want boom")
+	}
+	if api.calls != 1 {
+		t.Fatalf("WS() calls = %d, want 1 (no retry for unrelated errors)", api.calls)
+	}
+}
+
+func TestIsAuthSchemeError(t *testing.T) {
+	authErr := errs.New(
+		http.StatusUnauthorized,
+		`{"message":"请求头Authorization参数格式错误","code":11241,"err_code":40011005}`,
+	)
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"platform rejection", authErr, true},
+		{"err_code only", errs.New(http.StatusUnauthorized, `{"err_code":40011005}`), true},
+		{"expired token", errs.New(http.StatusUnauthorized, `{"code":11244,"err_code":40011027}`), false},
+		{"other status", errs.New(http.StatusBadRequest, `{"code":11241}`), false},
+		{"not an sdk error", errors.New("code:401"), false},
+		{"not json", errs.New(http.StatusUnauthorized, "unauthorized"), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isAuthSchemeError(tc.err); got != tc.want {
+				t.Fatalf("isAuthSchemeError() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

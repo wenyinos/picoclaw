@@ -20,6 +20,7 @@ import (
 	"github.com/tencent-connect/botgo"
 	"github.com/tencent-connect/botgo/constant"
 	"github.com/tencent-connect/botgo/dto"
+	"github.com/tencent-connect/botgo/errs"
 	"github.com/tencent-connect/botgo/event"
 	"github.com/tencent-connect/botgo/openapi/options"
 	"github.com/tencent-connect/botgo/token"
@@ -41,7 +42,41 @@ const (
 	typingResend  = 8 * time.Second
 	typingSeconds = 10
 	bytesPerMiB   = 1024 * 1024
+
+	// authSchemeErrCode is the QQ open platform error code reported when the
+	// Authorization header is not in the "<scheme> <access_token>" form the
+	// platform expects, i.e. "QQBot <access_token>".
+	authSchemeErrCode = 11241
+	// authSchemeErrCodeAlt is the same rejection expressed as err_code.
+	authSchemeErrCodeAlt = 40011005
 )
+
+// platformError mirrors the error payload returned by the QQ open platform.
+type platformError struct {
+	Message string `json:"message"`
+	Code    int    `json:"code"`
+	ErrCode int    `json:"err_code"`
+}
+
+// isAuthSchemeError reports whether err is the QQ open platform rejecting the
+// Authorization header because it was not built with the "QQBot" auth scheme.
+func isAuthSchemeError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var sdkErr *errs.Err
+	if !errors.As(err, &sdkErr) || sdkErr.Code() != http.StatusUnauthorized {
+		return false
+	}
+
+	var payload platformError
+	if json.Unmarshal([]byte(sdkErr.Text()), &payload) != nil {
+		return false
+	}
+
+	return payload.Code == authSchemeErrCode || payload.ErrCode == authSchemeErrCodeAlt
+}
 
 type qqAPI interface {
 	WS(ctx context.Context, params map[string]string, body string) (*dto.WebsocketAP, error)
@@ -136,7 +171,7 @@ func (c *QQChannel) Start(ctx context.Context) error {
 	)
 
 	// get WebSocket endpoint
-	wsInfo, err := c.api.WS(c.ctx, nil, "")
+	wsInfo, err := c.websocketInfo(c.ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get websocket info: %w", err)
 	}
@@ -171,6 +206,31 @@ func (c *QQChannel) Start(ctx context.Context) error {
 	logger.InfoC("qq", "QQ bot started successfully")
 
 	return nil
+}
+
+// websocketInfo requests the WebSocket gateway endpoint for this bot.
+//
+// The very first request issued through a freshly created botgo client is sent
+// with resty's default "Bearer" auth scheme instead of the "QQBot" scheme the
+// SDK installs. botgo applies the scheme from an OnBeforeRequest hook, while
+// resty builds the client-level Authorization header from the scheme captured
+// when the request object was created (go-resty/resty#960, regressed in
+// resty v2.16.5), so the first request of a client always carries the stale
+// scheme. The QQ open platform rejects that header with code 11241, which is
+// why a freshly started QQ channel could never connect.
+//
+// The SDK hook has already stored the correct scheme on the client by the time
+// the rejection comes back, so a single retry succeeds. The retry is a no-op
+// once resty builds the header from the live scheme again.
+func (c *QQChannel) websocketInfo(ctx context.Context) (*dto.WebsocketAP, error) {
+	wsInfo, err := c.api.WS(ctx, nil, "")
+	if err == nil || !isAuthSchemeError(err) {
+		return wsInfo, err
+	}
+
+	logger.WarnC("qq", "QQ gateway rejected the Authorization scheme of the first SDK request, retrying once")
+
+	return c.api.WS(ctx, nil, "")
 }
 
 func (c *QQChannel) Stop(ctx context.Context) error {
