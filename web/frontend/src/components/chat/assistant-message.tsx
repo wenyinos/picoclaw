@@ -277,13 +277,13 @@ export function AssistantMessage({
               key={`${attachment.url}-${index}`}
               href={attachment.url}
               download={attachment.filename}
-              className="group/file border-border/60 bg-card flex w-fit max-w-sm min-w-[220px] items-center gap-3.5 rounded-xl border px-4 py-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-violet-500/30 hover:shadow-sm dark:hover:border-violet-500/40"
+              className="group/file border-border/60 bg-card flex w-fit max-w-sm min-w-[220px] items-center gap-3.5 rounded-xl border px-4 py-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-sm dark:hover:border-primary/40"
             >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-violet-400 ring-1 ring-violet-500/10 dark:bg-violet-500/10 dark:text-violet-400 dark:ring-violet-500/30">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-primary ring-1 ring-primary/10 dark:bg-primary/10 dark:text-primary dark:ring-primary/30">
                 <IconFileText className="h-5 w-5" />
               </div>
               <div className="flex min-w-0 flex-1 flex-col pr-1">
-                <span className="text-foreground/90 truncate text-[14px] leading-tight font-medium transition-colors group-hover/file:text-violet-600 dark:group-hover/file:text-violet-400">
+                <span className="text-foreground/90 truncate text-[14px] leading-tight font-medium transition-colors group-hover/file:text-primary">
                   {attachment.filename || "Download file"}
                 </span>
                 <span className="text-muted-foreground/70 mt-1 text-[12px] font-medium">
@@ -291,7 +291,7 @@ export function AssistantMessage({
                     "FILE"}
                 </span>
               </div>
-              <div className="bg-muted/60 text-muted-foreground/50 dark:bg-muted/20 flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-300 group-hover/file:bg-violet-400 group-hover/file:text-white group-hover/file:shadow-sm dark:group-hover/file:bg-violet-400">
+              <div className="bg-muted/60 text-muted-foreground/50 dark:bg-muted/20 flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all duration-300 group-hover/file:bg-primary group-hover/file:text-primary-foreground group-hover/file:shadow-sm dark:group-hover/file:bg-primary">
                 <IconDownload className="h-4 w-4 transition-transform duration-300 group-hover/file:-translate-y-[1px]" />
               </div>
             </a>

@@ -96,7 +96,7 @@ export function ChatComposer({
         <div
           className={cn(
             "bg-card border-border/60 relative flex w-full flex-col rounded-2xl border p-3 shadow-sm transition-colors",
-            isDragActive && "border-violet-400/70 bg-violet-500/5",
+            isDragActive && "border-primary/70 bg-primary/5",
           )}
           onDragEnter={onDragEnter}
           onDragLeave={onDragLeave}
@@ -104,7 +104,7 @@ export function ChatComposer({
           onDrop={onDrop}
         >
           {isDragActive && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-violet-400/70 bg-violet-500/10">
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/70 bg-primary/10">
               <div className="bg-background/95 text-foreground rounded-full px-4 py-2 text-sm font-medium shadow-sm">
                 {t("chat.dropImagesActive")}
               </div>
@@ -126,7 +126,7 @@ export function ChatComposer({
                   <button
                     type="button"
                     onClick={() => onRemoveAttachment(index)}
-                    className="bg-background/85 text-foreground absolute top-1 right-1 inline-flex h-6 w-6 items-center justify-center rounded-full border shadow-sm transition hover:bg-white"
+                    className="bg-background/85 text-foreground absolute top-1 right-1 inline-flex h-6 w-6 items-center justify-center rounded-full border shadow-sm transition hover:bg-muted"
                     aria-label={t("chat.removeImage")}
                     title={t("chat.removeImage")}
                   >
@@ -187,7 +187,7 @@ export function ChatComposer({
                   <Button
                     type="button"
                     size="icon"
-                    className="size-8 rounded-full bg-violet-500 text-white transition-transform hover:bg-violet-600 active:scale-95"
+                    className="size-8 rounded-full bg-primary text-primary-foreground transition-transform hover:bg-primary/90 active:scale-95"
                     onClick={onSend}
                     disabled={!canSend}
                     aria-label={t("chat.sendMessage")}
