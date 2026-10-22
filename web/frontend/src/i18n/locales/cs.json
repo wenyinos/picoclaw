@@ -351,7 +351,9 @@
       "extraBody": "Extra Body",
       "extraBodyHint": "Dodatečná JSON pole pro vložení do těla požadavku, např. {\"reasoning_split\": true}.",
       "customHeaders": "Vlastní hlavičky",
-      "customHeadersHint": "Dodatečné HTTP hlavičky vkládané do každého požadavku, např. {\"X-Source\": \"coding-plan\"}.",
+      "customHeadersHint": "Dodatečné HTTP hlavičky vkládané do každého požadavku. Hodnoty podporují {{session_key}}, např. {\"x-opencode-session\": \"{{session_key}}\"}.",
+      "userAgent": "User Agent",
+      "userAgentHint": "Hlavička User-Agent odesílaná s požadavky modelu. Výchozí hodnota je PicoClaw/<version>.",
       "invalidJson": "Neplatný formát JSON"
     },
     "edit": {

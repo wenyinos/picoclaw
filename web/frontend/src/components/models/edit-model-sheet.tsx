@@ -73,6 +73,7 @@ interface EditForm {
   streamingEnabled: boolean
   extraBody: string
   customHeaders: string
+  userAgent: string
 }
 
 interface EditModelSheetProps {
@@ -108,6 +109,7 @@ function buildInitialEditForm(model: ModelInfo): EditForm {
     customHeaders: model.custom_headers
       ? JSON.stringify(model.custom_headers, null, 2)
       : "",
+    userAgent: model.user_agent ?? "",
   }
 }
 
@@ -139,6 +141,7 @@ export function EditModelSheet({
     streamingEnabled: false,
     extraBody: "",
     customHeaders: "",
+    userAgent: "",
   })
   const [saving, setSaving] = useState(false)
   const [setAsDefault, setSetAsDefault] = useState(false)
@@ -395,6 +398,7 @@ export function EditModelSheet({
         streaming,
         extra_body: extraBody,
         custom_headers: customHeaders,
+        user_agent: form.userAgent.trim(),
       })
       onUpdated(response.reference_rename)
       if (setAsDefault && !model.is_default) {
@@ -736,6 +740,17 @@ export function EditModelSheet({
                     onChange={setField("customHeaders")}
                     placeholder='{"X-Source": "coding-plan"}'
                     rows={3}
+                  />
+                </Field>
+
+                <Field
+                  label={t("models.field.userAgent")}
+                  hint={t("models.field.userAgentHint")}
+                >
+                  <Input
+                    value={form.userAgent}
+                    onChange={setField("userAgent")}
+                    placeholder="PicoClaw/<version>"
                   />
                 </Field>
 

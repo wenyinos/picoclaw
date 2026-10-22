@@ -353,7 +353,9 @@
       "extraBody": "Body Extra",
       "extraBodyHint": "Campos JSON adicionais para injetar no body da requisição, ex: {\"reasoning_split\": true}.",
       "customHeaders": "Headers Customizados",
-      "customHeadersHint": "Headers HTTP adicionais para injetar em cada requisição, ex: {\"X-Source\": \"coding-plan\"}.",
+      "customHeadersHint": "Headers HTTP adicionais para injetar em cada requisição. Os valores suportam {{session_key}}, ex: {\"x-opencode-session\": \"{{session_key}}\"}.",
+      "userAgent": "User Agent",
+      "userAgentHint": "Cabeçalho User-Agent enviado nas requisições do modelo. Padrão: PicoClaw/<version>.",
       "invalidJson": "Formato JSON inválido"
     },
     "edit": {

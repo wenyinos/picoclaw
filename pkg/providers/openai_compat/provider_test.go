@@ -1422,6 +1422,170 @@ func TestProviderChat_CustomHeadersInjected(t *testing.T) {
 	}
 }
 
+func TestIsOpenCodeGoBase(t *testing.T) {
+	tests := []struct {
+		apiBase string
+		want    bool
+	}{
+		{"https://opencode.ai/zen/go/v1", true},
+		{"https://opencode.ai/zen/go", true},
+		{"https://opencode.ai/zen/go/v1/", true},
+		{"https://opencode.ai/zen/v1", false},
+		{"https://opencode.ai/zen", false},
+		{"https://example.com/zen/go/v1", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isOpenCodeGoBase(tt.apiBase); got != tt.want {
+			t.Errorf("isOpenCodeGoBase(%q) = %v, want %v", tt.apiBase, got, tt.want)
+		}
+	}
+}
+
+func TestApplyCustomHeaders_SessionKey(t *testing.T) {
+	t.Run("template expands per request", func(t *testing.T) {
+		p := &Provider{customHeaders: map[string]string{
+			"x-opencode-session": common.SessionKeyPlaceholder,
+		}}
+		req := httptest.NewRequest(http.MethodPost, "https://example.com", nil)
+
+		p.applyCustomHeaders(req, map[string]any{common.SessionKeyOption: "session-abc"})
+
+		if got := req.Header.Get("x-opencode-session"); got != "session-abc" {
+			t.Fatalf("x-opencode-session = %q, want %q", got, "session-abc")
+		}
+	})
+
+	t.Run("missing session key uses stable default", func(t *testing.T) {
+		p := &Provider{customHeaders: map[string]string{
+			"x-opencode-session": common.SessionKeyPlaceholder,
+		}}
+		req := httptest.NewRequest(http.MethodPost, "https://example.com", nil)
+
+		p.applyCustomHeaders(req, nil)
+
+		if got := req.Header.Get("x-opencode-session"); got != common.DefaultSessionKey {
+			t.Fatalf("x-opencode-session = %q, want %q", got, common.DefaultSessionKey)
+		}
+	})
+
+	t.Run("opencode go auto injects session header", func(t *testing.T) {
+		p := &Provider{apiBase: "https://opencode.ai/zen/go/v1"}
+		req := httptest.NewRequest(http.MethodPost, "https://example.com", nil)
+
+		p.applyCustomHeaders(req, map[string]any{common.SessionKeyOption: "session-abc"})
+
+		if got := req.Header.Get("x-opencode-session"); got != "session-abc" {
+			t.Fatalf("x-opencode-session = %q, want %q", got, "session-abc")
+		}
+	})
+
+	t.Run("opencode zen is not auto adapted", func(t *testing.T) {
+		p := &Provider{apiBase: "https://opencode.ai/zen/v1"}
+		req := httptest.NewRequest(http.MethodPost, "https://example.com", nil)
+
+		p.applyCustomHeaders(req, map[string]any{common.SessionKeyOption: "session-abc"})
+
+		if got := req.Header.Get("x-opencode-session"); got != "" {
+			t.Fatalf("x-opencode-session = %q, want empty", got)
+		}
+	})
+
+	t.Run("explicit header wins over auto injection", func(t *testing.T) {
+		p := &Provider{
+			apiBase: "https://opencode.ai/zen/go/v1",
+			customHeaders: map[string]string{
+				"x-opencode-session": common.SessionKeyPlaceholder + "-custom",
+			},
+		}
+		req := httptest.NewRequest(http.MethodPost, "https://example.com", nil)
+
+		p.applyCustomHeaders(req, map[string]any{common.SessionKeyOption: "session-abc"})
+
+		if got := req.Header.Get("x-opencode-session"); got != "session-abc-custom" {
+			t.Fatalf("x-opencode-session = %q, want %q", got, "session-abc-custom")
+		}
+	})
+}
+
+func TestProviderChat_CustomHeadersSessionKeyTemplate(t *testing.T) {
+	var gotSession string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSession = r.Header.Get("x-opencode-session")
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "ok"},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := NewProvider(
+		"key",
+		server.URL,
+		"",
+		WithCustomHeaders(map[string]string{"x-opencode-session": common.SessionKeyPlaceholder}),
+	)
+
+	_, err := p.Chat(
+		t.Context(),
+		[]Message{{Role: "user", Content: "hi"}},
+		nil,
+		"gpt-4o",
+		map[string]any{common.SessionKeyOption: "session-abc"},
+	)
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if gotSession != "session-abc" {
+		t.Fatalf("x-opencode-session = %q, want %q", gotSession, "session-abc")
+	}
+}
+
+func TestProviderChatStream_CustomHeadersSessionKeyTemplate(t *testing.T) {
+	var gotSession string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSession = r.Header.Get("x-opencode-session")
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	p := NewProvider(
+		"key",
+		server.URL,
+		"",
+		WithCustomHeaders(map[string]string{"x-opencode-session": common.SessionKeyPlaceholder}),
+	)
+
+	out, err := p.ChatStream(
+		t.Context(),
+		[]Message{{Role: "user", Content: "hi"}},
+		nil,
+		"gpt-4o",
+		map[string]any{common.SessionKeyOption: "session-abc"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	if out.Content != "ok" {
+		t.Fatalf("Content = %q, want %q", out.Content, "ok")
+	}
+	if gotSession != "session-abc" {
+		t.Fatalf("x-opencode-session = %q, want %q", gotSession, "session-abc")
+	}
+}
+
 func TestProviderChatStream_CustomHeadersInjected(t *testing.T) {
 	var gotSource, gotAuth, gotUserAgent string
 

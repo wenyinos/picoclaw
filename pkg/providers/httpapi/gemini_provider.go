@@ -88,7 +88,7 @@ func (p *GeminiProvider) Chat(
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	p.applyHeaders(req)
+	p.applyHeaders(req, options)
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -155,7 +155,7 @@ func (p *GeminiProvider) ChatStreamEvents(
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	p.applyHeaders(req)
+	p.applyHeaders(req, options)
 	req.Header.Set("Accept", "text/event-stream")
 
 	// Streaming should not use a whole-request timeout; context cancellation is the guard.
@@ -209,7 +209,7 @@ func (b *geminiStreamingReadIdleTimeoutBody) Close() error {
 	return b.body.Close()
 }
 
-func (p *GeminiProvider) applyHeaders(req *http.Request) {
+func (p *GeminiProvider) applyHeaders(req *http.Request, options map[string]any) {
 	req.Header.Set("Content-Type", "application/json")
 	if p.apiKey != "" {
 		req.Header.Set("X-Goog-Api-Key", p.apiKey)
@@ -217,10 +217,12 @@ func (p *GeminiProvider) applyHeaders(req *http.Request) {
 	if p.userAgent != "" {
 		req.Header.Set("User-Agent", p.userAgent)
 	}
+	sessionKey := common.ResolveSessionKey(options)
 	for k, v := range p.customHeaders {
 		if strings.TrimSpace(k) == "" {
 			continue
 		}
+		v = strings.ReplaceAll(v, common.SessionKeyPlaceholder, sessionKey)
 		req.Header.Set(k, v)
 	}
 }

@@ -121,13 +121,13 @@
 | `api_keys` | string[] | 是* | 认证密钥。多个密钥可按请求轮换。本地 provider（Ollama、LM Studio、VLLM）不需要 |
 | `api_base` | string | 否 | 覆盖默认的 API 端点 URL |
 | `proxy` | string | 否 | 此模型条目的 HTTP 代理 URL |
-| `user_agent` | string | 否 | 自定义 `User-Agent` 请求头（支持 OpenAI 兼容、Gemini、Anthropic 和 Azure provider） |
+| `user_agent` | string | 否 | 自定义 `User-Agent` 请求头（支持 OpenAI 兼容、Gemini、Anthropic 和 Azure provider）。默认 `PicoClaw/<版本>`。 |
 | `request_timeout` | int | 否 | 请求超时时间（秒），默认值因 provider 而异 |
 | `streaming.enabled` | bool | 否 | 是否允许此模型条目尝试 provider 流式请求，默认 `false`。它只表达模型/端点能力 opt-in，实际还需要当前 channel 的 `settings.streaming.enabled` 同时开启 |
 | `max_tokens_field` | string | 否 | 覆盖请求体中 max tokens 的字段名（如 o1 模型使用 `max_completion_tokens`） |
 | `thinking_level` | string | 否 | 扩展思考级别：`off`、`low`、`medium`、`high`、`xhigh` 或 `adaptive` |
 | `extra_body` | object | 否 | 注入到每个请求体中的额外字段 |
-| `custom_headers` | object | 否 | 注入到每个请求中的额外 HTTP 请求头（例如 `{"X-Source":"coding-plan"}`）。若键名与内置请求头同名，会覆盖内置值（如 `Authorization`、`User-Agent`、`Content-Type`、`Accept`）。 |
+| `custom_headers` | object | 否 | 注入到每个请求中的额外 HTTP 请求头（例如 `{"X-Source":"coding-plan"}`）。值支持 `{{session_key}}` 占位符，按请求展开为当前会话的 session key（用于 OpenCode Go 的 `x-opencode-session`）。若键名与内置请求头同名，会覆盖内置值（如 `Authorization`、`User-Agent`、`Content-Type`、`Accept`）。 |
 | `rpm` | int | 否 | 每分钟请求速率限制 |
 | `fallbacks` | string[] | 否 | 自动故障转移的备用模型名称 |
 | `enabled` | bool | 否 | 是否启用此模型条目（默认：`true`） |

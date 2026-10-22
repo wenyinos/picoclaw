@@ -56,6 +56,7 @@ type modelResponse struct {
 	Streaming           config.ModelStreamingConfig `json:"streaming,omitempty"`
 	ExtraBody           map[string]any              `json:"extra_body,omitempty"`
 	CustomHeaders       map[string]string           `json:"custom_headers,omitempty"`
+	UserAgent           string                      `json:"user_agent,omitempty"`
 	// Meta
 	Enabled             bool   `json:"enabled"`
 	Available           bool   `json:"available"`
@@ -636,6 +637,7 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 			Streaming:           m.Streaming,
 			ExtraBody:           m.ExtraBody,
 			CustomHeaders:       m.CustomHeaders,
+			UserAgent:           m.UserAgent,
 			Enabled:             m.Enabled,
 			Available:           modelStatuses[i].Available,
 			Status:              modelStatuses[i].Status,
@@ -814,6 +816,9 @@ func (h *Handler) handleUpdateModel(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, ok := rawFields["streaming"]; !ok {
 		mc.Streaming = cfg.ModelList[idx].Streaming
+	}
+	if _, ok := rawFields["user_agent"]; !ok {
+		mc.UserAgent = cfg.ModelList[idx].UserAgent
 	}
 	// Preserve the existing Provider when the caller omits it. This keeps the
 	// update API backward-compatible for clients that haven't started sending

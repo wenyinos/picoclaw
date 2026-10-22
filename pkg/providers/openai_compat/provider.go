@@ -323,12 +323,38 @@ func normalizedHostname(rawURL string) string {
 	return strings.ToLower(strings.TrimSpace(parsed.Hostname()))
 }
 
-func (p *Provider) applyCustomHeaders(req *http.Request) {
+const openCodeSessionHeader = "x-opencode-session"
+
+// isOpenCodeGoBase reports whether apiBase points at the OpenCode Go endpoint.
+// The regular OpenCode Zen endpoint is limited to official clients and is
+// intentionally not adapted here.
+func isOpenCodeGoBase(apiBase string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(apiBase))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	path := strings.ToLower(strings.TrimRight(parsed.Path, "/"))
+	return host == "opencode.ai" && (path == "/zen/go" || strings.HasPrefix(path, "/zen/go/"))
+}
+
+func (p *Provider) applyCustomHeaders(req *http.Request, options map[string]any) {
+	sessionKey := common.ResolveSessionKey(options)
+	hasSessionHeader := false
 	for k, v := range p.customHeaders {
 		if strings.TrimSpace(k) == "" {
 			continue
 		}
+		v = strings.ReplaceAll(v, common.SessionKeyPlaceholder, sessionKey)
+		if strings.EqualFold(k, openCodeSessionHeader) && strings.TrimSpace(v) != "" {
+			hasSessionHeader = true
+		}
 		req.Header.Set(k, v)
+	}
+	// OpenCode Go routes and caches per conversation. Inject the session header
+	// even when the model entry does not configure custom_headers explicitly.
+	if !hasSessionHeader && isOpenCodeGoBase(p.apiBase) {
+		req.Header.Set(openCodeSessionHeader, sessionKey)
 	}
 }
 
@@ -487,7 +513,7 @@ func (p *Provider) Chat(
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
-	p.applyCustomHeaders(req)
+	p.applyCustomHeaders(req, options)
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -559,7 +585,7 @@ func (p *Provider) ChatStreamEvents(
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
-	p.applyCustomHeaders(req)
+	p.applyCustomHeaders(req, options)
 
 	// Use a client without Timeout for streaming — the http.Client.Timeout covers
 	// the entire request lifecycle including body reads, which would kill long streams.

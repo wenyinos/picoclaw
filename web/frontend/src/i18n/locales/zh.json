@@ -352,7 +352,9 @@
       "extraBody": "Extra Body",
       "extraBodyHint": "要注入到请求体中的额外 JSON 字段，例如 {\"reasoning_split\": true}。",
       "customHeaders": "Custom Headers",
-      "customHeadersHint": "要注入到每个请求中的额外 HTTP Headers，例如 {\"X-Source\": \"coding-plan\"}。",
+      "customHeadersHint": "要注入到每个请求中的额外 HTTP Headers，值支持 {{session_key}} 占位符，例如 {\"x-opencode-session\": \"{{session_key}}\"}。",
+      "userAgent": "User Agent",
+      "userAgentHint": "模型请求使用的 User-Agent，默认 PicoClaw/<版本>。",
       "selectProviderFirst": "请先选择服务商",
       "invalidJson": "JSON 格式不正确"
     },

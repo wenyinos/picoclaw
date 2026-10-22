@@ -352,7 +352,9 @@
       "extraBody": "Extra Body",
       "extraBodyHint": "অনুরোধ বডিতে ইনজেক্ট করার অতিরিক্ত JSON ক্ষেত্র, যেমন {\"reasoning_split\": true}।",
       "customHeaders": "Custom Headers",
-      "customHeadersHint": "প্রতিটি অনুরোধে ইনজেক্ট করার অতিরিক্ত HTTP হেডার, যেমন {\"X-Source\": \"coding-plan\"}।",
+      "customHeadersHint": "প্রতিটি অনুরোধে ইনজেক্ট করার অতিরিক্ত HTTP হেডার। মানে {{session_key}} সমর্থিত, যেমন {\"x-opencode-session\": \"{{session_key}}\"}।",
+      "userAgent": "User Agent",
+      "userAgentHint": "মডেল অনুরোধে পাঠানো User-Agent হেডার। ডিফল্ট PicoClaw/<version>।",
       "invalidJson": "অবৈধ JSON ফর্ম্যাট"
     },
     "edit": {

@@ -72,6 +72,7 @@ interface AddForm {
   streamingEnabled: boolean
   extraBody: string
   customHeaders: string
+  userAgent: string
 }
 
 const EMPTY_ADD_FORM: AddForm = {
@@ -92,6 +93,7 @@ const EMPTY_ADD_FORM: AddForm = {
   streamingEnabled: false,
   extraBody: "",
   customHeaders: "",
+  userAgent: "",
 }
 
 interface AddModelSheetProps {
@@ -409,6 +411,7 @@ export function AddModelSheet({
         streaming: form.streamingEnabled ? { enabled: true } : undefined,
         extra_body: extraBody,
         custom_headers: customHeaders,
+        user_agent: form.userAgent.trim(),
       })
       if (setAsDefault) {
         await setDefaultModel(modelName)
@@ -783,6 +786,17 @@ export function AddModelSheet({
                     onChange={setField("customHeaders")}
                     placeholder='{"X-Source": "coding-plan"}'
                     rows={3}
+                  />
+                </Field>
+
+                <Field
+                  label={t("models.field.userAgent")}
+                  hint={t("models.field.userAgentHint")}
+                >
+                  <Input
+                    value={form.userAgent}
+                    onChange={setField("userAgent")}
+                    placeholder="PicoClaw/<version>"
                   />
                 </Field>
               </AdvancedSection>

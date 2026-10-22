@@ -353,7 +353,9 @@
       "extraBody": "Extra Body",
       "extraBodyHint": "Additional JSON fields to inject into the request body, e.g. {\"reasoning_split\": true}.",
       "customHeaders": "Custom Headers",
-      "customHeadersHint": "Additional HTTP headers to inject into every request, e.g. {\"X-Source\": \"coding-plan\"}.",
+      "customHeadersHint": "Additional HTTP headers to inject into every request. Values support {{session_key}}, e.g. {\"x-opencode-session\": \"{{session_key}}\"}.",
+      "userAgent": "User Agent",
+      "userAgentHint": "User-Agent header sent with model requests. Defaults to PicoClaw/<version>.",
       "invalidJson": "Invalid JSON format"
     },
     "edit": {

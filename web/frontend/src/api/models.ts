@@ -25,6 +25,7 @@ export interface ModelInfo {
   }
   extra_body?: Record<string, unknown>
   custom_headers?: Record<string, string>
+  user_agent?: string
   // Meta
   enabled: boolean
   available: boolean

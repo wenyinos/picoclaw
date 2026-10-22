@@ -1,6 +1,6 @@
 > [!IMPORTANT]
 > **本仓库是 [sipeed/picoclaw](https://github.com/sipeed/picoclaw) 的 fork**，基于官方 `main`（含 `v0.3.1` 之后的 50 个提交），并额外修复了下列问题。
-> 对应发布版本：**[v0.3.2](https://github.com/wenyinos/picoclaw/releases/tag/v0.3.2)**（仅二进制包）
+> 对应发布版本：**[v0.3.3](https://github.com/wenyinos/picoclaw/releases/tag/v0.3.3)**（仅二进制包）
 >
 > ### 相比官方 v0.3.1 修复的问题
 >
@@ -9,6 +9,7 @@
 > | 1 | QQ 机器人启动即失败，服务端一直显示"未链接" | ❌ 缺陷存在 | `pkg/channels/qq/qq.go` |
 > | 2 | 前端 lockfile 重复键导致构建/发布失败 | ➖ 官方 `main` 引入 | `web/frontend/pnpm-lock.yaml` |
 > | 3 | 发布流程依赖 Docker 凭据 | ➖ 非缺陷（打包调整） | `.goreleaser.yaml`、`.github/workflows/` |
+> | 4 | OpenCode Go 请求缺少 `x-opencode-session`，返回 `400 MissingSessionID` | ❌ 缺陷存在 | `pkg/agent/pipeline_llm.go`、`pkg/providers/openai_compat/provider.go` |
 >
 > **1. QQ 通道无法连接（`code:401` / `11241 请求头Authorization参数格式错误`）**
 >
@@ -29,7 +30,28 @@
 >
 > **3. 发布只产出二进制包**
 >
-> 移除 Docker / ghcr / Docker Hub 与 Android bundle 环节，`v0.3.2` 仅发布 `tar.gz`、`deb`、`rpm`、`zip`：18 个平台，每个平台含 `picoclaw` 与 `picoclaw-launcher` 两个二进制（共 36 个构建目标）。
+> 移除 Docker / ghcr / Docker Hub 与 Android bundle 环节，`v0.3.2` 起仅发布 `tar.gz`、`deb`、`rpm`、`zip`：18 个平台，每个平台含 `picoclaw` 与 `picoclaw-launcher` 两个二进制（共 36 个构建目标）。
+>
+> **4. OpenCode Go 请求缺少 `x-opencode-session`**
+>
+> OpenCode Go（`https://opencode.ai/zen/go/v1`）按会话路由并复用 prompt cache，要求请求携带稳定的 `x-opencode-session`。缺失时返回 `400 MissingSessionID`，picoclaw 会将其归类为格式错误并触发 failover。常规 OpenCode Zen（`/zen/v1`）目前仅限官方客户端，本 fork 不做适配。
+>
+> * **修复**：agent 在模型调用选项中携带 `ts.sessionKey`；`custom_headers` 的值支持 `{{session_key}}` 占位符，按请求展开为当前会话的 key。对 `/zen/go` 端点，即使没有显式配置 `custom_headers`，也会自动注入 `x-opencode-session`；`user_agent` 仍可配置，默认 `PicoClaw/<version>`。
+> * **配置**（可选，用于显式覆盖）：
+>
+> ```json
+> {
+>   "model_name": "opencode-go-mimo-v2.6",
+>   "provider": "openai",
+>   "model": "mimo-v2.6-flash",
+>   "api_base": "https://opencode.ai/zen/go/v1",
+>   "custom_headers": { "x-opencode-session": "{{session_key}}" }
+> }
+> ```
+>
+> 模型编辑面板同时新增了 `user_agent` 字段，可在 UI 中直接设置。
+>
+> 此外，launcher 前端主题已切换为浅蓝明暗配色（取自 `zeroclaw-web-chat` 的 `blue` / `blue-dark`），聊天区域的强调色也同步替换为主题蓝。
 >
 > 除上述改动外，本 fork 未修改任何其他功能代码。
 
