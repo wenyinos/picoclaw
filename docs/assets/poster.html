@@ -4,69 +4,64 @@
 <meta charset="utf-8">
 <style>
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; width: 1600px; height: 2200px; overflow: hidden; }
+  html, body { margin: 0; padding: 0; width: 1600px; height: 1050px; overflow: hidden; }
   body {
     background:
       radial-gradient(900px 500px at 10% -5%, #143b63 0%, transparent 62%),
-      radial-gradient(700px 500px at 95% 10%, #1b2a5e 0%, transparent 60%),
+      radial-gradient(700px 500px at 95% 5%, #1b2a5e 0%, transparent 60%),
       #070b14;
     color: #e6edf7;
     font-family: "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif;
-    padding: 54px 60px 34px;
-    display: flex;
-    flex-direction: column;
-    gap: 22px;
+    padding: 46px 58px 30px;
+    display: flex; flex-direction: column; gap: 18px;
   }
-  .top { display: flex; align-items: center; gap: 26px; }
-  .top img { width: 120px; height: 120px; object-fit: contain; }
-  .top h1 { margin: 0; font-size: 88px; line-height: .98; letter-spacing: -.035em; }
+  .top { display: flex; align-items: center; gap: 24px; }
+  .top img { width: 104px; height: 104px; object-fit: contain; }
+  .top h1 { margin: 0; font-size: 78px; line-height: .98; letter-spacing: -.035em; }
   .top h1 span { color: #38bdf8; }
-  .top .sub { margin: 12px 0 0; font-size: 27px; color: #a9bbd4; letter-spacing: .01em; }
-  .badges { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
-  .badge { border: 1px solid #22314f; background: rgba(15,23,42,.78); color: #a9bbd4; border-radius: 999px; padding: 7px 14px; font-size: 18px; }
-  .badge b { color: #e6edf7; font-weight: 700; }
-  .rule { height: 1px; background: #1d2b45; margin: 2px 0 4px; }
-  .cols { display: grid; grid-template-columns: 1030px 1fr; gap: 26px; flex: 1; min-height: 0; }
-  .col { display: flex; flex-direction: column; gap: 18px; min-height: 0; }
-  .section-title { display: flex; align-items: baseline; gap: 12px; margin: 0 0 2px; }
-  .section-title h2 { margin: 0; font-size: 34px; letter-spacing: -.01em; }
-  .section-title span { color: #38bdf8; font-size: 16px; letter-spacing: .14em; text-transform: uppercase; }
-  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  .card { background: linear-gradient(180deg, #111d34, #0d1526); border: 1px solid #22314f; border-radius: 14px; padding: 15px 16px 14px; }
-  .card .k { color: #38bdf8; font-size: 14px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px; }
-  .card h3 { margin: 0 0 5px; font-size: 21px; }
-  .card p { margin: 0; color: #93a4bd; font-size: 16px; line-height: 1.55; }
-  .callout { background: linear-gradient(135deg, #0a2a3d, #0f1a2f 70%); border: 1px solid #1b4b63; border-radius: 16px; padding: 18px 20px; }
-  .callout h2 { margin: 0 0 6px; font-size: 32px; }
-  .callout p { margin: 0; color: #b9d7e8; font-size: 17px; line-height: 1.6; }
-  .channels { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; }
-  .ch { border: 1px solid #24516b; background: rgba(8,20,36,.8); border-radius: 8px; padding: 7px 11px; font-size: 17px; color: #d6e6f5; }
+  .top .sub { margin: 10px 0 0; font-size: 24px; color: #a9bbd4; }
+  .badges { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 14px; }
+  .badge { border: 1px solid #22314f; background: rgba(15,23,42,.78); color: #a9bbd4; border-radius: 999px; padding: 6px 12px; font-size: 16px; }
+  .badge b { color: #e6edf7; }
+  .rule { height: 1px; background: #1d2b45; }
+  .cols { display: grid; grid-template-columns: 1030px 1fr; gap: 24px; flex: 1; min-height: 0; }
+  .col { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+  .section-title { display: flex; align-items: baseline; gap: 10px; }
+  .section-title h2 { margin: 0; font-size: 31px; }
+  .section-title span { color: #38bdf8; font-size: 14px; letter-spacing: .13em; text-transform: uppercase; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .card { background: linear-gradient(180deg, #111d34, #0d1526); border: 1px solid #22314f; border-radius: 13px; padding: 13px 15px; }
+  .card .k { color: #38bdf8; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 5px; }
+  .card h3 { margin: 0 0 4px; font-size: 19px; }
+  .card p { margin: 0; color: #93a4bd; font-size: 14.5px; line-height: 1.5; }
+  .callout { background: linear-gradient(135deg, #0a2a3d, #0f1a2f 70%); border: 1px solid #1b4b63; border-radius: 15px; padding: 15px 18px; }
+  .callout h2 { margin: 0 0 5px; font-size: 29px; }
+  .callout p { margin: 0; color: #b9d7e8; font-size: 15.5px; line-height: 1.55; }
+  .channels { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .ch { border: 1px solid #24516b; background: rgba(8,20,36,.8); border-radius: 7px; padding: 5px 9px; font-size: 15px; color: #d6e6f5; }
   .ch b { color: #34d399; }
-  .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 3px; }
-  .flow span { border: 1px solid #22314f; background: #0d1627; border-radius: 8px; padding: 7px 11px; font-size: 16px; color: #a9bbd4; }
-  .flow span.hot { border-color: #38bdf8; color: #e6edf7; }
-  .flow em { color: #38bdf8; font-style: normal; font-size: 18px; }
-  .side-card { background: #0d1526; border: 1px solid #22314f; border-radius: 14px; padding: 16px 17px; }
-  .side-card h3 { margin: 0 0 9px; font-size: 21px; }
-  .side-card p { margin: 0; color: #93a4bd; font-size: 16px; line-height: 1.6; }
-  .side-card ul { margin: 0; padding-left: 18px; color: #93a4bd; font-size: 16px; line-height: 1.75; }
-  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .stat { background: #0d1627; border: 1px solid #22314f; border-radius: 11px; padding: 11px 13px; }
-  .stat b { display: block; font-size: 25px; line-height: 1.15; }
-  .stat span { color: #93a4bd; font-size: 14px; }
-  pre { margin: 10px 0 0; padding: 12px 14px; background: #050910; border: 1px solid #1d2b45; border-radius: 10px; color: #c8d6ea; font-size: 15px; line-height: 1.65; white-space: pre-wrap; }
+  .mini { display: grid; grid-template-columns: 1.1fr .9fr; gap: 10px; }
+  .mini .card { padding: 12px 15px; }
+  .mini h3 { font-size: 18px; }
+  .side-card { background: #0d1526; border: 1px solid #22314f; border-radius: 13px; padding: 14px 16px; }
+  .side-card h3 { margin: 0 0 7px; font-size: 19px; }
+  .side-card p { margin: 0; color: #93a4bd; font-size: 14.5px; line-height: 1.55; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { background: #0d1627; border: 1px solid #22314f; border-radius: 10px; padding: 9px 12px; }
+  .stat b { display: block; font-size: 23px; line-height: 1.1; }
+  .stat span { color: #93a4bd; font-size: 13px; }
+  .layers { display: flex; flex-direction: column; gap: 5px; margin-top: 2px; }
+  .layer { display: flex; gap: 8px; align-items: baseline; font-size: 14.5px; color: #a9bbd4; }
+  .layer b { color: #e6edf7; min-width: 76px; }
+  pre { margin: 8px 0 0; padding: 10px 12px; background: #050910; border: 1px solid #1d2b45; border-radius: 9px; color: #c8d6ea; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
   code { font-family: "Noto Sans Mono CJK SC", ui-monospace, monospace; }
-  .tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-  .tag { border: 1px solid #22314f; border-radius: 7px; padding: 5px 8px; font-size: 14px; color: #a9bbd4; }
-  .full { border-top: 1px solid #1d2b45; padding-top: 16px; }
-  .compare { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 8px; }
-  .compare .card { min-height: 104px; }
-  .compare .card h3 { font-size: 19px; }
-  .compare .card p { font-size: 15px; }
-  .bottom { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #1d2b45; padding-top: 14px; color: #93a4bd; font-size: 17px; }
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+  .flow span { border: 1px solid #22314f; background: #0d1627; border-radius: 7px; padding: 4px 8px; font-size: 13.5px; color: #a9bbd4; }
+  .flow span.hot { border-color: #38bdf8; color: #e6edf7; }
+  .flow em { color: #38bdf8; font-style: normal; }
+  .bottom { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #1d2b45; padding-top: 12px; color: #93a4bd; font-size: 16px; }
   .bottom b { color: #e6edf7; }
   .accent { color: #34d399; }
-  .violet { color: #a78bfa; }
 </style>
 </head>
 <body>
@@ -74,13 +69,13 @@
     <img src="logo.webp" alt="PicoClaw">
     <div>
       <h1>PicoClaw <span>0.4.1</span></h1>
-      <p class="sub">超轻量个人 AI 助手 · 长期记忆 · 陪伴控制台 · 可迁移 workspace</p>
+      <p class="sub">超轻量个人 AI 助手 · 长期记忆 · 关系连续性 · 可迁移 workspace</p>
       <div class="badges">
-        <span class="badge"><b>Go</b> 单二进制</span>
         <span class="badge"><b>SQLite</b> 长期记忆</span>
-        <span class="badge"><b>10+</b> 聊天渠道</span>
-        <span class="badge"><b>MIT</b> 自托管</span>
-        <span class="badge"><b>Linux / macOS / Windows</b></span>
+        <span class="badge"><b>可审核</b> 去重与冲突</span>
+        <span class="badge"><b>陪伴</b> 关系与人格</span>
+        <span class="badge"><b>可迁移</b> workspace</span>
+        <span class="badge"><b>Go</b> 单二进制</span>
       </div>
     </div>
   </div>
@@ -92,7 +87,7 @@
       <div class="grid3">
         <div class="card"><div class="k">Memory</div><h3>SQLite 记忆库</h3><p>结构化条目、关系状态、人格与来源追踪；数据库是唯一事实源。</p></div>
         <div class="card"><div class="k">Dedupe</div><h3>去重与冲突</h3><p>精确哈希、中文相似度、SimHash 近似合并；事实变化保留历史。</p></div>
-        <div class="card"><div class="k">Review</div><h3>人工审核</h3><p>不确定的条目停在 pending_review，审核前不注入提示词。</p></div>
+        <div class="card"><div class="k">Review</div><h3>人工审核</h3><p>不确定条目停在 pending_review，审核前不注入提示词。</p></div>
         <div class="card"><div class="k">Companion</div><h3>关系与人格</h3><p>称呼、阶段、亲密度、边界、纪念日与版本化人设。</p></div>
         <div class="card"><div class="k">Dashboard</div><h3>记忆控制台</h3><p>Launcher /memory：查看、搜索、审核、关系和设置。</p></div>
         <div class="card"><div class="k">Portable</div><h3>自由迁移</h3><p>不保存机器绝对路径；复制 workspace 即可换机。</p></div>
@@ -100,7 +95,7 @@
 
       <div class="callout">
         <h2>无需自建前端，直接接入现有聊天软件</h2>
-        <p>把 AI 放进你已经在用的 QQ、微信/企业微信、飞书、钉钉、Telegram、Discord 等客户端；Launcher 只是可选的桌面管理入口。</p>
+        <p>在 QQ、微信/企业微信、飞书、钉钉等客户端直接对话；同一 Agent 与记忆跨渠道共享，Launcher 只是可选管理入口。</p>
         <div class="channels">
           <span class="ch"><b>QQ</b> 机器人</span>
           <span class="ch"><b>微信</b> / 企业微信</span>
@@ -117,38 +112,9 @@
         </div>
       </div>
 
-      <div class="section-title"><h2>消息与记忆链路</h2><span>Gateway → Agent → Memory</span></div>
-      <div class="flow">
-        <span class="hot">QQ / 微信 / 飞书 / 钉钉</span><em>→</em>
-        <span>PicoClaw Gateway</span><em>→</em>
-        <span>Agent + 工具</span><em>→</em>
-        <span>SQLite 记忆</span><em>→</em>
-        <span>模型服务</span>
-      </div>
-      <div class="flow">
-        <span>用户消息</span><em>→</em>
-        <span>规则抽取</span><em>→</em>
-        <span>去重 / 冲突</span><em>→</em>
-        <span class="hot">审核队列</span><em>→</em>
-        <span>按预算注入</span>
-      </div>
-      <div class="side-card">
-        <h3>0.4.1 修复</h3>
-        <p>普通聊天不再进入记忆待审核池；“设定 / 扮演 / 剧情 / 人设”等词不再触发自动记忆，助手回复也不参与抽取。</p>
-      </div>
-
-      <div class="section-title"><h2>渠道接入矩阵</h2><span>Use Existing Apps</span></div>
-      <div class="grid3">
-        <div class="card"><div class="k">QQ</div><h3>QQ 机器人</h3><p>WebSocket 接入；群聊/私聊直接对话，无需自建页面。</p></div>
-        <div class="card"><div class="k">WeChat</div><h3>微信 / 企业微信</h3><p>公众号或企业微信应用接入；私域与工作场景复用现有客户端。</p></div>
-        <div class="card"><div class="k">Feishu</div><h3>飞书 / Lark</h3><p>自建应用与长连接；团队协作场景直接使用。</p></div>
-        <div class="card"><div class="k">DingTalk</div><h3>钉钉</h3><p>Stream 模式接入；企业内消息与机器人能力。</p></div>
-        <div class="card"><div class="k">Bots</div><h3>Telegram / Discord / Slack</h3><p>Bot Token 即插即用；无需开发聊天界面。</p></div>
-        <div class="card"><div class="k">Self-host</div><h3>Matrix / IRC / MQTT</h3><p>自托管协议接入；同一 Agent 与记忆跨渠道共享。</p></div>
-      </div>
-      <div class="side-card">
-        <h3>0.3.x → 0.4 迁移</h3>
-        <p>停止服务 → 备份 workspace → <code>memory import</code> → <code>render / audit</code> → 在 <code>/memory</code> 审核。无自动 schema 迁移。</p>
+      <div class="mini">
+        <div class="card"><div class="k">0.4.1 Fix</div><h3>普通聊天不再误入待审核池</h3><p>“设定 / 扮演 / 剧情 / 人设”不再触发自动记忆，助手回复也不参与抽取。</p></div>
+        <div class="card"><div class="k">Latency</div><h3>更快的返回路径</h3><p>中间帧限流、最终帧先发、WS 写超时、会话异步落盘。</p></div>
       </div>
     </div>
 
@@ -161,94 +127,39 @@
       </div>
 
       <div class="side-card">
+        <h3>记忆分层</h3>
+        <div class="layers">
+          <div class="layer"><b>real</b>真实用户事实</div>
+          <div class="layer"><b>fictional</b>角色扮演设定</div>
+          <div class="layer"><b>work</b>可复用流程</div>
+          <div class="layer"><b>unknown</b>待审核分类</div>
+        </div>
+      </div>
+
+      <div class="side-card">
+        <h3>记忆链路</h3>
+        <div class="flow">
+          <span>消息</span><em>→</em><span>抽取</span><em>→</em><span>去重</span><em>→</em><span class="hot">审核</span><em>→</em><span>注入</span>
+        </div>
+      </div>
+
+      <div class="side-card">
         <h3>快速开始</h3>
         <pre><code>picoclaw onboard
 picoclaw gateway
-# 可选桌面控制台
-picoclaw-launcher</code></pre>
+picoclaw-launcher  # 可选</code></pre>
       </div>
 
       <div class="side-card">
-        <h3>记忆能力</h3>
-        <ul>
-          <li>SQLite 主库 + WAL</li>
-          <li>精确 / 近似去重</li>
-          <li>冲突替代与历史版本</li>
-          <li>真实 / 虚构分域</li>
-          <li>私密渠道过滤</li>
-          <li>token 预算注入</li>
-        </ul>
+        <h3>项目</h3>
+        <p>wenyinos/picoclaw · MIT<br>长期记忆 · 迁移 · 变更日志</p>
       </div>
-
-      <div class="side-card">
-        <h3>模型服务</h3>
-        <p>OpenAI 兼容接口、Anthropic、Gemini、Bedrock、Azure、OAuth 与本地模型；支持 fallback 链和轻量模型。</p>
-        <div class="tags">
-          <span class="tag">OpenAI-compatible</span>
-          <span class="tag">Anthropic</span>
-          <span class="tag">Gemini</span>
-          <span class="tag">Bedrock</span>
-          <span class="tag">Azure</span>
-          <span class="tag">Local</span>
-        </div>
-      </div>
-
-      <div class="side-card">
-        <h3>平台与部署</h3>
-        <div class="tags">
-          <span class="tag">x86_64</span>
-          <span class="tag">ARM64</span>
-          <span class="tag">ARMv7</span>
-          <span class="tag">RISC-V</span>
-          <span class="tag">LoongArch</span>
-          <span class="tag">Linux</span>
-          <span class="tag">macOS</span>
-          <span class="tag">Windows</span>
-          <span class="tag">Docker</span>
-          <span class="tag">Android / Termux</span>
-        </div>
-      </div>
-
-      <div class="side-card">
-        <h3>返回性能</h3>
-        <p>中间帧限流；最终帧先于持久化；WebSocket 写超时；会话 JSONL 异步落盘；Provider 连接池复用。</p>
-      </div>
-
-      <div class="side-card">
-        <h3>记忆分层</h3>
-        <ul>
-          <li><b>real</b> 真实用户事实</li>
-          <li><b>fictional</b> 角色扮演设定</li>
-          <li><b>work</b> 可复用流程</li>
-          <li><b>unknown</b> 待审核分类</li>
-        </ul>
-      </div>
-
-      <div class="side-card">
-        <h3>版本与文档</h3>
-        <p>GitHub Releases · v0.4.1<br>Long-term Memory · Migration · CHANGELOG</p>
-        <div class="tags">
-          <span class="tag">v0.4.1</span>
-          <span class="tag">MIT</span>
-          <span class="tag">own-your-data</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="full">
-    <div class="section-title"><h2>0.4 与 0.3 的差别</h2><span>Why Upgrade</span></div>
-    <div class="compare">
-      <div class="card"><div class="k">Storage</div><h3>MEMORY.md → SQLite</h3><p>结构化条目、索引与来源追踪，替代自由文本。</p></div>
-      <div class="card"><div class="k">Quality</div><h3>无去重 → 可审核</h3><p>精确/近似去重、冲突替代和 pending_review。</p></div>
-      <div class="card"><div class="k">Companion</div><h3>无状态 → 关系记忆</h3><p>称呼、阶段、边界、纪念日与版本化人设。</p></div>
-      <div class="card"><div class="k">Portability</div><h3>绑机器 → 可迁移</h3><p>相对 workspace、无绝对路径、复制即用。</p></div>
     </div>
   </div>
 
   <div class="bottom">
-    <div><b>PicoClaw 0.4.1</b> · <span class="accent">SQLite Memory</span> · <span class="violet">Companion Ready</span></div>
-    <div>github.com/wenyinos/picoclaw · MIT</div>
+    <div><b>PicoClaw 0.4.1</b> · <span class="accent">SQLite Memory</span> · Companion Ready</div>
+    <div>wenyinos/picoclaw · MIT</div>
   </div>
 </body>
 </html>
