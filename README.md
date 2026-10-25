@@ -67,6 +67,22 @@ The launcher includes a dedicated **Memory** page at `/memory`:
 
 ---
 
+## Core capabilities
+
+The 0.4 memory work sits alongside PicoClaw's original assistant features:
+
+- **Chat channels** — Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, DingTalk, LINE, Matrix, IRC, MQTT, VK, and the native Pico WebSocket UI. See [Chat apps](docs/guides/chat-apps.md).
+- **Model providers** — OpenAI-compatible APIs, Anthropic, Gemini, Bedrock, Azure, OAuth providers, and local runtimes; fallback chains and a light model for side questions. See [Providers](docs/guides/providers.md).
+- **Tools** — file read/write/edit, shell execution, web search/fetch, messaging, media and image handling, scheduling, and sub-agents. See [Tools](docs/reference/tools_configuration.md).
+- **MCP** — connect external Model Context Protocol servers and expose their tools to the agent. See [MCP CLI](docs/reference/mcp-cli.md).
+- **Skills** — workspace, global, and builtin skill sources; search, install, and use skills from chat. See [Configuration](docs/guides/configuration.md).
+- **Automation** — cron jobs, heartbeat tasks, hooks, and optional agent self-evolution. See [Cron](docs/reference/cron.md), [Hooks](docs/architecture/hooks/README.md), and [Agent evolution](docs/architecture/agent-self-evolution.md).
+- **Sub-agents** — async background work and long-running task orchestration. See [Spawn and async tasks](docs/guides/spawn-tasks.md).
+- **Interfaces** — CLI (`onboard`, `agent`, `gateway`), desktop launcher, Docker, and Android/Termux. See [Docker](docs/guides/docker.md) and [Termux](docs/guides/android-termux.md).
+- **Memory** — SQLite long-term memory, relationship/persona state, review queue, dashboard, and CLI. See [Long-term memory](docs/guides/memory.md).
+
+---
+
 ## Quick start
 
 ### Use a release binary

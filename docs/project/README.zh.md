@@ -67,6 +67,22 @@ Launcher 新增独立的 **记忆** 页面（`/memory`）：
 
 ---
 
+## 核心能力
+
+0.4 的记忆能力建立在 PicoClaw 原有功能之上：
+
+- **聊天渠道** — Telegram、Discord、Slack、飞书/Lark、企业微信、微信、QQ、钉钉、LINE、Matrix、IRC、MQTT、VK，以及原生 Pico WebSocket 界面。见[聊天应用](../guides/chat-apps.zh.md)。
+- **模型服务** — OpenAI 兼容接口、Anthropic、Gemini、Bedrock、Azure、OAuth 服务和本地模型；支持 fallback 链和侧问题轻量模型。见[模型配置](../guides/providers.zh.md)。
+- **工具** — 文件读写编辑、Shell 执行、网页搜索/抓取、消息发送、媒体与图片处理、定时任务和子代理。见[工具配置](../reference/tools_configuration.zh.md)。
+- **MCP** — 连接外部 Model Context Protocol 服务，把其工具暴露给 Agent。见 [MCP CLI](../reference/mcp-cli.md)。
+- **技能** — 工作区、全局和内置技能源；支持搜索、安装并在对话中使用。见[配置指南](../guides/configuration.zh.md)。
+- **自动化** — 定时任务、心跳任务、Hooks，以及可选的 Agent 自进化。见[定时任务](../reference/cron.md)、[Hooks](../architecture/hooks/README.zh.md) 和 [Agent 自进化](../architecture/agent-self-evolution.md)。
+- **子代理** — 异步后台任务和长任务编排。见[派生与异步任务](../guides/spawn-tasks.md)。
+- **使用界面** — CLI（`onboard`、`agent`、`gateway`）、桌面 Launcher、Docker 和 Android/Termux。见 [Docker](../guides/docker.zh.md) 和 [Termux](../guides/android-termux.md)。
+- **记忆** — SQLite 长期记忆、关系/人设、审核队列、控制台和 CLI。见[长期记忆](../guides/memory.zh.md)。
+
+---
+
 ## 快速开始
 
 ### 使用发布二进制
