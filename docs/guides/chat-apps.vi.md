@@ -1,6 +1,6 @@
 # 💬 Cấu Hình Ứng Dụng Chat
 
-> Quay lại [README](../project/README.vi.md)
+> Quay lại [README](../../README.md)
 
 ## 💬 Ứng Dụng Chat
 

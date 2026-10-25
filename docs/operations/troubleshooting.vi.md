@@ -1,6 +1,6 @@
 # 🐛 Khắc Phục Sự Cố
 
-> Quay lại [README](../project/README.vi.md)
+> Quay lại [README](../../README.md)
 
 ## "model ... not found in model_list" hoặc OpenRouter "free is not a valid model ID"
 

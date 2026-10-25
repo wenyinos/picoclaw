@@ -1,625 +1,243 @@
-<div align="center">
-<img src="../../assets/logo.webp" alt="PicoClaw" width="512">
+<p align="center">
+  <img src="../../assets/logo.webp" alt="PicoClaw" width="360">
+</p>
 
-<h1>PicoClaw: 基于Go语言的超高效 AI 助手</h1>
+<p align="center">
+  <strong>用 Go 编写的超轻量个人 AI 助手。</strong><br>
+  长期记忆、面向陪伴场景的控制台，以及一个可以整体复制迁移的 workspace。
+</p>
 
-<h3>$10 硬件 · 10MB 内存 · 毫秒启动 · 皮皮虾，我们走！</h3>
-  <p>
-    <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
-    <img src="https://img.shields.io/badge/Arch-x86__64%2C%20ARM64%2C%20MIPS%2C%20RISC--V%2C%20LoongArch-blue" alt="Hardware">
-    <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
-    <br>
-    <a href="https://picoclaw.io"><img src="https://img.shields.io/badge/Website-picoclaw.io-blue?style=flat&logo=google-chrome&logoColor=white" alt="Website"></a>
-    <a href="https://docs.picoclaw.io/"><img src="https://img.shields.io/badge/Docs-Official-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Docs"></a>
-    <a href="https://deepwiki.com/sipeed/picoclaw"><img src="https://img.shields.io/badge/Wiki-DeepWiki-FFA500?style=flat&logo=wikipedia&logoColor=white" alt="Wiki"></a>
-    <br>
-    <a href="https://x.com/SipeedIO"><img src="https://img.shields.io/badge/X_(Twitter)-SipeedIO-black?style=flat&logo=x&logoColor=white" alt="Twitter"></a>
-    <a href="../../assets/wechat.png"><img src="https://img.shields.io/badge/WeChat-Group-41d56b?style=flat&logo=wechat&logoColor=white"></a>
-    <a href="https://discord.gg/V4sAZ9XWpN"><img src="https://img.shields.io/badge/Discord-Community-4c60eb?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
-  </p>
+<p align="center">
+  <a href="../../README.md">English</a> ·
+  <a href="https://picoclaw.io">官网</a> ·
+  <a href="https://docs.picoclaw.io/">文档</a> ·
+  <a href="https://discord.gg/V4sAZ9XWpN">Discord</a>
+</p>
 
-**中文** | [日本語](README.ja.md) | [한국어](README.ko.md) | [Português](README.pt-br.md) | [Tiếng Việt](README.vi.md) | [Français](README.fr.md) | [Italiano](README.it.md) | [Bahasa Indonesia](README.id.md) | [Malay](README.ms.md) | [English](../../README.md)
-
-</div>
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
+  <img src="https://img.shields.io/badge/Version-0.4.0-blue" alt="0.4.0">
+  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64%20%7C%20MIPS%20%7C%20RISC--V%20%7C%20LoongArch-blue" alt="架构">
+  <img src="https://img.shields.io/badge/License-MIT-green" alt="许可证">
+</p>
 
 ---
 
-> **PicoClaw** 是由 [矽速科技 (Sipeed)](https://sipeed.com) 发起的独立开源项目，完全使用 **Go 语言**从零编写——不是 OpenClaw、NanoBot 或其他项目的分支。
+## 一个会记住你的个人助手
 
-🦐 **PicoClaw** 是一个受 [NanoBot](https://github.com/HKUDS/nanobot) 启发的超轻量级个人 AI 助手。它采用 **Go 语言** 从零重构，经历了一个"自举"过程——即由 AI Agent 自身驱动了整个架构迁移和代码优化。
+PicoClaw 是一个可以运行在笔记本、家庭服务器或十美元开发板上的自托管 AI 助手。它接入你现有的聊天应用和模型服务，能执行工具，并把数据保存在你自己的 workspace 里。
 
-⚡️ **极致轻量**：可在 **10 美元** 的硬件上运行，内存占用 **<10MB**。这意味着比 OpenClaw 节省 99% 的内存，比 Mac mini 便宜 98%！
+**0.4.0 围绕长期记忆与关系连续性设计。** 不再让模型反复改写一个 Markdown 文件，而是把记忆以结构化条目存进 SQLite，自动去重、处理冲突、区分真实事实与角色扮演，并且只把当前对话相关的部分注入提示词。这样助手可以维持数月的关系与上下文，而不会让提示词变成越来越长的流水账。
 
-<table align="center">
-<tr align="center">
-<td align="center" valign="top">
-<p align="center">
-<img src="../../assets/picoclaw_mem.gif" width="360" height="240">
-</p>
-</td>
-<td align="center" valign="top">
-<p align="center">
-<img src="../../assets/licheervnano.png" width="400" height="240">
-</p>
-</td>
-</tr>
-</table>
+### 能长期保存的记忆
 
-> [!CAUTION]
-> **🚨 安全声明**
->
-> - **无加密货币 (NO CRYPTO):** PicoClaw **没有** 发行任何官方代币、Token 或虚拟货币。所有在 `pump.fun` 或其他交易平台上的相关声称均为 **诈骗**。
-> - **官方域名:** 唯一的官方网站是 **[picoclaw.io](https://picoclaw.io)**，公司官网是 **[sipeed.com](https://sipeed.com)**。
-> - **警惕:** 许多 `.ai/.org/.com/.net/...` 后缀的域名被第三方抢注，请勿轻信。
-> - **注意:** PicoClaw 正在初期的快速功能开发阶段，可能有尚未修复的网络安全问题，在 1.0 正式版发布前，请不要将其部署到生产环境中。
-> - **注意:** PicoClaw 最近合并了大量 PR，近期版本可能内存占用较大 (10~20MB)，我们将在功能较为收敛后进行资源占用优化。
+- **SQLite 记忆库**：位于 `workspace/memory/memory.db`，支持精确/近似去重、冲突替代和来源追踪。
+- **分层记忆**：用户画像、关系状态（称呼、阶段、纪念日、边界）、事件记忆、流程知识和版本化人设。
+- **真实与虚构隔离**：角色扮演和故事设定单独保存，不会混入真实用户画像。
+- **人工审核队列**：不确定的记忆进入 `pending_review`，审核通过前不注入提示词。
+- **预算注入**：固定注入画像/关系/边界，再按当前消息检索相关记忆，总量受 token 预算限制。
+- **私密渠道过滤**：亲密记忆只注入到你标记为私密的渠道。
 
-## 📢 新闻
+### 面向关系的控制台
 
-2026-05-11 🛒 **LicheeRV-Claw 已上架淘宝！** 现在可以在 [淘宝](https://item.taobao.com/item.htm?abbucket=20&id=764939520376) 购买 LicheeRV-Claw，更方便地在小型 RISC-V 硬件上体验 PicoClaw。
+Launcher 新增独立的 **记忆** 页面（`/memory`）：
 
-<p align="center">
-  <a href="https://item.taobao.com/item.htm?abbucket=20&id=764939520376">
-    <img src="../../assets/licheerv-claw.jpg" alt="LicheeRV-Claw on Taobao" width="520">
-  </a>
-</p>
+- 概览：条目数量、数据库大小、关系状态、待审核数量。
+- 按领域、类型、状态搜索和编辑记忆。
+- 审核队列：确认真实事实、标记虚构、归档噪声。
+- 关系与人格编辑：称呼、阶段、纪念日、边界、人设版本。
+- 设置：注入预算、自动抽取、私密渠道、保留周期。
+- 一次性导入 0.3.x workspace。
 
-2026-03-31 📱 **Android 支持！** PicoClaw 现可在 Android 上运行！APK 下载地址：[picoclaw.io](https://picoclaw.io/download)
+### workspace 可以随意迁移
 
-2026-03-25 🚀 **v0.2.4 发布！** Agent 架构全面重构（SubTurn、Hook、Steering、EventBus）、微信/企业微信深度集成、安全体系升级（.security.yml、敏感数据过滤）、新增 Provider（AWS Bedrock、Azure、小米 MiMo），以及 35 项 Bug 修复。PicoClaw 已达 **26K ⭐**！
+- workspace 内部不保存机器相关的绝对路径。
+- `agents.defaults.workspace` 支持相对路径 `"workspace"`，运行时按 `PICOCLAW_HOME` 解析。
+- `memory.db` 自包含；停止进程后复制整个目录即可换机器运行。
+- 会话使用追加式 JSONL，并异步落盘，不阻塞消息返回。
 
-2026-03-17 🚀 **v0.2.3 发布！** 系统托盘 UI（Windows & Linux）、子 Agent 状态查询 (`spawn_status`)、实验性 Gateway 热重载、Cron 安全门控，以及 2 项安全修复。PicoClaw 已达 **25K ⭐**！
+### 更快、更安静的回答
 
-2026-03-09 🎉 **v0.2.1 — 史上最大更新！** MCP 协议支持、4 个新频道 (Matrix/IRC/WeCom/Discord Proxy)、3 个新 Provider (Kimi/Minimax/Avian)、视觉管线、JSONL 记忆存储、模型路由。
+0.4 同时收紧了流式链路：Pico 中间帧限流，最终帧在会话保存和压缩之前发布，WebSocket 写操作有超时，模型连接池复用，会话追加批量落盘。本机 Pico WebSocket 测试中首个可见帧在 1ms 内到达，主要延迟来自模型本身。
 
-2026-02-28 📦 **v0.2.0** 发布，支持 Docker Compose 和 Web UI 启动器。
+### 几乎随处可跑
 
-<details>
-<summary>更早的新闻...</summary>
+- x86_64、ARM64、ARMv7、MIPS、RISC-V、LoongArch。
+- Linux、macOS、Windows、Android/Termux、Docker。
+- OpenAI 兼容接口、Anthropic、Gemini、Bedrock、Azure、本地模型等。
+- Telegram、Discord、Slack、飞书、企业微信、QQ、Matrix、IRC、MQTT，以及原生 Pico WebSocket 界面。
 
-2026-02-26 🎉 PicoClaw 仅 17 天突破 **20K Stars**！频道自动编排和能力接口上线。
+---
 
-2026-02-16 🎉 PicoClaw 一周内突破 12K Stars！社区维护者角色和 [路线图](../../ROADMAP.md) 正式发布。
+## 快速开始
 
-2026-02-13 🎉 PicoClaw 4 天内突破 5000 Stars！项目路线图和开发者群组筹建中。
-
-2026-02-09 🎉 **PicoClaw 正式发布！** 仅用 1 天构建，将 AI Agent 带入 $10 硬件与 <10MB 内存的世界。🦐 皮皮虾，我们走！
-
-</details>
-
-## ✨ 特性
-
-🪶 **超轻量级**: 核心功能内存占用 <10MB — 比 OpenClaw 小 99%。*
-
-💰 **极低成本**: 高效到足以在 $10 的硬件上运行 — 比 Mac mini 便宜 98%。
-
-⚡️ **闪电启动**: 启动速度快 400 倍，即使在 0.6GHz 单核处理器上也能在 1 秒内启动。
-
-🌍 **真正可移植**: 跨 RISC-V、ARM、MIPS 和 x86 架构的单二进制文件，一键运行！
-
-🤖 **AI 自举**: 纯 Go 语言原生实现 — 95% 的核心代码由 Agent 生成，并经由"人机回环"微调。
-
-🔌 **MCP 支持**: 原生 [Model Context Protocol](https://modelcontextprotocol.io/) 集成 — 连接任意 MCP 服务器扩展 Agent 能力。
-
-👁️ **视觉管线**: 直接向 Agent 发送图片和文件 — 自动 base64 编码对接多模态 LLM。
-
-🧠 **智能路由**: 基于规则的模型路由 — 简单查询走轻量模型，节省 API 成本。
-
-_*近期版本因快速合并 PR 可能占用 10–20MB，资源优化已列入计划。启动速度对比基于 0.8GHz 单核实测（见下方对比表）。_
-
-<div align="center">
-
-|                                | OpenClaw      | NanoBot                  | **PicoClaw**                           |
-| ------------------------------ | ------------- | ------------------------ | -------------------------------------- |
-| **语言**                       | TypeScript    | Python                   | **Go**                                 |
-| **RAM**                        | >1GB          | >100MB                   | **< 10MB***                            |
-| **启动时间**</br>(0.8GHz core) | >500s         | >30s                     | **<1s**                                |
-| **成本**                       | Mac Mini $599 | 大多数 Linux 开发板 ~$50 | **任意 Linux 开发板**</br>**低至 $10** |
-
-<img src="../../assets/compare.jpg" alt="PicoClaw" width="512">
-
-</div>
-
-> 📋 **[硬件兼容列表](../guides/hardware-compatibility.zh.md)** — 查看所有已测试的板卡，从 $5 RISC-V 到树莓派到安卓手机。你的板卡没在列表中？欢迎提交 PR！
-
-<p align="center">
-<img src="../../assets/hardware-banner.jpg" alt="PicoClaw Hardware Compatibility" width="100%">
-</p>
-
-## 🦾 演示
-
-### 🛠️ 标准助手工作流
-
-<table align="center">
-<tr align="center">
-<th><p align="center">🧩 全栈工程师模式</p></th>
-<th><p align="center">🗂️ 日志与规划管理</p></th>
-<th><p align="center">🔎 网络搜索与学习</p></th>
-</tr>
-<tr>
-<td align="center"><p align="center"><img src="../../assets/picoclaw_code.gif" width="240" height="180"></p></td>
-<td align="center"><p align="center"><img src="../../assets/picoclaw_memory.gif" width="240" height="180"></p></td>
-<td align="center"><p align="center"><img src="../../assets/picoclaw_search.gif" width="240" height="180"></p></td>
-</tr>
-<tr>
-<td align="center">开发 • 部署 • 扩展</td>
-<td align="center">日程 • 自动化 • 记忆</td>
-<td align="center">发现 • 洞察 • 趋势</td>
-</tr>
-</table>
-
-### 🐜 创新的低占用部署
-
-PicoClaw 几乎可以部署在任何 Linux 设备上！
-
-- $9.9 [LicheeRV-Nano](https://item.taobao.com/item.htm?id=764939520376) E(网口) 或 W(WiFi6) 版本，用于极简家庭助手
-- $30~50 [NanoKVM](https://item.taobao.com/item.htm?id=811206560480)，或 $100 [NanoKVM-Pro](https://item.taobao.com/item.htm?id=994419942411)，用于自动化服务器运维
-- $50 [MaixCAM](https://item.taobao.com/item.htm?id=784724795837) 或 $100 [MaixCAM2](https://item.taobao.com/item.htm?id=1050380368975)，用于智能监控
-
-<https://private-user-images.githubusercontent.com/83055338/547056448-e7b031ff-d6f5-4468-bcca-5726b6fecb5c.mp4>
-
-🌟 更多部署案例敬请期待！
-
-## 📦 安装
-
-### 从 picoclaw.io 下载（推荐）
-
-访问 **[picoclaw.io](https://picoclaw.io)** — 官网自动检测你的平台，提供一键下载，无需手动选择架构。
-
-### 下载预编译二进制文件
-
-也可以从 [GitHub Releases](https://github.com/sipeed/picoclaw/releases) 页面手动下载对应平台的二进制文件。
-
-### 从源码构建（开发用）
-
-前置要求：
-
-- Go 1.25+
-- Node.js 22+ 和 pnpm 10.33.0+（用于 Web UI / launcher 构建）
-
-```bash
-git clone https://github.com/sipeed/picoclaw.git
-
-cd picoclaw
-make deps
-
-# 安装前端依赖
-(cd web/frontend && pnpm install --frozen-lockfile)
-
-# 构建核心二进制文件
-make build
-
-# 构建 Web UI Launcher（WebUI 模式必需）
-make build-launcher
-
-# 为 Makefile 管理的所有平台构建核心二进制文件
-make build-all
-
-# 为 Raspberry Pi Zero 2 W 构建（32位: make build-linux-arm; 64位: make build-linux-arm64）
-make build-pi-zero
-
-# 构建并安装
-make install
-```
-
-**Raspberry Pi Zero 2 W:** 请使用与系统匹配的二进制文件：32 位 Raspberry Pi OS → `make build-linux-arm`；64 位 → `make build-linux-arm64`。或运行 `make build-pi-zero` 同时构建两者。
-
-## 🚀 快速开始
-
-### 🌐 WebUI Launcher（推荐桌面用户）
-
-WebUI Launcher 提供基于浏览器的配置与聊天界面，是最简单的上手方式——无需命令行知识。
-
-**方式一：双击启动（桌面）**
-
-从 [picoclaw.io](https://picoclaw.io) 下载后，双击 `picoclaw-launcher`（Windows 上为 `picoclaw-launcher.exe`），浏览器将自动打开 `http://localhost:18800`。
-
-**方式二：命令行**
-
-```bash
-picoclaw-launcher
-# 在浏览器中打开 http://localhost:18800
-```
-
-> [!TIP]
-> **远程访问 / Docker / 虚拟机：** 添加 `-public` 参数以监听所有网络接口：
-> ```bash
-> picoclaw-launcher -public
-> ```
-
-<p align="center">
-<img src="../../assets/launcher-webui.jpg" alt="WebUI Launcher" width="600">
-</p>
-
-**开始使用：**
-
-打开 WebUI，然后：**1)** 配置 Provider（填入 LLM API Key）-> **2)** 配置 Channel（如 Telegram）-> **3)** 启动 Gateway -> **4)** 开始聊天！
-
-详细 WebUI 文档请参阅 [docs.picoclaw.io](https://docs.picoclaw.io)。
-
-<details>
-<summary><b>Docker（备选方案）</b></summary>
-
-```bash
-# 1. 克隆本仓库
-git clone https://github.com/sipeed/picoclaw.git
-cd picoclaw
-
-# 2. 首次运行——自动生成 docker/data/config.json 后退出
-#    （仅在 config.json 和 workspace/ 均不存在时触发）
-docker compose -f docker/docker-compose.yml --profile launcher up
-# 容器打印 "First-run setup complete." 后停止。
-
-# 3. 填写 API Key
-vim docker/data/config.json
-
-# 4. 启动
-docker compose -f docker/docker-compose.yml --profile launcher up -d
-# 打开 http://localhost:18800
-```
-
-> **Docker / 虚拟机用户：** Gateway 默认监听 `127.0.0.1`。设置 `PICOCLAW_GATEWAY_HOST=0.0.0.0` 或使用 `-public` 参数以允许从宿主机访问。
-
-```bash
-# 查看日志
-docker compose -f docker/docker-compose.yml logs -f
-
-# 停止
-docker compose -f docker/docker-compose.yml --profile launcher down
-
-# 更新
-docker compose -f docker/docker-compose.yml pull
-docker compose -f docker/docker-compose.yml --profile launcher up -d
-```
-
-</details>
-
-<details>
-<summary><b>macOS — 首次启动安全警告</b></summary>
-
-macOS 可能会在首次启动时拦截 `picoclaw-launcher`，因为它从互联网下载，未经 Mac App Store 公证。
-
-**第一步：** 双击 `picoclaw-launcher`，会出现安全警告：
-
-<p align="center">
-<img src="../../assets/macos-gatekeeper-warning.jpg" alt="macOS Gatekeeper 警告" width="400">
-</p>
-
-> *"picoclaw-launcher" 无法打开 — Apple 无法验证 "picoclaw-launcher" 不含可能损害 Mac 或危及隐私的恶意软件。*
-
-**第二步：** 打开**系统设置** → **隐私与安全性** → 向下滚动找到**安全性**部分 → 点击**仍要打开** → 在弹窗中再次点击**打开**。
-
-<p align="center">
-<img src="../../assets/macos-gatekeeper-allow.jpg" alt="macOS 隐私与安全性 — 仍要打开" width="600">
-</p>
-
-完成这一次操作后，后续启动 `picoclaw-launcher` 将不再弹出警告。
-
-</details>
-
-<a id="-run-on-old-android-phones"></a>
-### 📱 Android
-
-让你十年前的旧手机焕发新生！将它变成你的 AI 助手。
-
-**方式一：APK 安装**
-
-预览：
-
-<table>
-  <tr>
-    <td><img src="../../assets/fui_main_page.jpg" width="200"></td>
-    <td><img src="../../assets/fui_web_page.jpg" width="200"></td>
-    <td><img src="../../assets/fui_log_page.jpg" width="200"></td>
-    <td><img src="../../assets/fui_setting_page.jpg" width="200"></td>
-  </tr>
-</table>
-
-从 [picoclaw.io](https://picoclaw.io/download/) 下载 APK 并直接安装，无需 Termux！
-
-**方式二：Termux**
-
-<details>
-<summary><b>Terminal Launcher（适用于资源受限环境）</b></summary>
-
-1. 安装 [Termux](https://github.com/termux/termux-app)（可从 [GitHub Releases](https://github.com/termux/termux-app/releases) 下载，或在 F-Droid / Google Play 中搜索）
-2. 执行以下命令：
-
-```bash
-# 从 Release 页面下载最新版本
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
-tar xzf picoclaw_Linux_arm64.tar.gz
-pkg install proot
-termux-chroot ./picoclaw onboard   # chroot 提供标准 Linux 文件系统布局
-```
-
-然后跟随下面的"Terminal Launcher"章节继续配置。
-
-<img src="../../assets/termux.jpg" alt="PicoClaw on Termux" width="512">
-
-对于只有 `picoclaw` 核心二进制文件的极简环境（无 Launcher UI），可通过命令行和 JSON 配置文件完成所有配置。
-
-**1. 初始化**
+### 使用发布二进制
 
 ```bash
 picoclaw onboard
+picoclaw gateway
+# 可选桌面控制台
+picoclaw-launcher
 ```
 
-此命令会创建 `~/.picoclaw/config.json` 和工作区目录。
+打开 `http://localhost:18800` 使用 Launcher，记忆页面位于 `/memory`。
 
-**2. 配置** (`~/.picoclaw/config.json`)
+### 从源码构建
+
+需要 Go 1.25+、Node.js 20+、pnpm、make。
+
+```bash
+git clone https://github.com/sipeed/picoclaw.git
+cd picoclaw
+
+make build              # 终端/gateway 二进制
+make build-launcher     # 内嵌 Web UI 的桌面 Launcher
+```
+
+产物输出到 `build/`。
+
+---
+
+## 记忆配置
 
 ```json
 {
-  "version": 3,
   "agents": {
     "defaults": {
-      "model_name": "gpt-5.4"
+      "workspace": "workspace"
     }
   },
-  "model_list": [
-    {
-      "model_name": "gpt-5.4",
-      "model": "openai/gpt-5.4",
-      "api_keys": ["sk-your-api-key"]
-    }
-  ]
-}
-```
-
-> 完整配置模板请参阅仓库中的 `config/config.example.json`。
-
-**3. 开始聊天**
-
-```bash
-# 单次提问
-picoclaw agent -m "What is 2+2?"
-
-# 交互式对话模式
-picoclaw agent
-
-# 启动 Gateway 以接入聊天应用
-picoclaw gateway
-```
-
-</details>
-
-## 🔌 Providers (LLM)
-
-PicoClaw 通过 `model_list` 配置支持 30+ LLM Provider，使用 `协议/模型` 格式：
-
-| Provider | 协议 | API Key | 备注 |
-|----------|------|---------|------|
-| [OpenAI](https://platform.openai.com/api-keys) | `openai/` | 必填 | GPT-5.4、GPT-4o、o3 等 |
-| [Anthropic](https://console.anthropic.com/settings/keys) | `anthropic/` | 必填 | Claude Opus 4.6、Sonnet 4.6 等 |
-| [Google Gemini](https://aistudio.google.com/apikey) | `gemini/` | 必填 | Gemini 3 Flash、2.5 Pro 等 |
-| [OpenRouter](https://openrouter.ai/keys) | `openrouter/` | 必填 | 200+ 模型，统一 API |
-| [智谱 (GLM)](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys) | `zhipu/` | 必填 | GLM-4.7、GLM-5 等 |
-| [DeepSeek](https://platform.deepseek.com/api_keys) | `deepseek/` | 必填 | DeepSeek-V3、DeepSeek-R1 |
-| [火山引擎](https://console.volcengine.com) | `volcengine/` | 必填 | 豆包、Ark 系列模型 |
-| [Qwen](https://dashscope.console.aliyun.com/apiKey) | `qwen/` | 必填 | Qwen3、Qwen-Max 等 |
-| [Groq](https://console.groq.com/keys) | `groq/` | 必填 | 快速推理（Llama、Mixtral） |
-| [Moonshot (Kimi)](https://platform.moonshot.cn/console/api-keys) | `moonshot/` | 必填 | Kimi 系列模型 |
-| [Minimax](https://platform.minimaxi.com/user-center/basic-information/interface-key) | `minimax/` | 必填 | MiniMax 系列模型 |
-| [Mistral](https://console.mistral.ai/api-keys) | `mistral/` | 必填 | Mistral Large、Codestral |
-| [NVIDIA NIM](https://build.nvidia.com/) | `nvidia/` | 必填 | NVIDIA 托管模型 |
-| [Cerebras](https://cloud.cerebras.ai/) | `cerebras/` | 必填 | 快速推理 |
-| [Novita AI](https://novita.ai/) | `novita/` | 必填 | 多种开源模型 |
-| [小米 MiMo](https://platform.xiaomimimo.com/) | `mimo/` | 必填 | MiMo 系列模型 |
-| [Ollama](https://ollama.com/) | `ollama/` | 无需 | 本地模型，自托管 |
-| [vLLM](https://docs.vllm.ai/) | `vllm/` | 无需 | 本地部署，兼容 OpenAI |
-| [LiteLLM](https://docs.litellm.ai/) | `litellm/` | 视情况 | 100+ Provider 代理 |
-| [Azure OpenAI](https://portal.azure.com/) | `azure/` | 必填 | 企业级 Azure 部署 |
-| [GitHub Copilot](https://github.com/features/copilot) | `github-copilot/` | OAuth | 设备码登录 |
-| [Antigravity](https://console.cloud.google.com/) | `antigravity/` | OAuth | Google Cloud AI |
-
-<details>
-<summary><b>本地部署（Ollama、vLLM 等）</b></summary>
-
-**Ollama:**
-```json
-{
-  "model_list": [
-    {
-      "model_name": "local-llama",
-      "model": "ollama/llama3.1:8b",
-      "api_base": "http://localhost:11434/v1"
-    }
-  ]
-}
-```
-
-**vLLM:**
-```json
-{
-  "model_list": [
-    {
-      "model_name": "local-vllm",
-      "model": "vllm/your-model",
-      "api_base": "http://localhost:8000/v1"
-    }
-  ]
-}
-```
-
-完整 Provider 配置详情请参阅 [Providers & Models](../guides/providers.zh.md)。
-
-</details>
-
-## 💬 Channels（聊天应用）
-
-通过 18+ 消息平台与你的 PicoClaw 对话：
-
-| Channel | 配置难度 | 协议 | 文档 |
-|---------|----------|------|------|
-| **Telegram** | 简单（bot token） | 长轮询 | [指南](../channels/telegram/README.zh.md) |
-| **Discord** | 简单（bot token + intents） | WebSocket | [指南](../channels/discord/README.zh.md) |
-| **WhatsApp** | 简单（扫码或 bridge URL） | 原生 / Bridge | [指南](../guides/chat-apps.zh.md#whatsapp) |
-| **微信 (Weixin)** | 简单（扫码登录） | iLink API | [指南](../guides/chat-apps.zh.md#weixin) |
-| **QQ** | 简单（AppID + AppSecret） | WebSocket | [指南](../channels/qq/README.zh.md) |
-| **Slack** | 简单（bot + app token） | Socket Mode | [指南](../channels/slack/README.zh.md) |
-| **Matrix** | 中等（homeserver + token） | Sync API | [指南](../channels/matrix/README.zh.md) |
-| **钉钉** | 中等（client credentials） | Stream | [指南](../channels/dingtalk/README.zh.md) |
-| **飞书 / Lark** | 中等（App ID + Secret） | WebSocket/SDK | [指南](../channels/feishu/README.zh.md) |
-| **LINE** | 中等（credentials + webhook） | Webhook | [指南](../channels/line/README.zh.md) |
-| **企业微信** | 简单（扫码登录或手动配置） | WebSocket | [指南](../channels/wecom/README.zh.md) |
-| **VK** | 简单（群组 token） | Long Poll | [指南](../channels/vk/README.md) |
-| **IRC** | 中等（server + nick） | IRC 协议 | [指南](../guides/chat-apps.zh.md#irc) |
-| **OneBot** | 中等（WebSocket URL） | OneBot v11 | [指南](../channels/onebot/README.zh.md) |
-| **MaixCam** | 简单（启用即可） | TCP socket | [指南](../channels/maixcam/README.zh.md) |
-| **Pico** | 简单（启用即可） | 原生协议 | 内置 |
-| **Pico Client** | 简单（WebSocket URL） | WebSocket | 内置 |
-
-> 所有基于 Webhook 的 Channel 共用同一个 Gateway HTTP 服务器（`gateway.host`:`gateway.port`，默认 `127.0.0.1:18790`）。飞书使用 WebSocket/SDK 模式，不使用共享 HTTP 服务器。
-
-> 日志详细程度通过 `gateway.log_level` 控制（默认：`warn`）。支持的值：`debug`、`info`、`warn`、`error`、`fatal`。也可通过 `PICOCLAW_LOG_LEVEL` 环境变量设置。详见[配置指南](../guides/configuration.zh.md#gateway-日志等级)。
-
-详细 Channel 配置说明请参阅 [聊天应用配置](../guides/chat-apps.zh.md)。
-
-## 🔧 Tools
-
-### 🔍 网络搜索
-
-PicoClaw 可以搜索网络以提供最新信息。在 `tools.web` 中配置：
-
-| 搜索引擎 | API Key | 免费额度 | 链接 |
-|---------|---------|---------|------|
-| [百度搜索](https://cloud.baidu.com/doc/qianfan-api/s/Wmbq4z7e5) | 必填 | 1500 次/月（按天发放） | AI 搜索，国内首选 |
-| [Tavily](https://tavily.com) | 必填 | 1000 次/月 | 专为 AI Agent 优化 |
-| [GLM Search](https://open.bigmodel.cn/) | 必填 | 视情况 | 智谱网络搜索 |
-| DuckDuckGo | 无需 | 无限制 | 内置备用（国内访问困难） |
-| [Perplexity](https://www.perplexity.ai) | 必填 | 付费 | AI 驱动搜索（国内访问困难） |
-| [Brave Search](https://brave.com/search/api) | 必填 | 2000 次/月 | 快速且注重隐私（国内访问困难） |
-| [SearXNG](https://github.com/searxng/searxng) | 无需 | 自托管 | 免费元搜索引擎 |
-
-### ⚙️ 其他工具
-
-PicoClaw 内置文件操作、代码执行、定时任务等工具。详情请参阅 [工具配置](../reference/tools_configuration.zh.md)。
-
-## 🎯 Skills
-
-Skills 是扩展 Agent 能力的模块化插件，从工作区的 `SKILL.md` 文件加载。
-
-**从 ClawHub 安装 Skills：**
-
-```bash
-picoclaw skills search "web scraping"
-picoclaw skills install <skill-name>
-```
-
-**配置 Skills 仓库源**：
-
-在 `config.json` 中添加：
-```json
-{
-  "tools": {
-    "skills": {
-      "registries": {
-        "clawhub": {
-          "auth_token": "your-clawhub-token"
-        },
-        "github": {
-          "base_url": "https://github.com",
-          "auth_token": "your-github-token",
-          "proxy": ""
-        }
-      }
-    }
+  "memory": {
+    "enabled": true,
+    "db_path": "memory/memory.db",
+    "budget_tokens": 1200,
+    "auto_extract": true,
+    "private_channels": ["pico"],
+    "inject_fictional": false,
+    "review_required": true,
+    "episodic_retention_days": 365
   }
 }
 ```
 
-`tools.skills.github.*` 已废弃，请改用 `tools.skills.registries.github.*`。
+0.3.x 的旧配置不需要手动添加 `memory` 节：加载时会自动补齐默认值。把 workspace 写成相对路径 `"workspace"`，配置即可跨机器、跨用户迁移。
 
-更多详情请参阅 [工具配置 - Skills](../reference/tools_configuration.zh.md#skills-tool)。
+### 记忆 CLI
 
-## 🔗 MCP (Model Context Protocol)
-
-PicoClaw 原生支持 [MCP](https://modelcontextprotocol.io/) — 连接任意 MCP 服务器，通过外部工具和数据源扩展 Agent 能力。
-
-```json
-{
-  "tools": {
-    "mcp": {
-      "enabled": true,
-      "servers": {
-        "filesystem": {
-          "enabled": true,
-          "command": "npx",
-          "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-        }
-      }
-    }
-  }
-}
+```bash
+picoclaw memory import --from /path/to/old-workspace
+picoclaw memory audit
+picoclaw memory stats
+picoclaw memory compact --retention-days 365
+picoclaw memory export --out memories.jsonl
+picoclaw memory render
 ```
 
-完整 MCP 配置（stdio、SSE、HTTP 传输、Tool Discovery）请参阅 [工具配置 - MCP](../reference/tools_configuration.zh.md#mcp-tool)。
+数据模型、去重规则、审核流程和 API 详见 [长期记忆指南](../guides/memory.zh.md)。
 
-## <img src="../../assets/clawdchat-icon.png" width="24" height="24" alt="ClawdChat"> 加入 Agent 社交网络
+---
 
-通过 CLI 或任何已集成的聊天应用发送一条消息，即可将 PicoClaw 连接到 Agent 社交网络。
+## 从 0.3.x 迁移到 0.4.0
 
-**阅读 `https://clawdchat.ai/skill.md` 并按照说明加入 [ClawdChat.ai](https://clawdchat.ai)**
+0.4.0 **没有自动 schema 迁移**。它只把 `workspace/memory/memory.db` 作为事实源，运行时不再读取旧的 `MEMORY.md`。每个 workspace 执行一次以下步骤：
 
-## 🖥️ CLI 命令行参考
+1. **停止服务**
 
-| 命令                       | 说明                   |
-| ------------------------- | ---------------------- |
-| `picoclaw onboard`        | 初始化配置与工作区       |
-| `picoclaw auth weixin` | 扫码连接微信个人号 |
-| `picoclaw agent -m "..."` | 与 Agent 对话           |
-| `picoclaw agent`          | 交互式对话模式           |
-| `picoclaw gateway`        | 启动网关                |
-| `picoclaw status`         | 查看状态                |
-| `picoclaw version`        | 查看版本信息             |
-| `picoclaw model`          | 查看或切换默认模型       |
-| `picoclaw cron list`      | 列出所有定时任务         |
-| `picoclaw cron add ...`   | 添加定时任务             |
-| `picoclaw cron disable`   | 禁用定时任务             |
-| `picoclaw cron remove`    | 删除定时任务             |
-| `picoclaw skills list`    | 列出已安装 Skills        |
-| `picoclaw skills install` | 安装 Skill              |
-| `picoclaw migrate`        | 从旧版本迁移数据         |
-| `picoclaw auth login`     | 认证 Provider           |
+   ```bash
+   systemctl --user stop picoclaw picoclaw-launcher
+   ```
 
-### ⏰ 定时任务 / 提醒
+2. **备份旧 workspace**
 
-PicoClaw 通过 `cron` 工具支持定时提醒和重复任务：
+   ```bash
+   cp -a ~/.picoclaw/workspace ~/.picoclaw/workspace.backup-$(date +%F)
+   ```
 
-* **一次性提醒**: "10分钟后提醒我" → 10分钟后触发一次
-* **重复任务**: "每2小时提醒我" → 每2小时触发
-* **Cron 表达式**: "每天上午9点提醒我" → 使用 cron 表达式
+3. **选择迁移方式**
 
-## 📚 文档
+   - 保留现有 workspace，导入历史数据：
 
-详细指南请参阅以下文档，README 仅涵盖快速入门。
+     ```bash
+     picoclaw memory import --from ~/.picoclaw/workspace
+     ```
 
-| 主题 | 说明 |
-|------|------|
-| 🐳 [Docker 与快速开始](../guides/docker.zh.md) | Docker Compose 配置、Launcher/Agent 模式、快速开始 |
-| 💬 [聊天应用配置](../guides/chat-apps.zh.md) | 全部 17+ Channel 配置指南 |
-| ⚙️ [配置指南](../guides/configuration.zh.md) | 环境变量、工作区布局、安全沙箱 |
-| 🔌 [提供商与模型配置](../guides/providers.zh.md) | 30+ LLM Provider、模型路由、model_list 配置 |
-| 🔄 [异步任务与 Spawn](../guides/spawn-tasks.zh.md) | 快速任务、长任务与 Spawn、异步子 Agent 编排 |
-| 🪝 [Hook 系统](../architecture/hooks/README.zh.md) | 事件驱动 Hook：观察者、拦截器、审批 Hook |
-| 🎯 [Steering](../architecture/steering.md) | 在工具调用间向运行中的 Agent 注入消息 |
-| 🔀 [SubTurn](../architecture/subturn.md) | 子 Agent 协调、并发控制、生命周期管理 |
-| 🐛 [疑难解答](../operations/troubleshooting.zh.md) | 常见问题与解决方案 |
-| 🔧 [工具配置](../reference/tools_configuration.zh.md) | 工具启用/禁用、执行策略、MCP、Skills |
-| 📋 [硬件兼容列表](../guides/hardware-compatibility.zh.md) | 已测试板卡、最低要求 |
+   - 或直接替换为准备好的 0.4 workspace（例如之前生成的便携归档）：
 
-## 🤝 贡献与路线图
+     ```bash
+     rm -rf ~/.picoclaw/workspace
+     tar -xzf picoclaw-workspace-0.4-portable.tar.gz -C ~/.picoclaw
+     chown -R <service-user>:<service-group> ~/.picoclaw/workspace
+     ```
 
-欢迎提交 PR！代码库刻意保持小巧和可读。🤗
+4. **生成可读视图并检查**
 
-查看完整的 [社区路线图](https://github.com/sipeed/picoclaw/issues/988) 和 [CONTRIBUTING.md](../../CONTRIBUTING.md)。
+   ```bash
+   picoclaw memory render
+   picoclaw memory audit
+   ```
 
-开发者群组正在组建中，入群门槛：至少合并过 1 个 PR。
+   `memory import` 会把旧 `MEMORY.md` 的条目转成 `pending_review` 用户画像候选，并折叠重复的历史任务记录。
 
-用户群组：
+5. **使用可迁移的 workspace 路径**
 
-Discord: <https://discord.gg/V4sAZ9XWpN>
+   ```json
+   "agents": { "defaults": { "workspace": "workspace" } }
+   ```
 
-WeChat:
-<img src="../../assets/wechat.png" alt="WeChat group QR code" width="512">
+   相对路径按 `PICOCLAW_HOME` 解析；绝对路径仍然可用。
+
+6. **启动并审核**
+
+   ```bash
+   systemctl --user start picoclaw picoclaw-launcher
+   ```
+
+   打开 `http://localhost:18800/memory`，处理审核队列：确认真实事实、把角色扮演标记为虚构、归档过期事件。
+
+注意：
+
+- 0.4 不再读取旧 `MEMORY.md`。如果希望保留其中的事实，请在删除旧 workspace 前执行导入。
+- 原始会话历史仍在 `workspace/sessions/*.jsonl`，格式不变。
+- `memory.db` 使用 WAL 模式；复制 workspace 前请停止进程，或先执行一次 `picoclaw memory audit` 让空闲库完成 checkpoint。
+
+---
+
+## 模型与渠道
+
+PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azure 和本地模型。在 `model_list` 中配置模型，Launcher 的模型页面可以添加和测试。
+
+聊天渠道包括 Telegram、Discord、Slack、飞书/Lark、企业微信、微信、QQ、钉钉、LINE、Matrix、IRC、MQTT、VK，以及原生 Pico WebSocket 界面。
+
+- [模型配置指南](../guides/providers.zh.md)
+- [聊天应用配置](../guides/chat-apps.zh.md)
+- [配置参考](../guides/configuration.zh.md)
+
+---
+
+## 文档
+
+- [长期记忆](../guides/memory.zh.md) · [English](../guides/memory.md)
+- [从 0.3.x 迁移到 0.4.0](../migration/0.4.0.md)
+- [变更日志](../../CHANGELOG.md)
+- [配置指南](../guides/configuration.zh.md)
+- [路由与会话](../guides/routing-guide.md)
+- [会话系统](../architecture/session-system.zh.md)
+- [Agent 自我进化](../architecture/agent-self-evolution.md)
+- [文档索引](../README.md)
+
+---
+
+## 社区
+
+- 官网：<https://picoclaw.io>
+- 文档：<https://docs.picoclaw.io/>
+- Discord：<https://discord.gg/V4sAZ9XWpN>
+- X/Twitter：<https://x.com/SipeedIO>
+
+## 关于本仓库
+
+本仓库跟踪 `sipeed/picoclaw`，并包含 0.4 记忆系统、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
+
+## 许可证
+
+MIT，详见 [LICENSE](../../LICENSE)。

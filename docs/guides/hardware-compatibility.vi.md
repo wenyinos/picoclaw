@@ -1,4 +1,4 @@
-> Quay lại [README](../project/README.vi.md)
+> Quay lại [README](../../README.md)
 
 # 🖥️ PicoClaw Danh sách tương thích phần cứng
 
@@ -99,7 +99,7 @@ Sản phẩm tiêu dùng, router và thiết bị công nghiệp đã được k
 
 Bất kỳ điện thoại Android ARM64 nào (2015+) với 1GB+ RAM. Cài đặt [Termux](https://github.com/termux/termux-app), sử dụng `proot` để chạy PicoClaw.
 
-> Xem [README: Chạy trên điện thoại Android cũ](../project/README.vi.md#-run-on-old-android-phones) để biết hướng dẫn cài đặt.
+> Xem [README: Chạy trên điện thoại Android cũ](../../README.md#-run-on-old-android-phones) để biết hướng dẫn cài đặt.
 
 ### Desktop / Máy chủ / Đám mây
 

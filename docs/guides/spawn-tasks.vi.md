@@ -1,6 +1,6 @@
 # 🔄 Tác Vụ Bất Đồng Bộ và Spawn
 
-> Quay lại [README](../project/README.vi.md)
+> Quay lại [README](../../README.md)
 
 ## Tác Vụ Nhanh (phản hồi trực tiếp)
 

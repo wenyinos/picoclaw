@@ -1,6 +1,6 @@
 # 💬 Konfigurasi Aplikasi Sembang
 
-> Kembali ke [README](../project/README.ms.md)
+> Kembali ke [README](../../README.md)
 
 ## 💬 Aplikasi Sembang
 

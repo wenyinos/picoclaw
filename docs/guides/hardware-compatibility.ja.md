@@ -1,4 +1,4 @@
-> [README](../project/README.ja.md) に戻る
+> [README](../../README.md) に戻る
 
 # 🖥️ PicoClaw ハードウェア互換性リスト
 
@@ -99,7 +99,7 @@ PicoClaw でテスト済みのコンシューマー製品、ルーター、産�
 
 1GB 以上の RAM を搭載した ARM64 Android スマートフォン（2015年以降）。[Termux](https://github.com/termux/termux-app) をインストールし、`proot` を使用して PicoClaw を実行します。
 
-> セットアップ手順は [README：古い Android スマートフォンで実行](../project/README.ja.md#-run-on-old-android-phones) を参照してください。
+> セットアップ手順は [README：古い Android スマートフォンで実行](../../README.md#-run-on-old-android-phones) を参照してください。
 
 ### デスクトップ / サーバー / クラウド
 

@@ -1,6 +1,6 @@
 # 🔌 Nhà Cung Cấp và Cấu Hình Mô Hình
 
-> Quay lại [README](../project/README.vi.md)
+> Quay lại [README](../../README.md)
 
 ### Nhà Cung Cấp
 

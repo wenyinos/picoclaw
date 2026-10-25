@@ -1,6 +1,6 @@
 # 🐛 トラブルシューティング
 
-> [README](../project/README.ja.md) に戻る
+> [README](../../README.md) に戻る
 
 ## "model ... not found in model_list" または OpenRouter "free is not a valid model ID"
 

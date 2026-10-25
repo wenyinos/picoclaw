@@ -1,6 +1,6 @@
 # 🐳 Docker và Bắt Đầu Nhanh
 
-> Quay lại [README](../project/README.vi.md)
+> Quay lại [README](../../README.md)
 
 ## 🐳 Docker Compose
 

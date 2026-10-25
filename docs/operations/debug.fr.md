@@ -1,6 +1,6 @@
 # Débogage de PicoClaw
 
-> Retour au [README](../project/README.fr.md)
+> Retour au [README](../../README.md)
 
 PicoClaw effectue de multiples interactions complexes en arrière-plan pour chaque requête qu'il reçoit — du routage des messages et de l'évaluation de la complexité, à l'exécution des outils et à l'adaptation aux défaillances de modèle. Pouvoir voir exactement ce qui se passe est crucial, non seulement pour résoudre les problèmes potentiels, mais aussi pour véritablement comprendre le fonctionnement de l'agent.
 

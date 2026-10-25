@@ -1,6 +1,6 @@
 # 🔌 プロバイダーとモデル設定
 
-> [README](../project/README.ja.md) に戻る
+> [README](../../README.md) に戻る
 
 ### プロバイダー
 

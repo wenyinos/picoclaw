@@ -1,4 +1,4 @@
-> [README](../project/README.ja.md) に戻る
+> [README](../../README.md) に戻る
 
 # Antigravity 認証・統合ガイド
 

@@ -1,6 +1,6 @@
 # 🐳 Docker とクイックスタート
 
-> [README](../project/README.ja.md) に戻る
+> [README](../../README.md) に戻る
 
 ## 🐳 Docker Compose
 

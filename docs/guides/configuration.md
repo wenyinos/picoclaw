@@ -56,7 +56,7 @@ PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspa
 ```
 ~/.picoclaw/workspace/
 ├── sessions/          # Conversation sessions and history
-├── memory/           # Long-term memory (MEMORY.md)
+├── memory/           # Long-term memory (memory.db + generated MEMORY.md)
 ├── state/            # Persistent state (last channel, etc.)
 ├── cron/             # Scheduled jobs database
 ├── skills/           # Custom skills
@@ -67,7 +67,9 @@ PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspa
 └── USER.md           # User preferences
 ```
 
-> **Note:** Changes to `AGENT.md`, `SOUL.md`, `USER.md` and `memory/MEMORY.md` are automatically detected at runtime via file modification time (mtime) tracking. You do **not** need to restart the gateway after editing these files — the agent picks up the new content on the next request.
+> **Note:** Changes to `AGENT.md`, `SOUL.md`, and `USER.md` are detected at runtime via file modification time (mtime) tracking. Long-term memory is stored in `memory/memory.db` (SQLite); `MEMORY.md` is a generated view rebuilt with `picoclaw memory render`. See [Long-term memory](memory.md).
+>
+> `agents.defaults.workspace` may be relative (for example `"workspace"`); it is resolved against `PICOCLAW_HOME`. This keeps the workspace portable between machines and users.
 
 ### Agent Self-Evolution
 

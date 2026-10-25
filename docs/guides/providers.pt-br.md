@@ -1,6 +1,6 @@
 # 🔌 Provedores e Configuração de Modelos
 
-> Voltar ao [README](../project/README.pt-br.md)
+> Voltar ao [README](../../README.md)
 
 ### Provedores
 

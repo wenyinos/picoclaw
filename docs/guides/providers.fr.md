@@ -1,6 +1,6 @@
 # 🔌 Fournisseurs et Configuration des Modèles
 
-> Retour au [README](../project/README.fr.md)
+> Retour au [README](../../README.md)
 
 ### Fournisseurs
 

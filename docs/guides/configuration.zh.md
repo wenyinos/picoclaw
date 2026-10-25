@@ -54,7 +54,7 @@ PicoClaw 将数据存储在您配置的工作区中（默认：`~/.picoclaw/work
 ```
 ~/.picoclaw/workspace/
 ├── sessions/          # 对话会话和历史
-├── memory/           # 长期记忆 (MEMORY.md)
+├── memory/           # 长期记忆 (memory.db + 生成的 MEMORY.md)
 ├── state/            # 持久化状态 (最后一次频道等)
 ├── cron/             # 定时任务数据库
 ├── skills/           # 自定义技能
@@ -65,7 +65,9 @@ PicoClaw 将数据存储在您配置的工作区中（默认：`~/.picoclaw/work
 └── USER.md           # 用户偏好
 ```
 
-> **提示：** 对 `AGENT.md`、`SOUL.md`、`USER.md` 和 `memory/MEMORY.md` 的修改会通过文件修改时间（mtime）在运行时自动检测。**无需重启 gateway**，Agent 将在下一次请求时自动加载最新内容。
+> **提示：** 对 `AGENT.md`、`SOUL.md`、`USER.md` 的修改会通过文件修改时间（mtime）在运行时自动检测。长期记忆保存在 `memory/memory.db`（SQLite）；`MEMORY.md` 是生成视图，可执行 `picoclaw memory render` 重建。详见 [长期记忆](memory.zh.md)。
+>
+> `agents.defaults.workspace` 可以写成相对路径（例如 `"workspace"`），运行时按 `PICOCLAW_HOME` 解析，便于跨机器、跨用户迁移。
 
 ### Agent 自进化
 

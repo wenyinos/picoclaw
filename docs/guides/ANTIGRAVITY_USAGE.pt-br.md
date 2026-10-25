@@ -1,4 +1,4 @@
-> Voltar ao [README](../project/README.pt-br.md)
+> Voltar ao [README](../../README.md)
 
 # Usando o provedor Antigravity no PicoClaw
 

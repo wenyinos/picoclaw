@@ -1,6 +1,6 @@
 # 🔧 Configuration des Outils
 
-> Retour au [README](../project/README.fr.md)
+> Retour au [README](../../README.md)
 
 La configuration des outils de PicoClaw se trouve dans le champ `tools` de `config.json`.
 

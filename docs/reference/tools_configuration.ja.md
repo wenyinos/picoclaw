@@ -1,6 +1,6 @@
 # 🔧 ツール設定
 
-> [README](../project/README.ja.md) に戻る
+> [README](../../README.md) に戻る
 
 PicoClaw のツール設定は `config.json` の `tools` フィールドにあります。
 

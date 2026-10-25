@@ -1,6 +1,6 @@
 # ⚙️ Panduan Konfigurasi
 
-> Kembali ke [README](../project/README.ms.md)
+> Kembali ke [README](../../README.md)
 
 ## ⚙️ Konfigurasi
 

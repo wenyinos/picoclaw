@@ -1,6 +1,6 @@
 # 🔄 非同期タスクと Spawn
 
-> [README](../project/README.ja.md) に戻る
+> [README](../../README.md) に戻る
 
 ### Spawn を使用した非同期タスク
 

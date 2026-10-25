@@ -1,6 +1,6 @@
 # ⚙️ Guia de Configuração
 
-> Voltar ao [README](../project/README.pt-br.md)
+> Voltar ao [README](../../README.md)
 
 ## ⚙️ Configuração
 

@@ -1,4 +1,4 @@
-> Retour au [README](../project/README.fr.md)
+> Retour au [README](../../README.md)
 
 # Guide d'authentification et d'intégration Antigravity
 

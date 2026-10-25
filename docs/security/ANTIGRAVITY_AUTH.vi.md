@@ -1,4 +1,4 @@
-> Quay lại [README](../project/README.vi.md)
+> Quay lại [README](../../README.md)
 
 # Hướng dẫn Xác thực và Tích hợp Antigravity
 

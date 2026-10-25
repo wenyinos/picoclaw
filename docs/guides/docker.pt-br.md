@@ -1,6 +1,6 @@
 # 🐳 Docker e Início Rápido
 
-> Voltar ao [README](../project/README.pt-br.md)
+> Voltar ao [README](../../README.md)
 
 ## 🐳 Docker Compose
 

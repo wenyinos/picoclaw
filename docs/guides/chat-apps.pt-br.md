@@ -1,6 +1,6 @@
 # 💬 Configuração de Aplicativos de Chat
 
-> Voltar ao [README](../project/README.pt-br.md)
+> Voltar ao [README](../../README.md)
 
 ## 💬 Aplicativos de Chat
 

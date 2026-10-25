@@ -1,6 +1,6 @@
 # ⚙️ 設定ガイド
 
-> [README](../project/README.ja.md) に戻る
+> [README](../../README.md) に戻る
 
 ## ⚙️ 設定詳細
 

@@ -1,6 +1,6 @@
 # 🔧 Cấu Hình Công Cụ
 
-> Quay lại [README](../project/README.vi.md)
+> Quay lại [README](../../README.md)
 
 Cấu hình công cụ của PicoClaw nằm trong trường `tools` của `config.json`.
 

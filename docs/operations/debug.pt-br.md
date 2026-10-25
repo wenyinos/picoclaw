@@ -1,6 +1,6 @@
 # Depuração do PicoClaw
 
-> Voltar ao [README](../project/README.pt-br.md)
+> Voltar ao [README](../../README.md)
 
 O PicoClaw realiza múltiplas interações complexas nos bastidores para cada requisição que recebe — desde o roteamento de mensagens e avaliação de complexidade, até a execução de ferramentas e adaptação a falhas de modelo. Poder ver exatamente o que está acontecendo é crucial, não apenas para solucionar problemas potenciais, mas também para realmente entender como o agente opera.
 

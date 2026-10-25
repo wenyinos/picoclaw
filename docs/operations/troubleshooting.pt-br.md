@@ -1,6 +1,6 @@
 # 🐛 Solução de Problemas
 
-> Voltar ao [README](../project/README.pt-br.md)
+> Voltar ao [README](../../README.md)
 
 ## "model ... not found in model_list" ou OpenRouter "free is not a valid model ID"
 

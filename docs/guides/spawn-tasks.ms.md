@@ -1,6 +1,6 @@
 # 🔄 Spawn & Tugasan Async
 
-> Kembali ke [README](../project/README.ms.md)
+> Kembali ke [README](../../README.md)
 
 ## Tugasan Cepat (balas terus)
 
