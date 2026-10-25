@@ -167,11 +167,18 @@ func TestExtractTurn(t *testing.T) {
 		t.Fatalf("chitchat should not extract: %+v %v", res, err)
 	}
 
-	if _, err := s.ExtractTurn(ctx, "我们来扮演一个故事", "好的", "s1", true); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct{ user, assistant string }{
+		{"根据你的设定，简单介绍一下你自己。", "好的，我是 PicoClaw。"},
+		{"今天天气不错，我们随便聊聊吧。", "是啊，秋高气爽。"},
+		{"我们来扮演一个故事", "好的。"},
+	} {
+		res, err := s.ExtractTurn(ctx, tc.user, tc.assistant, "s1", true)
+		if err != nil || len(res) != 0 {
+			t.Fatalf("ordinary/roleplay chat should not extract: %q -> %+v, %v", tc.user, res, err)
+		}
 	}
 	pending, _ := s.List(ctx, SearchOptions{Realm: RealmFictional, Status: StatusPending, Limit: 10})
-	if len(pending) != 1 {
-		t.Fatalf("roleplay memory should be pending fictional: %+v", pending)
+	if len(pending) != 0 {
+		t.Fatalf("roleplay keywords should not create pending memories: %+v", pending)
 	}
 }

@@ -8,18 +8,19 @@ import (
 )
 
 var (
-	datePattern    = regexp.MustCompile(`(20\d{2})[年\-/](\d{1,2})[月\-/](\d{1,2})日?`)
-	weekPattern    = regexp.MustCompile(`(一周|一个星期|7天|七天)`)
-	dayPattern     = regexp.MustCompile(`(一天|1天|当天)`)
-	nicknamePat    = regexp.MustCompile(`(?:以后|今后)?(?:请)?叫我\s*[「"']?([^，。,.;；\s]{1,12})`)
-	aiNicknamePat  = regexp.MustCompile(`(?:以后|今后)?(?:我)?叫你\s*[「"']?([^，。,.;；\s]{1,12})`)
-	preferencePat  = regexp.MustCompile(`(?:我|本人)(喜欢|不喜欢|偏好|讨厌|爱吃|不吃|对[^，。]{1,12}过敏)`)
-	roleplayMarker = []string{"扮演", "角色扮演", "剧情", "设定", "人设", "世界观", "虚构", "故事线"}
+	datePattern   = regexp.MustCompile(`(20\d{2})[年\-/](\d{1,2})[月\-/](\d{1,2})日?`)
+	weekPattern   = regexp.MustCompile(`(一周|一个星期|7天|七天)`)
+	dayPattern    = regexp.MustCompile(`(一天|1天|当天)`)
+	nicknamePat   = regexp.MustCompile(`(?:以后|今后)?(?:请)?叫我\s*[「"']?([^，。,.;；\s]{1,12})`)
+	aiNicknamePat = regexp.MustCompile(`(?:以后|今后)?(?:我)?叫你\s*[「"']?([^，。,.;；\s]{1,12})`)
+	preferencePat = regexp.MustCompile(`(?:我|本人)(喜欢|不喜欢|偏好|讨厌|爱吃|不吃|对[^，。]{1,12}过敏)`)
 )
 
 // ExtractTurn applies conservative rule-based extraction to one completed turn.
 // It only creates memories for explicit user statements, so ordinary chat does
-// not pollute the store.
+// not pollute the store. Assistant replies are not inspected: words such as
+// "设定" or "剧情" appear in normal assistant prose and must not create
+// memories by themselves.
 func (s *Store) ExtractTurn(
 	ctx context.Context,
 	userText, assistantText, sessionKey string,
@@ -29,7 +30,6 @@ func (s *Store) ExtractTurn(
 	if text == "" || s == nil {
 		return nil, nil
 	}
-	now := time.Now()
 	results := []AddResult{}
 	add := func(in AddInput) {
 		in.SourceType = "user_statement"
@@ -115,31 +115,7 @@ func (s *Store) ExtractTurn(
 		return results, nil
 	}
 
-	// Role-play context: keep it out of the real profile.
-	if containsAny(text+" "+assistantText, roleplayMarker) {
-		add(AddInput{
-			Text: text, Realm: RealmFictional, Layer: LayerEpisodic,
-			Importance: 0.5, Audience: "private",
-			ForceStatus: func() string {
-				if reviewRequired {
-					return StatusPending
-				}
-				return StatusActive
-			}(),
-		})
-	}
-
-	_ = now
 	return results, nil
-}
-
-func containsAny(s string, needles []string) bool {
-	for _, n := range needles {
-		if strings.Contains(s, n) {
-			return true
-		}
-	}
-	return false
 }
 
 func atoi(s string) int {
