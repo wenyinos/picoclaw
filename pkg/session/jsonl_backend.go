@@ -181,6 +181,15 @@ func (b *JSONLBackend) Save(key string) error {
 	return b.store.Compact(context.Background(), key)
 }
 
+// Flush writes any buffered session messages to disk. The JSONL backend
+// appends asynchronously, so callers that inspect files directly should call
+// this first.
+func (b *JSONLBackend) Flush() {
+	if f, ok := b.store.(interface{ Flush() }); ok {
+		f.Flush()
+	}
+}
+
 // Close releases resources held by the underlying store.
 func (b *JSONLBackend) Close() error {
 	return b.store.Close()

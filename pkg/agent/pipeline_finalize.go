@@ -51,6 +51,17 @@ func (p *Pipeline) Finalize(
 		ts.agent.Sessions.AddFullMessage(ts.sessionKey, finalMsg)
 		ts.recordPersistedMessage(finalMsg)
 		ts.ingestMessage(turnCtx, al, finalMsg)
+	}
+
+	// Publish the final frame before persistence and compaction. The client
+	// should stop typing as soon as the model is done; disk I/O and summary
+	// generation must not delay the last content update. Usage still includes
+	// the final assistant message because it was added above.
+	contextUsage := computeContextUsage(ts.agent, ts.sessionKey)
+	streamErr := finalizeConfiguredStreamingLLM(turnCtx, ts, exec, finalContent, contextUsage)
+
+	var saveErr error
+	if !ts.opts.NoHistory {
 		if err := ts.agent.Sessions.Save(ts.sessionKey); err != nil {
 			al.emitEvent(
 				runtimeevents.KindAgentError,
@@ -60,8 +71,7 @@ func (p *Pipeline) Finalize(
 					Message: err.Error(),
 				},
 			)
-			cancelConfiguredStreamingLLM(turnCtx, exec)
-			return turnResult{status: TurnEndStatusError}, err
+			saveErr = err
 		}
 	}
 
@@ -76,8 +86,10 @@ func (p *Pipeline) Finalize(
 		)
 	}
 
-	contextUsage := computeContextUsage(ts.agent, ts.sessionKey)
-	streamErr := finalizeConfiguredStreamingLLM(turnCtx, ts, exec, finalContent, contextUsage)
+	// Extract durable memories after the response path; failures never affect
+	// the turn result.
+	p.al.extractMemoryAsync(ts.agent.Workspace, p.Cfg.Memory, ts.userMessage, finalContent, ts.sessionKey)
+
 	// If streaming never became visible, keep the legacy Pico interim publish path
 	// so the final answer is still delivered outside normal SendResponse.
 	if ((streamErr != nil && !isConfiguredStreamingVisibleError(streamErr)) || exec.streamingFallback) &&
@@ -96,6 +108,10 @@ func (p *Pipeline) Finalize(
 			status:       TurnEndStatusError,
 			followUps:    append([]bus.InboundMessage(nil), ts.followUps...),
 		}, streamErr
+	}
+	if saveErr != nil {
+		ts.setPhase(TurnPhaseCompleted)
+		return turnResult{status: TurnEndStatusError}, saveErr
 	}
 	ts.setPhase(TurnPhaseCompleted)
 	return turnResult{

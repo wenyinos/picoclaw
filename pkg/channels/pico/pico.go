@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -28,12 +29,13 @@ import (
 
 // picoConn represents a single WebSocket connection.
 type picoConn struct {
-	id        string
-	conn      *websocket.Conn
-	sessionID string
-	writeMu   sync.Mutex
-	closed    atomic.Bool
-	cancel    context.CancelFunc // cancels per-connection goroutines (e.g. pingLoop)
+	id           string
+	conn         *websocket.Conn
+	sessionID    string
+	writeTimeout time.Duration
+	writeMu      sync.Mutex
+	closed       atomic.Bool
+	cancel       context.CancelFunc // cancels per-connection goroutines (e.g. pingLoop)
 }
 
 var allowedInlineImageMIMETypes = map[string]struct{}{
@@ -78,7 +80,16 @@ func (pc *picoConn) writeJSON(v any) error {
 	}
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
+	pc.setWriteDeadline()
 	return pc.conn.WriteJSON(v)
+}
+
+// setWriteDeadline bounds a single frame write so a stalled client cannot
+// block the agent worker indefinitely. Callers must hold writeMu.
+func (pc *picoConn) setWriteDeadline() {
+	if pc.writeTimeout > 0 {
+		_ = pc.conn.SetWriteDeadline(time.Now().Add(pc.writeTimeout))
+	}
 }
 
 // close closes the connection.
@@ -140,9 +151,10 @@ func NewPicoChannel(
 		bc:          bc,
 		config:      cfg,
 		upgrader: websocket.Upgrader{
-			CheckOrigin:     checkOrigin,
-			ReadBufferSize:  1024,
-			WriteBufferSize: 1024,
+			CheckOrigin:       checkOrigin,
+			ReadBufferSize:    1024,
+			WriteBufferSize:   1024,
+			EnableCompression: true,
 		},
 		connections:        make(map[string]*picoConn),
 		sessionConnections: make(map[string]map[string]*picoConn),
@@ -168,10 +180,15 @@ func (c *PicoChannel) createAndAddConnection(conn *websocket.Conn, sessionID str
 		}
 	}
 
+	writeTimeout := time.Duration(c.config.WriteTimeout) * time.Second
+	if writeTimeout <= 0 {
+		writeTimeout = 10 * time.Second
+	}
 	pc := &picoConn{
-		id:        connID,
-		conn:      conn,
-		sessionID: sessionID,
+		id:           connID,
+		conn:         conn,
+		sessionID:    sessionID,
+		writeTimeout: writeTimeout,
 	}
 
 	c.connections[pc.id] = pc
@@ -512,6 +529,12 @@ func (c *PicoChannel) SendPlaceholder(ctx context.Context, chatID string) (strin
 	return msgID, nil
 }
 
+// picoStreamMinInterval caps intermediate snapshots at 25 frames per second.
+// A full response was previously sent once per model token, producing
+// quadratic traffic and blocking the provider stream on slower clients. The
+// first chunk and the final flush are not delayed by this limit.
+const picoStreamMinInterval = 40 * time.Millisecond
+
 // BeginStream implements channels.StreamingCapable for Pico WebUI.
 func (c *PicoChannel) BeginStream(ctx context.Context, chatID string) (channels.Streamer, error) {
 	if c == nil || c.config == nil || !c.config.Streaming.Enabled {
@@ -521,10 +544,14 @@ func (c *PicoChannel) BeginStream(ctx context.Context, chatID string) (channels.
 		return nil, channels.ErrNotRunning
 	}
 	streamCfg := c.config.Streaming.WithDefaults(0, 1)
+	throttle := time.Duration(streamCfg.ThrottleSeconds) * time.Second
+	if throttle <= 0 {
+		throttle = picoStreamMinInterval
+	}
 	return &picoStreamer{
 		channel:          c,
 		chatID:           chatID,
-		throttleInterval: time.Duration(streamCfg.ThrottleSeconds) * time.Second,
+		throttleInterval: throttle,
 		minGrowth:        streamCfg.MinGrowthChars,
 	}, nil
 }
@@ -630,11 +657,12 @@ func (s *picoStreamer) updateLocked(
 		return nil
 	}
 
-	now := time.Now()
-	contentLen := len([]rune(content))
 	if s.messageID != "" && !force {
-		growth := contentLen - s.lastLen
-		if now.Sub(s.lastAt) < s.throttleInterval || growth < s.minGrowth {
+		if time.Since(s.lastAt) < s.throttleInterval {
+			return nil
+		}
+		contentLen := utf8.RuneCountInString(content)
+		if contentLen-s.lastLen < s.minGrowth {
 			return nil
 		}
 	}
@@ -650,11 +678,12 @@ func (s *picoStreamer) updateReasoningLocked(ctx context.Context, content string
 		return nil
 	}
 
-	now := time.Now()
-	contentLen := len([]rune(content))
 	if s.reasoningID != "" && !force {
-		growth := contentLen - s.reasoningLastLen
-		if now.Sub(s.reasoningLastAt) < s.throttleInterval || growth < s.minGrowth {
+		if time.Since(s.reasoningLastAt) < s.throttleInterval {
+			return nil
+		}
+		contentLen := utf8.RuneCountInString(content)
+		if contentLen-s.reasoningLastLen < s.minGrowth {
 			return nil
 		}
 	}
@@ -664,7 +693,7 @@ func (s *picoStreamer) updateReasoningLocked(ctx context.Context, content string
 
 func (s *picoStreamer) sendLocked(ctx context.Context, content string, contextUsage *bus.ContextUsage) error {
 	now := time.Now()
-	contentLen := len([]rune(content))
+	contentLen := utf8.RuneCountInString(content)
 
 	if s.messageID == "" {
 		s.messageID = uuid.New().String()
@@ -703,7 +732,7 @@ func (s *picoStreamer) sendLocked(ctx context.Context, content string, contextUs
 
 func (s *picoStreamer) sendReasoningLocked(ctx context.Context, content string) error {
 	now := time.Now()
-	contentLen := len([]rune(content))
+	contentLen := utf8.RuneCountInString(content)
 
 	if s.reasoningID == "" {
 		s.reasoningID = uuid.New().String()
@@ -1163,6 +1192,7 @@ func (c *PicoChannel) pingLoop(pc *picoConn, interval time.Duration) {
 				return
 			}
 			pc.writeMu.Lock()
+			pc.setWriteDeadline()
 			err := pc.conn.WriteMessage(websocket.PingMessage, nil)
 			pc.writeMu.Unlock()
 			if err != nil {

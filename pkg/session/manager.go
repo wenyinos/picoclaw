@@ -225,7 +225,9 @@ func (sm *SessionManager) Save(key string) error {
 	}
 	sm.mu.RUnlock()
 
-	data, err := json.MarshalIndent(snapshot, "", "  ")
+	// Compact encoding: indentation adds ~30% write volume on every turn and
+	// the file is machine-consumed only.
+	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
 	}

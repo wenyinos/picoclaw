@@ -48,11 +48,25 @@ type Config struct {
 	Heartbeat HeartbeatConfig `json:"heartbeat"           yaml:"-"`
 	Devices   DevicesConfig   `json:"devices"             yaml:"-"`
 	Voice     VoiceConfig     `json:"voice"               yaml:"-"`
+	Memory    MemoryConfig    `json:"memory,omitempty"    yaml:"-"`
 	// BuildInfo contains build-time version information
 	BuildInfo BuildInfo `json:"build_info,omitempty" yaml:"-"`
 
 	// cache for sensitive values and compiled regex (computed once)
 	sensitiveCache *SensitiveDataCache
+}
+
+// MemoryConfig controls the SQLite-backed long-term memory subsystem.
+type MemoryConfig struct {
+	Enabled               bool     `json:"enabled"`
+	DBPath                string   `json:"db_path,omitempty"`
+	BudgetTokens          int      `json:"budget_tokens,omitempty"`
+	AutoExtract           bool     `json:"auto_extract"`
+	ExtractModel          string   `json:"extract_model,omitempty"`
+	PrivateChannels       []string `json:"private_channels,omitempty"`
+	InjectFictional       bool     `json:"inject_fictional"`
+	ReviewRequired        bool     `json:"review_required"`
+	EpisodicRetentionDays int      `json:"episodic_retention_days,omitempty"`
 }
 
 type EvolutionConfig struct {
@@ -1539,6 +1553,12 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Resolve a relative workspace against PICOCLAW_HOME so config files and
+	// workspaces stay portable across machines and users.
+	if ws := strings.TrimSpace(cfg.Agents.Defaults.Workspace); ws != "" &&
+		!filepath.IsAbs(ws) && !strings.HasPrefix(ws, "~") {
+		cfg.Agents.Defaults.Workspace = filepath.Join(GetHome(), ws)
+	}
 	// Ensure Workspace has a default if not set
 	if cfg.Agents.Defaults.Workspace == "" {
 		homePath := GetHome()
@@ -1547,8 +1567,32 @@ func LoadConfig(path string) (*Config, error) {
 
 	cfg.Session.ApplyDmScope()
 	cfg.Session.DeriveDmScope()
+	// 0.3.x configs have no memory section. Turn the SQLite memory subsystem on
+	// with defaults so a workspace can be copied to a server and used directly.
+	applyMemoryDefaults(cfg, strings.Contains(string(data), `"memory"`))
 
 	return cfg, nil
+}
+
+func applyMemoryDefaults(cfg *Config, memoryConfigured bool) {
+	if cfg == nil {
+		return
+	}
+	if !memoryConfigured {
+		cfg.Memory.Enabled = true
+	}
+	if strings.TrimSpace(cfg.Memory.DBPath) == "" {
+		cfg.Memory.DBPath = "memory/memory.db"
+	}
+	if cfg.Memory.BudgetTokens <= 0 {
+		cfg.Memory.BudgetTokens = 1200
+	}
+	if len(cfg.Memory.PrivateChannels) == 0 {
+		cfg.Memory.PrivateChannels = []string{"pico"}
+	}
+	if cfg.Memory.EpisodicRetentionDays <= 0 {
+		cfg.Memory.EpisodicRetentionDays = 365
+	}
 }
 
 func applySkillsRegistryEnvCompat(cfg *Config) {

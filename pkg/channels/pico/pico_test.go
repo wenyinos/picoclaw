@@ -424,6 +424,7 @@ func TestBeginStream_DefaultStreamingShowsSmallIncrements(t *testing.T) {
 		t.Fatalf("first message_id = %#v, want non-empty", first.Payload["message_id"])
 	}
 
+	time.Sleep(picoStreamMinInterval + 10*time.Millisecond)
 	if err := streamer.Update(context.Background(), "he"); err != nil {
 		t.Fatalf("Update(second) error = %v", err)
 	}
@@ -483,6 +484,7 @@ func TestBeginStream_StreamsReasoningAsThoughtUpdates(t *testing.T) {
 		t.Fatalf("first model_name = %#v, want %q", got, "gpt-5.4-mini")
 	}
 
+	time.Sleep(picoStreamMinInterval + 10*time.Millisecond)
 	if err := reasoningStreamer.UpdateReasoning(context.Background(), "thinking more"); err != nil {
 		t.Fatalf("UpdateReasoning(second) error = %v", err)
 	}
@@ -501,6 +503,52 @@ func TestBeginStream_StreamsReasoningAsThoughtUpdates(t *testing.T) {
 	}
 	if got := second.Payload[PayloadKeyModelName]; got != "gpt-5.4-mini" {
 		t.Fatalf("second model_name = %#v, want %q", got, "gpt-5.4-mini")
+	}
+}
+
+func TestBeginStream_CoalescesRapidContentUpdates(t *testing.T) {
+	ch := newTestPicoChannel(t)
+	ch.config.Streaming = config.StreamingConfig{Enabled: true}
+	if err := ch.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer ch.Stop(context.Background())
+
+	clientConn, received, cleanup := newTestPicoWebSocket(t)
+	defer cleanup()
+	ch.addConnForTest(&picoConn{id: "conn-1", conn: clientConn, sessionID: "sess-1"})
+
+	streamer, err := ch.BeginStream(context.Background(), "pico:sess-1")
+	if err != nil {
+		t.Fatalf("BeginStream() error = %v", err)
+	}
+
+	const updates = 200
+	for i := 1; i <= updates; i++ {
+		if err := streamer.Update(context.Background(), strings.Repeat("x", i)); err != nil {
+			t.Fatalf("Update(%d) error = %v", i, err)
+		}
+	}
+	finalContent := strings.Repeat("x", updates) + " final"
+	if err := streamer.Finalize(context.Background(), finalContent); err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+
+	sent := 0
+	for {
+		msg := mustReceivePicoMessage(t, received)
+		sent++
+		if msg.Type == TypeMessageUpdate {
+			if content, _ := msg.Payload[PayloadKeyContent].(string); content == finalContent {
+				break
+			}
+		}
+		if sent > 10 {
+			t.Fatalf("sent %d streaming frames for %d updates, want coalesced output", sent, updates)
+		}
+	}
+	if sent > 10 {
+		t.Fatalf("sent %d streaming frames for %d updates, want coalesced output", sent, updates)
 	}
 }
 

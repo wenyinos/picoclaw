@@ -507,6 +507,16 @@ func DefaultConfig() *Config {
 			EchoTranscription: false,
 			ElevenLabsAPIKey:  "",
 		},
+		Memory: MemoryConfig{
+			Enabled:               true,
+			DBPath:                "memory/memory.db",
+			BudgetTokens:          1200,
+			AutoExtract:           true,
+			PrivateChannels:       []string{"pico"},
+			InjectFictional:       false,
+			ReviewRequired:        true,
+			EpisodicRetentionDays: 365,
+		},
 		BuildInfo: BuildInfo{
 			Version:   Version,
 			GitCommit: GitCommit,

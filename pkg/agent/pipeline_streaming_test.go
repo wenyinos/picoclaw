@@ -329,14 +329,16 @@ func TestConfiguredStreamingEligibilityGates(t *testing.T) {
 			wantChatCalls:    1,
 		},
 		{
-			name:              "multi candidate fallback uses chat",
+			// The primary candidate streams even when fallbacks are configured;
+			// fallback only takes over when nothing became visible.
+			name:              "multi candidate streams primary",
 			channel:           "pico",
 			channelStreaming:  true,
 			modelStreaming:    true,
 			fallbacks:         []string{"fallback-model"},
 			streamingProvider: true,
 			streamDelegate:    true,
-			wantChatCalls:     1,
+			wantStreamCalls:   1,
 		},
 		{
 			name:              "missing streamer uses chat",

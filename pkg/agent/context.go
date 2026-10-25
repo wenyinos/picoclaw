@@ -16,6 +16,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memstore"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/utils"
@@ -25,6 +26,8 @@ type ContextBuilder struct {
 	workspace      string
 	skillsLoader   *skills.SkillsLoader
 	memory         *MemoryStore
+	longTerm       *memstore.Store
+	longTermCfg    config.MemoryConfig
 	splitOnMarker  bool
 	agentDiscovery func(agentID string) []AgentDescriptor
 	promptRegistry *PromptRegistry
@@ -63,6 +66,15 @@ func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuil
 			)
 		}
 	}
+	return cb
+}
+
+// WithLongTermMemory enables SQLite-backed memory injection. When store is
+// nil the legacy MEMORY.md path is used.
+func (cb *ContextBuilder) WithLongTermMemory(store *memstore.Store, cfg config.MemoryConfig) *ContextBuilder {
+	cb.longTerm = store
+	cb.longTermCfg = cfg
+	cb.InvalidateCache()
 	return cb
 }
 
@@ -305,19 +317,21 @@ func (cb *ContextBuilder) buildSystemPromptParts(opts systemPromptBuildOptions) 
 		})
 	}
 
-	// Memory context
-	memoryContext := cb.memory.GetMemoryContext()
-	if memoryContext != "" {
-		add(PromptPart{
-			ID:      "context.memory",
-			Layer:   PromptLayerContext,
-			Slot:    PromptSlotMemory,
-			Source:  PromptSource{ID: PromptSourceMemory, Name: "memory:workspace"},
-			Title:   "memory",
-			Content: "# Memory\n\n" + memoryContext,
-			Stable:  true,
-			Cache:   PromptCacheEphemeral,
-		})
+	// Legacy file-based memory. The SQLite store is injected per request in
+	// BuildMessagesFromPrompt so audience/channel filtering can be applied.
+	if cb.longTerm == nil || !cb.longTermCfg.Enabled {
+		if memoryContext := cb.memory.GetMemoryContext(); memoryContext != "" {
+			add(PromptPart{
+				ID:      "context.memory",
+				Layer:   PromptLayerContext,
+				Slot:    PromptSlotMemory,
+				Source:  PromptSource{ID: PromptSourceMemory, Name: "memory:workspace"},
+				Title:   "memory",
+				Content: "# Memory\n\n" + memoryContext,
+				Stable:  true,
+				Cache:   PromptCacheEphemeral,
+			})
+		}
 	}
 
 	// Multi-Message Sending (if enabled)
@@ -514,7 +528,12 @@ func (cb *ContextBuilder) EstimateSystemTokens(summary string, activeSkills []st
 		totalChars += 7 // separator
 	}
 
-	return totalChars * 2 / 5 // same heuristic as tokenizer.EstimateMessageTokens
+	estimate := totalChars * 2 / 5 // same heuristic as tokenizer.EstimateMessageTokens
+	if cb.longTerm != nil && cb.longTermCfg.Enabled && cb.longTermCfg.BudgetTokens > 0 {
+		// Memory is injected per request, not in the static prompt.
+		estimate += cb.longTermCfg.BudgetTokens
+	}
+	return estimate
 }
 
 // InvalidateCache clears the cached system prompt.
@@ -929,6 +948,56 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 		}
 		stringParts = append(stringParts, dynamicCtx)
 		contentBlocks = append(contentBlocks, promptContentBlock(runtimePart, nil))
+
+		// Fixed memory blocks plus query-relevant memories. Both are filtered
+		// by audience/channel here, where the current channel is known.
+		if cb.longTerm != nil && cb.longTermCfg.Enabled {
+			fixedBudget := cb.longTermCfg.BudgetTokens * 45 / 100
+			if fixedBudget <= 0 {
+				fixedBudget = 600
+			}
+			if fixed := cb.longTerm.BuildFixedContext(
+				context.Background(), fixedBudget, cb.longTermCfg.InjectFictional,
+				req.Channel, cb.longTermCfg.PrivateChannels,
+			); fixed != "" {
+				fixedPart := PromptPart{
+					ID:      "context.memory.fixed",
+					Layer:   PromptLayerContext,
+					Slot:    PromptSlotMemory,
+					Source:  PromptSource{ID: PromptSourceMemory, Name: "memory:fixed"},
+					Title:   "memory",
+					Content: fixed,
+					Stable:  false,
+					Cache:   PromptCacheNone,
+				}
+				stringParts = append(stringParts, fixed)
+				contentBlocks = append(contentBlocks, promptContentBlock(fixedPart, nil))
+			}
+		}
+
+		if cb.longTerm != nil && cb.longTermCfg.Enabled && strings.TrimSpace(req.CurrentMessage) != "" {
+			budget := cb.longTermCfg.BudgetTokens * 55 / 100
+			if budget <= 0 {
+				budget = 600
+			}
+			if retrieval := cb.longTerm.BuildRetrievalContext(
+				context.Background(), req.CurrentMessage, req.Channel, budget,
+				cb.longTermCfg.InjectFictional, cb.longTermCfg.PrivateChannels,
+			); retrieval != "" {
+				retrievalPart := PromptPart{
+					ID:      "context.memory.retrieval",
+					Layer:   PromptLayerContext,
+					Slot:    PromptSlotMemory,
+					Source:  PromptSource{ID: PromptSourceMemory, Name: "memory:retrieval"},
+					Title:   "relevant memories",
+					Content: retrieval,
+					Stable:  false,
+					Cache:   PromptCacheNone,
+				}
+				stringParts = append(stringParts, retrieval)
+				contentBlocks = append(contentBlocks, promptContentBlock(retrievalPart, nil))
+			}
+		}
 
 		if req.Summary != "" {
 			summaryPart := PromptPart{

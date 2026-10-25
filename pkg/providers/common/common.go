@@ -36,32 +36,53 @@ type (
 	ReasoningDetail        = protocoltypes.ReasoningDetail
 )
 
-const DefaultRequestTimeout = 120 * time.Second
+const (
+	DefaultRequestTimeout = 120 * time.Second
 
-// NewHTTPClient creates an *http.Client with an optional proxy and the default timeout.
+	// DefaultTransport keeps only 2 idle connections per host, which forces
+	// repeated TLS handshakes when several sessions or agents share a provider.
+	defaultMaxIdleConns        = 100
+	defaultMaxIdleConnsPerHost = 16
+)
+
+// NewHTTPClient creates an *http.Client with an optional proxy and a connection
+// pool sized for concurrent chat sessions.
 func NewHTTPClient(proxy string) *http.Client {
 	client := &http.Client{
 		Timeout: DefaultRequestTimeout,
 	}
-	if proxy != "" {
-		parsed, err := url.Parse(proxy)
-		if err == nil {
-			// Preserve http.DefaultTransport settings (TLS, HTTP/2, timeouts, etc.)
-			if base, ok := http.DefaultTransport.(*http.Transport); ok {
-				tr := base.Clone()
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		// Preserve http.DefaultTransport settings (TLS, HTTP/2, timeouts, etc.)
+		tr := base.Clone()
+		tr.MaxIdleConns = defaultMaxIdleConns
+		tr.MaxIdleConnsPerHost = defaultMaxIdleConnsPerHost
+		if proxy != "" {
+			parsed, err := url.Parse(proxy)
+			if err == nil {
 				tr.Proxy = http.ProxyURL(parsed)
-				client.Transport = tr
 			} else {
-				// Fallback: minimal transport if DefaultTransport is not *http.Transport.
-				client.Transport = &http.Transport{
-					Proxy: http.ProxyURL(parsed),
-				}
+				log.Printf("common: invalid proxy URL %q: %v", proxy, err)
 			}
-		} else {
-			log.Printf("common: invalid proxy URL %q: %v", proxy, err)
+		}
+		client.Transport = tr
+	} else if proxy != "" {
+		// Fallback: minimal transport if DefaultTransport is not *http.Transport.
+		client.Transport = &http.Transport{
+			Proxy:               http.ProxyURL(mustParseProxy(proxy)),
+			MaxIdleConns:        defaultMaxIdleConns,
+			MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
 		}
 	}
 	return client
+}
+
+func mustParseProxy(proxy string) *url.URL {
+	parsed, err := url.Parse(proxy)
+	if err != nil {
+		log.Printf("common: invalid proxy URL %q: %v", proxy, err)
+		return nil
+	}
+	return parsed
 }
 
 // --- Message serialization ---

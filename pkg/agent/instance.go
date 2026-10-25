@@ -14,6 +14,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/sipeed/picoclaw/pkg/memstore"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -152,6 +153,9 @@ func NewAgentInstance(
 	if cfg.Tools.IsToolEnabled("list_dir") {
 		toolsRegistry.Register(tools.NewListDirTool(workspace, readRestrict, allowReadPaths))
 	}
+	if cfg.Memory.Enabled {
+		toolsRegistry.Register(tools.NewMemoryTool(workspace, cfg.Memory.DBPath, cfg.Memory.ReviewRequired))
+	}
 	if cfg.Tools.IsToolEnabled("exec") {
 		execTool, err := tools.NewExecToolWithConfig(workspace, restrict, cfg, allowReadPaths)
 		if err != nil {
@@ -172,6 +176,26 @@ func NewAgentInstance(
 			mcpDiscoveryActive && cfg.Tools.MCP.Discovery.UseRegex,
 		).
 		WithSplitOnMarker(cfg.Agents.Defaults.SplitOnMarker)
+
+	if cfg.Memory.Enabled {
+		memCfg := memstore.Config{
+			Enabled:               cfg.Memory.Enabled,
+			DBPath:                cfg.Memory.DBPath,
+			BudgetTokens:          cfg.Memory.BudgetTokens,
+			AutoExtract:           cfg.Memory.AutoExtract,
+			ExtractModel:          cfg.Memory.ExtractModel,
+			PrivateChannels:       append([]string(nil), cfg.Memory.PrivateChannels...),
+			InjectFictional:       cfg.Memory.InjectFictional,
+			ReviewRequired:        cfg.Memory.ReviewRequired,
+			EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,
+		}
+		if memStore, err := memstore.OpenForWorkspace(workspace, memCfg); err != nil {
+			logger.WarnCF("agent", "Long-term memory unavailable; continuing without it",
+				map[string]any{"workspace": workspace, "error": err.Error()})
+		} else {
+			contextBuilder = contextBuilder.WithLongTermMemory(memStore, cfg.Memory)
+		}
+	}
 
 	agentID := routing.DefaultAgentID
 	agentName := ""
@@ -781,6 +805,8 @@ func initSessionStore(dir string) session.SessionStore {
 	} else if n > 0 {
 		logger.InfoCF("agent", "Memory migrated to JSONL", map[string]any{"sessions_migrated": n})
 	}
+	// The store buffers appends; make migrated data durable before serving.
+	store.Flush()
 
 	return session.NewJSONLBackend(store)
 }
@@ -795,6 +821,9 @@ func expandHome(path string) string {
 			return home + path[1:]
 		}
 		return home
+	}
+	if !filepath.IsAbs(path) {
+		return filepath.Join(config.GetHome(), path)
 	}
 	return path
 }

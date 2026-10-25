@@ -45,18 +45,30 @@ func (f *fakeChannel) ReasoningChannelID() string                 { return f.id 
 
 type fakeMediaChannel struct {
 	fakeChannel
+	mu           sync.Mutex
 	sentMessages []bus.OutboundMessage
 	sentMedia    []bus.OutboundMediaMessage
 }
 
 func (f *fakeMediaChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]string, error) {
+	f.mu.Lock()
 	f.sentMessages = append(f.sentMessages, msg)
+	f.mu.Unlock()
 	return nil, nil
 }
 
 func (f *fakeMediaChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessage) ([]string, error) {
+	f.mu.Lock()
 	f.sentMedia = append(f.sentMedia, msg)
+	f.mu.Unlock()
 	return nil, nil
+}
+
+// sentMessagesSnapshot is safe to call while a channel worker is sending.
+func (f *fakeMediaChannel) sentMessagesSnapshot() []bus.OutboundMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]bus.OutboundMessage(nil), f.sentMessages...)
 }
 
 type recordingChannelManager struct {
@@ -1999,24 +2011,29 @@ func TestRunAgentLoop_ResponseHandledToolPublishesForUserWhenSendResponseDisable
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
-	for len(telegramChannel.sentMessages) == 0 && time.Now().Before(deadline) {
+	var sent []bus.OutboundMessage
+	for time.Now().Before(deadline) {
+		sent = telegramChannel.sentMessagesSnapshot()
+		if len(sent) > 0 {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if len(telegramChannel.sentMessages) != 1 {
-		t.Fatalf("expected exactly 1 sent text message, got %d", len(telegramChannel.sentMessages))
+	if len(sent) != 1 {
+		t.Fatalf("expected exactly 1 sent text message, got %d", len(sent))
 	}
-	if telegramChannel.sentMessages[0].Content != "Handled user output from tool." {
-		t.Fatalf("unexpected sent text message: %+v", telegramChannel.sentMessages[0])
+	if sent[0].Content != "Handled user output from tool." {
+		t.Fatalf("unexpected sent text message: %+v", sent[0])
 	}
-	if telegramChannel.sentMessages[0].AgentID != defaultAgent.ID {
-		t.Fatalf("sent text agent_id = %q, want %q", telegramChannel.sentMessages[0].AgentID, defaultAgent.ID)
+	if sent[0].AgentID != defaultAgent.ID {
+		t.Fatalf("sent text agent_id = %q, want %q", sent[0].AgentID, defaultAgent.ID)
 	}
-	if telegramChannel.sentMessages[0].SessionKey != "session-1" {
-		t.Fatalf("sent text session_key = %q, want session-1", telegramChannel.sentMessages[0].SessionKey)
+	if sent[0].SessionKey != "session-1" {
+		t.Fatalf("sent text session_key = %q, want session-1", sent[0].SessionKey)
 	}
-	if telegramChannel.sentMessages[0].Scope == nil ||
-		telegramChannel.sentMessages[0].Scope.Values["chat"] != "direct:chat1" {
-		t.Fatalf("unexpected sent text scope: %+v", telegramChannel.sentMessages[0].Scope)
+	if sent[0].Scope == nil ||
+		sent[0].Scope.Values["chat"] != "direct:chat1" {
+		t.Fatalf("unexpected sent text scope: %+v", sent[0].Scope)
 	}
 }
 
@@ -6183,6 +6200,11 @@ func TestProcessMessage_PersistsReasoningToolResponseAsSingleAssistantRecord(t *
 	}
 	if got := providers.NormalizeToolCall(assistantWithToolCall.ToolCalls[0]).Name; got != "read_file" {
 		t.Fatalf("assistant tool calls = %+v, want single read_file tool", assistantWithToolCall.ToolCalls)
+	}
+
+	// Session appends are buffered; flush before inspecting the files.
+	if flusher, ok := store.(interface{ Flush() }); ok {
+		flusher.Flush()
 	}
 
 	sessionDir := filepath.Join(tmpDir, "sessions")

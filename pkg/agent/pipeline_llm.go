@@ -36,8 +36,8 @@ func (p *Pipeline) CallLLM(
 
 	// PreLLM: graceful terminal handling
 	exec.gracefulTerminal, _ = ts.gracefulInterruptRequested()
-	exec.providerToolDefs = ts.agent.Tools.ToProviderDefs()
-	exec.providerToolDefs = filterToolsByTurnProfile(exec.providerToolDefs, ts.profile)
+	exec.rawProviderToolDefs = append([]providers.ToolDefinition(nil), ts.agent.Tools.ToProviderDefs()...)
+	exec.providerToolDefs = filterToolsByTurnProfile(exec.rawProviderToolDefs, ts.profile)
 
 	// Native web search support
 	webSearchEnabled := al.cfg.Tools.IsToolEnabled("web") && turnProfileToolAllowed(ts.profile, "web_search")
@@ -129,7 +129,7 @@ func (p *Pipeline) CallLLM(
 	if nativeSearchBeforeHook && !exec.useNativeSearch {
 		exec.providerToolDefs = restoreToolDefinition(
 			exec.providerToolDefs,
-			filterToolsByTurnProfile(ts.agent.Tools.ToProviderDefs(), ts.profile),
+			filterToolsByTurnProfile(exec.rawProviderToolDefs, ts.profile),
 			"web_search",
 		)
 	}
@@ -166,12 +166,14 @@ func (p *Pipeline) CallLLM(
 			"temperature":       ts.agent.Temperature,
 			"system_prompt_len": len(exec.callMessages[0].Content),
 		})
-	logger.DebugCF("agent", "Full LLM request",
-		map[string]any{
-			"iteration":     iteration,
-			"messages_json": formatMessagesForLog(exec.callMessages),
-			"tools_json":    formatToolsForLog(exec.providerToolDefs),
-		})
+	if logger.GetLevel() <= logger.DEBUG {
+		logger.DebugCF("agent", "Full LLM request",
+			map[string]any{
+				"iteration":     iteration,
+				"messages_json": formatMessagesForLog(exec.callMessages),
+				"tools_json":    formatToolsForLog(exec.providerToolDefs),
+			})
+	}
 
 	// LLM call closure with fallback support
 	callLLM := func(
@@ -229,7 +231,7 @@ func (p *Pipeline) CallLLM(
 				if exec.useNativeSearch {
 					candidateTools = restoreToolDefinition(
 						candidateTools,
-						filterToolsByTurnProfile(ts.agent.Tools.ToProviderDefs(), ts.profile),
+						filterToolsByTurnProfile(exec.rawProviderToolDefs, ts.profile),
 						"web_search",
 					)
 				}

@@ -7,7 +7,7 @@ import {
   IconFileText,
   IconTool,
 } from "@tabler/icons-react"
-import { useState } from "react"
+import { memo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import rehypeHighlight from "rehype-highlight"
@@ -38,7 +38,23 @@ interface AssistantMessageProps {
   timestamp?: string | number
 }
 
-export function AssistantMessage({
+// Props are referentially stable for untouched messages, so an explicit
+// comparator avoids re-parsing Markdown for the whole history on every frame.
+function assistantMessagePropsEqual(
+  prev: AssistantMessageProps,
+  next: AssistantMessageProps,
+): boolean {
+  return (
+    prev.content === next.content &&
+    prev.attachments === next.attachments &&
+    prev.kind === next.kind &&
+    prev.modelName === next.modelName &&
+    prev.toolCalls === next.toolCalls &&
+    prev.timestamp === next.timestamp
+  )
+}
+
+export const AssistantMessage = memo(function AssistantMessage({
   content,
   attachments = [],
   kind = "normal",
@@ -300,4 +316,4 @@ export function AssistantMessage({
       )}
     </div>
   )
-}
+}, assistantMessagePropsEqual)

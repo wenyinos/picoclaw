@@ -20,6 +20,9 @@ func newTestStore(t *testing.T) *JSONLStore {
 	if err != nil {
 		t.Fatalf("NewJSONLStore: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
 	return store
 }
 
@@ -643,6 +646,9 @@ func TestColonInKey(t *testing.T) {
 		t.Fatalf("expected 1, got %d", len(history))
 	}
 
+	// Writes are buffered; flush before inspecting the file directly.
+	store.Flush()
+
 	// Verify the file is named with underscore.
 	jsonlFile := filepath.Join(store.dir, "telegram_123.jsonl")
 	if _, statErr := os.Stat(jsonlFile); statErr != nil {
@@ -786,6 +792,9 @@ func TestTruncateHistory_StaleMetaCount(t *testing.T) {
 		}
 	}
 
+	// Flush buffered writes before simulating the crash append.
+	store.Flush()
+
 	// Simulate crash: append a line to JSONL but do NOT update meta.
 	// This leaves meta.Count = 10 while the file has 11 lines.
 	jsonlPath := store.jsonlPath("stale")
@@ -881,6 +890,9 @@ func TestCrashRecovery_PartialLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
+
+	// Flush the valid message before appending the crash artifact.
+	store.Flush()
 
 	// Simulate a crash by appending a partial JSON line directly.
 	jsonlPath := store.jsonlPath("crash")

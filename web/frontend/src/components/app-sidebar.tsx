@@ -1,6 +1,7 @@
 import { IconChevronRight } from "@tabler/icons-react"
 import {
   IconAtom,
+  IconBrain,
   IconChevronsDown,
   IconChevronsUp,
   IconKey,
@@ -155,6 +156,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {
         ...baseNavGroups[3],
         items: [
+          {
+            title: "navigation.memory",
+            url: "/memory",
+            icon: IconBrain,
+            translateTitle: true,
+          },
           {
             title: "navigation.config",
             url: "/config",

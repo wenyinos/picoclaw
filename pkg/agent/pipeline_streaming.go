@@ -64,6 +64,7 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 		"model":    exec.llmModel,
 	})
 
+	startedAt := time.Now()
 	chunkCount := 0
 	firstChunkAt := time.Time{}
 	lastChunkAt := time.Time{}
@@ -107,7 +108,7 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 			},
 		)
 	}
-	logConfiguredStreamingSummary(ts, exec, chunkCount, firstChunkAt, lastChunkAt, streamErr)
+	logConfiguredStreamingSummary(ts, exec, chunkCount, firstChunkAt, lastChunkAt, startedAt, streamErr)
 	if streamErr == nil {
 		if updateErr := publisher.Err(); updateErr != nil {
 			logFields := map[string]any{
@@ -120,41 +121,27 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 				logger.WarnCF("agent", "ChatStream update failed after visible output", logFields)
 				return nil, true, configuredStreamingVisibleError{err: updateErr}
 			}
-			logger.WarnCF("agent", "ChatStream update failed before visible output; retrying with Chat", logFields)
+			// Nothing visible was published: cancel the partial stream and let
+			// the normal fallback path run (it may select another candidate).
+			logger.WarnCF("agent", "ChatStream update failed before visible output; falling back", logFields)
 			publisher.Cancel(ctx)
-			fallbackResponse, err := exec.activeProvider.Chat(
-				ctx,
-				messagesForCall,
-				toolDefsForCall,
-				exec.llmModel,
-				exec.llmOpts,
-			)
-			if err == nil && fallbackResponse != nil {
-				exec.streamingFallback = true
-			}
-			return fallbackResponse, true, err
+			exec.streamingFallback = true
+			return nil, false, nil
 		}
 	}
 	if streamErr != nil {
 		if !publisher.Published() {
-			logger.WarnCF("agent", "ChatStream failed before visible output; retrying with Chat", map[string]any{
+			// Nothing visible was published: cancel the partial stream and let
+			// the normal fallback path run (it may select another candidate).
+			logger.WarnCF("agent", "ChatStream failed before visible output; falling back", map[string]any{
 				"agent_id": ts.agent.ID,
 				"channel":  ts.channel,
 				"model":    exec.llmModel,
 				"error":    streamErr.Error(),
 			})
 			publisher.Cancel(ctx)
-			fallbackResponse, err := exec.activeProvider.Chat(
-				ctx,
-				messagesForCall,
-				toolDefsForCall,
-				exec.llmModel,
-				exec.llmOpts,
-			)
-			if err == nil && fallbackResponse != nil {
-				exec.streamingFallback = true
-			}
-			return fallbackResponse, true, err
+			exec.streamingFallback = true
+			return nil, false, nil
 		}
 		return nil, true, configuredStreamingVisibleError{err: streamErr}
 	}
@@ -172,6 +159,7 @@ func logConfiguredStreamingSummary(
 	chunkCount int,
 	firstChunkAt time.Time,
 	lastChunkAt time.Time,
+	startedAt time.Time,
 	streamErr error,
 ) {
 	fields := map[string]any{
@@ -184,13 +172,18 @@ func logConfiguredStreamingSummary(
 	if exec != nil {
 		fields["model"] = exec.llmModel
 	}
+	if !firstChunkAt.IsZero() && !startedAt.IsZero() {
+		fields["ttft_ms"] = firstChunkAt.Sub(startedAt).Milliseconds()
+	}
 	if !firstChunkAt.IsZero() && !lastChunkAt.IsZero() {
 		fields["chunk_span_ms"] = lastChunkAt.Sub(firstChunkAt).Milliseconds()
 	}
 	if streamErr != nil {
 		fields["error"] = streamErr.Error()
 	}
-	logger.DebugCF("agent", "configured streaming completed", fields)
+	// INFO level so production deployments can measure TTFT and chunk volume
+	// without enabling debug logging.
+	logger.InfoCF("agent", "configured streaming completed", fields)
 }
 
 type configuredStreamingVisibleError struct {
@@ -284,16 +277,10 @@ func (p *Pipeline) configuredStreamingEligible(ts *turnState, exec *turnExecutio
 		})
 		return false
 	}
-	if len(exec.activeCandidates) != 1 {
-		logger.DebugCF("agent", "configured streaming not used", map[string]any{
-			"agent_id":   ts.agent.ID,
-			"channel":    ts.channel,
-			"model":      exec.activeModel,
-			"candidates": len(exec.activeCandidates),
-			"reason":     "fallback_candidates_enabled",
-		})
-		return false
-	}
+	// Stream the primary candidate even when fallbacks are configured. If the
+	// stream fails before anything is visible, tryConfiguredStreamingLLM hands
+	// the turn back to the regular fallback chain. Once output is visible we
+	// never switch candidates, so the user cannot receive mixed responses.
 	if exec.activeModelConfig == nil || !exec.activeModelConfig.Streaming.Enabled {
 		modelName := ""
 		modelStreaming := false

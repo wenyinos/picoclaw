@@ -823,6 +823,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to resolve sessions directory", http.StatusInternalServerError)
 		return
 	}
+	memory.FlushDirectory(dir)
 
 	if _, err := os.ReadDir(dir); err != nil {
 		// Directory doesn't exist yet = no sessions
@@ -909,6 +910,7 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to resolve sessions directory", http.StatusInternalServerError)
 		return
 	}
+	memory.FlushDirectory(dir)
 
 	ref, refErr := h.findPicoJSONLSession(dir, sessionID)
 	var sess sessionFile

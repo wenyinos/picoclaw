@@ -490,6 +490,7 @@ func (f *fixedTranscriber) Transcribe(ctx context.Context, audioFilePath string)
 
 type blockingDirectProvider struct {
 	mu           sync.Mutex
+	startOnce    sync.Once
 	calls        int
 	firstStarted chan struct{}
 	releaseFirst chan struct{}
@@ -512,8 +513,9 @@ func (p *blockingDirectProvider) Chat(
 	firstResp := p.firstResp
 	finalResp := p.finalResp
 	if call == 1 && p.firstStarted != nil {
-		close(p.firstStarted)
-		p.firstStarted = nil
+		// Close exactly once without reassigning the field: the test reads
+		// firstStarted without holding mu.
+		p.startOnce.Do(func() { close(p.firstStarted) })
 	}
 	p.mu.Unlock()
 

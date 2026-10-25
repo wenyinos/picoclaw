@@ -141,6 +141,7 @@ type turnExecution struct {
 	streamingFallback   bool
 	suppressReasoning   bool
 	callMessages        []providers.Message
+	rawProviderToolDefs []providers.ToolDefinition // unfiltered defs, reused across the turn
 	providerToolDefs    []providers.ToolDefinition
 	llmModel            string
 	llmModelName        string
@@ -808,11 +809,10 @@ func (ts *turnState) interruptHintMessage() providers.Message {
 func (ts *turnState) Finish(isHardAbort bool) {
 	ts.isFinished.Store(true)
 
-	// Close pendingResults channel exactly once
+	// Signal completion without closing pendingResults. Closing a channel that
+	// async sub-turns may still send on is a data race and can panic; senders
+	// already select on Finished() and treat late results as orphans.
 	ts.closeOnce.Do(func() {
-		if ts.pendingResults != nil {
-			close(ts.pendingResults)
-		}
 		ts.mu.Lock()
 		if ts.finishedChan == nil {
 			ts.finishedChan = make(chan struct{})

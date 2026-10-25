@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/fileutil"
@@ -34,7 +35,21 @@ const (
 	// we set a generous limit. The scanner starts at 64 KB and grows
 	// only as needed up to this cap.
 	maxLineSize = 10 * 1024 * 1024 // 10 MB
+
+	// pendingFlushDelay batches messages written in the same turn into one
+	// append+fsync. Chat replies no longer wait for disk I/O; at most this
+	// window of messages can be lost on an unclean shutdown.
+	pendingFlushDelay = 20 * time.Millisecond
+
+	// maxPendingMessages bounds memory and forces a synchronous flush when
+	// a single session produces a burst (for example a long tool loop).
+	maxPendingMessages = 256
 )
+
+// pendingWrites holds messages accepted but not yet appended to disk.
+type pendingWrites struct {
+	messages []providers.Message
+}
 
 // SessionMeta holds per-session metadata stored in a .meta.json file.
 //
@@ -65,6 +80,17 @@ type SessionMeta struct {
 type JSONLStore struct {
 	dir   string
 	locks [numLockShards]sync.Mutex
+
+	// pending maps a session key to messages accepted by AddMessage but not
+	// yet appended. Access to the slice is serialized by the session shard
+	// lock; sync.Map only guards the key set.
+	pending sync.Map // string -> *pendingWrites
+
+	flushSignal chan struct{}
+	stopCh      chan struct{}
+	flushWG     sync.WaitGroup
+	closeOnce   sync.Once
+	closed      atomic.Bool
 }
 
 // NewJSONLStore creates a new JSONL-backed store rooted at dir.
@@ -73,7 +99,56 @@ func NewJSONLStore(dir string) (*JSONLStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("memory: create directory: %w", err)
 	}
-	return &JSONLStore{dir: dir}, nil
+	s := &JSONLStore{
+		dir:         dir,
+		flushSignal: make(chan struct{}, 1),
+		stopCh:      make(chan struct{}),
+	}
+	s.flushWG.Add(1)
+	go s.flushLoop()
+	registerStore(s)
+	return s, nil
+}
+
+// storeRegistry tracks live stores so readers (for example the launcher
+// session API) can flush a directory before inspecting files directly.
+var storeRegistry struct {
+	sync.Mutex
+	m map[string][]*JSONLStore
+}
+
+func registerStore(s *JSONLStore) {
+	storeRegistry.Lock()
+	defer storeRegistry.Unlock()
+	if storeRegistry.m == nil {
+		storeRegistry.m = make(map[string][]*JSONLStore)
+	}
+	storeRegistry.m[s.dir] = append(storeRegistry.m[s.dir], s)
+}
+
+func unregisterStore(s *JSONLStore) {
+	storeRegistry.Lock()
+	defer storeRegistry.Unlock()
+	list := storeRegistry.m[s.dir]
+	for i, item := range list {
+		if item == s {
+			storeRegistry.m[s.dir] = append(list[:i], list[i+1:]...)
+			break
+		}
+	}
+	if len(storeRegistry.m[s.dir]) == 0 {
+		delete(storeRegistry.m, s.dir)
+	}
+}
+
+// FlushDirectory writes pending messages for every live store rooted at dir.
+func FlushDirectory(dir string) {
+	storeRegistry.Lock()
+	list := append([]*JSONLStore(nil), storeRegistry.m[dir]...)
+	storeRegistry.Unlock()
+	for _, s := range list {
+		s.Flush()
+	}
 }
 
 // sessionLock returns a mutex for the given session key.
@@ -174,6 +249,10 @@ func (s *JSONLStore) sessionExists(key string) bool {
 	if key == "" {
 		return false
 	}
+	// A session created moments ago may still be buffered.
+	if _, ok := s.pending.Load(key); ok {
+		return true
+	}
 	if _, err := os.Stat(s.jsonlPath(key)); err == nil {
 		return true
 	}
@@ -192,6 +271,12 @@ func (s *JSONLStore) GetSessionMeta(_ context.Context, sessionKey string) (Sessi
 	meta, err := s.readMeta(sessionKey)
 	if err != nil {
 		return SessionMeta{}, err
+	}
+	if v, ok := s.pending.Load(sessionKey); ok {
+		if pw, ok := v.(*pendingWrites); ok && len(pw.messages) > 0 {
+			meta.Count += len(pw.messages)
+			meta.UpdatedAt = time.Now()
+		}
 	}
 	meta.Scope = cloneRawJSON(meta.Scope)
 	if len(meta.Aliases) > 0 {
@@ -409,6 +494,11 @@ func (s *JSONLStore) promoteAliasHistoryLocked(
 	if err != nil {
 		return false, err
 	}
+	if v, ok := s.pending.Load(alias); ok {
+		if pw, ok := v.(*pendingWrites); ok {
+			aliasHistory = append(aliasHistory, pw.messages...)
+		}
+	}
 	aliasSummary := strings.TrimSpace(aliasMeta.Summary)
 	if len(aliasHistory) == 0 && aliasSummary == "" {
 		return false, nil
@@ -447,6 +537,11 @@ func (s *JSONLStore) promoteAliasHistoryLocked(
 func (s *JSONLStore) sessionHasVisibleContentLocked(sessionKey string, meta SessionMeta) (bool, error) {
 	if strings.TrimSpace(meta.Summary) != "" {
 		return true, nil
+	}
+	if v, ok := s.pending.Load(sessionKey); ok {
+		if pw, ok := v.(*pendingWrites); ok && len(pw.messages) > 0 {
+			return true, nil
+		}
 	}
 	history, err := readMessages(s.jsonlPath(sessionKey), meta.Skip)
 	if err != nil {
@@ -589,8 +684,44 @@ func (s *JSONLStore) AddFullMessage(
 	return s.addMsg(sessionKey, msg)
 }
 
-// addMsg is the shared implementation for AddMessage and AddFullMessage.
+// addMsg accepts a message into the per-session pending queue and returns
+// immediately. The flush worker appends one batch per session, so a chat turn
+// no longer waits for fsync on every message. After Close (or a burst above
+// maxPendingMessages) writes fall back to synchronous mode.
 func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
+	if messageutil.IsTransientAssistantThoughtMessage(msg) {
+		return nil
+	}
+	if msg.CreatedAt == nil {
+		now := time.Now()
+		msg.CreatedAt = &now
+	}
+	if s.closed.Load() {
+		return s.addMsgSync(sessionKey, msg)
+	}
+
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	v, _ := s.pending.LoadOrStore(sessionKey, &pendingWrites{})
+	pw := v.(*pendingWrites)
+	pw.messages = append(pw.messages, msg)
+	flushNow := len(pw.messages) >= maxPendingMessages
+	var err error
+	if flushNow {
+		err = s.flushLocked(sessionKey)
+	}
+	l.Unlock()
+	if err != nil {
+		return err
+	}
+	if !flushNow {
+		s.signalFlush()
+	}
+	return nil
+}
+
+// addMsgSync appends a message and updates metadata immediately.
+func (s *JSONLStore) addMsgSync(sessionKey string, msg providers.Message) error {
 	if messageutil.IsTransientAssistantThoughtMessage(msg) {
 		return nil
 	}
@@ -651,6 +782,129 @@ func (s *JSONLStore) addMsg(sessionKey string, msg providers.Message) error {
 	return s.writeMeta(sessionKey, meta)
 }
 
+// flushLocked appends all pending messages for one session and updates its
+// metadata. Callers must hold the session shard lock.
+func (s *JSONLStore) flushLocked(sessionKey string) error {
+	v, ok := s.pending.Load(sessionKey)
+	if !ok {
+		return nil
+	}
+	pw := v.(*pendingWrites)
+	if len(pw.messages) == 0 {
+		s.pending.Delete(sessionKey)
+		return nil
+	}
+
+	batch := pw.messages
+	pw.messages = nil
+
+	var buf bytes.Buffer
+	for _, msg := range batch {
+		line, err := json.Marshal(msg)
+		if err != nil {
+			pw.messages = batch
+			return fmt.Errorf("memory: marshal message: %w", err)
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+
+	f, err := os.OpenFile(
+		s.jsonlPath(sessionKey),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0o644,
+	)
+	if err != nil {
+		pw.messages = batch
+		return fmt.Errorf("memory: open jsonl for append: %w", err)
+	}
+	_, writeErr := f.Write(buf.Bytes())
+	if writeErr == nil {
+		writeErr = f.Sync()
+	}
+	closeErr := f.Close()
+	if writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		pw.messages = batch
+		return fmt.Errorf("memory: append messages: %w", writeErr)
+	}
+
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		// Messages are already durable; drop the pending batch to avoid
+		// appending duplicates on a retry.
+		return err
+	}
+	if meta.Count == 0 && meta.CreatedAt.IsZero() {
+		if batch[0].CreatedAt != nil {
+			meta.CreatedAt = *batch[0].CreatedAt
+		} else {
+			meta.CreatedAt = time.Now()
+		}
+	}
+	meta.Count += len(batch)
+	meta.UpdatedAt = time.Now()
+	if err := s.writeMeta(sessionKey, meta); err != nil {
+		return err
+	}
+
+	if len(pw.messages) == 0 {
+		s.pending.Delete(sessionKey)
+	}
+	return nil
+}
+
+// Flush writes all queued messages to disk. Call it before reading session
+// files directly or before shutting the process down without Close.
+func (s *JSONLStore) Flush() {
+	s.flushAll()
+}
+
+func (s *JSONLStore) flushAll() {
+	s.pending.Range(func(key, _ any) bool {
+		sessionKey, ok := key.(string)
+		if !ok {
+			return true
+		}
+		l := s.sessionLock(sessionKey)
+		l.Lock()
+		err := s.flushLocked(sessionKey)
+		l.Unlock()
+		if err != nil {
+			log.Printf("memory: flush session %q: %v", sessionKey, err)
+		}
+		return true
+	})
+}
+
+func (s *JSONLStore) signalFlush() {
+	select {
+	case s.flushSignal <- struct{}{}:
+	default:
+	}
+}
+
+func (s *JSONLStore) flushLoop() {
+	defer s.flushWG.Done()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-s.flushSignal:
+			timer := time.NewTimer(pendingFlushDelay)
+			select {
+			case <-timer.C:
+				s.flushAll()
+			case <-s.stopCh:
+				timer.Stop()
+				return
+			}
+		}
+	}
+}
+
 func (s *JSONLStore) GetHistory(
 	_ context.Context, sessionKey string,
 ) ([]providers.Message, error) {
@@ -668,6 +922,15 @@ func (s *JSONLStore) GetHistory(
 	msgs, err := readMessages(s.jsonlPath(sessionKey), meta.Skip)
 	if err != nil {
 		return nil, err
+	}
+
+	// Include messages still waiting for the flush worker so callers observe
+	// their own writes immediately. The flush worker holds this same shard
+	// lock, so a batch is never present both on disk and in pending.
+	if v, ok := s.pending.Load(sessionKey); ok {
+		if pw, ok := v.(*pendingWrites); ok && len(pw.messages) > 0 {
+			msgs = append(msgs, pw.messages...)
+		}
 	}
 
 	return msgs, nil
@@ -694,6 +957,9 @@ func (s *JSONLStore) SetSummary(
 	l.Lock()
 	defer l.Unlock()
 
+	if err := s.flushLocked(sessionKey); err != nil {
+		return err
+	}
 	meta, err := s.readMeta(sessionKey)
 	if err != nil {
 		return err
@@ -715,6 +981,9 @@ func (s *JSONLStore) TruncateHistory(
 	l.Lock()
 	defer l.Unlock()
 
+	if err := s.flushLocked(sessionKey); err != nil {
+		return err
+	}
 	meta, err := s.readMeta(sessionKey)
 	if err != nil {
 		return err
@@ -757,6 +1026,9 @@ func (s *JSONLStore) SetHistory(
 	l.Lock()
 	defer l.Unlock()
 
+	if err := s.flushLocked(sessionKey); err != nil {
+		return err
+	}
 	meta, err := s.readMeta(sessionKey)
 	if err != nil {
 		return err
@@ -805,7 +1077,16 @@ func (s *JSONLStore) Compact(
 		return err
 	}
 	if meta.Skip == 0 {
+		// Nothing to compact. Leave queued messages to the flush worker so
+		// the end-of-turn Save stays off the response path.
 		return nil
+	}
+
+	if err := s.flushLocked(sessionKey); err != nil {
+		return err
+	}
+	if meta, err = s.readMeta(sessionKey); err != nil {
+		return err
 	}
 
 	// Read only the active messages, skipping truncated lines
@@ -875,9 +1156,32 @@ func (s *JSONLStore) ListSessions() []string {
 			keys = append(keys, meta.Key)
 		}
 	}
+	// Include sessions whose meta file has not been flushed yet.
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		seen[key] = struct{}{}
+	}
+	s.pending.Range(func(key, _ any) bool {
+		sessionKey, ok := key.(string)
+		if !ok {
+			return true
+		}
+		if _, exists := seen[sessionKey]; !exists {
+			keys = append(keys, sessionKey)
+		}
+		return true
+	})
 	return keys
 }
 
+// Close stops the flush worker and writes every queued message to disk.
 func (s *JSONLStore) Close() error {
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		close(s.stopCh)
+		s.flushWG.Wait()
+		s.flushAll()
+		unregisterStore(s)
+	})
 	return nil
 }

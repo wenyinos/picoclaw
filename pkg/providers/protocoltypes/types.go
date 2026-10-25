@@ -50,9 +50,32 @@ type ReasoningDetail struct {
 }
 
 type UsageInfo struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int                 `json:"prompt_tokens"`
+	CompletionTokens    int                 `json:"completion_tokens"`
+	TotalTokens         int                 `json:"total_tokens"`
+	PromptTokensDetails *UsageTokensDetails `json:"prompt_tokens_details,omitempty"`
+	InputTokensDetails  *UsageTokensDetails `json:"input_tokens_details,omitempty"`
+}
+
+// UsageTokensDetails carries provider-side prompt cache accounting so callers
+// can verify whether prefix caching actually reduced billed input tokens.
+type UsageTokensDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// CachedPromptTokens returns the cached input token count reported by the
+// provider, accepting either the chat-completions or responses field name.
+func (u *UsageInfo) CachedPromptTokens() int {
+	if u == nil {
+		return 0
+	}
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		return u.PromptTokensDetails.CachedTokens
+	}
+	if u.InputTokensDetails != nil {
+		return u.InputTokensDetails.CachedTokens
+	}
+	return 0
 }
 
 // CacheControl marks a content block for LLM-side prefix caching.
