@@ -22,10 +22,10 @@ For channel-specific setup, start with [Chat Apps Configuration](guides/chat-app
 ## Principles
 
 - Choose the document type directory first. Do not create language buckets such as `docs/zh/` or `docs/fr/`.
-- Keep each translated document next to its English source document.
+- Keep each English document and its Simplified Chinese translation next to each other.
 - Use English as the base filename with no locale suffix.
 - Use lowercase locale suffixes for translations, for example `configuration.zh.md` or `README.zh.md`.
-- Project entry documents are maintained in English and Simplified Chinese only; other docs may keep their existing translations.
+- All documents under `docs/` are maintained in English and Simplified Chinese only; do not add other locales.
 - Keep module-specific docs next to the code they describe instead of moving them into `docs/`.
 
 ## Recommended Directories
@@ -55,10 +55,10 @@ For channel-specific setup, start with [Chat Apps Configuration](guides/chat-app
 
 ## Common Patterns To Avoid
 
-- Root-level translated entry docs such as `README.zh.md` or `CONTRIBUTING.fr.md`
-  - Use `docs/project/README.zh.md` or `docs/project/CONTRIBUTING.fr.md` instead.
-- Language directories under `docs/` such as `docs/zh/`, `docs/ZH/`, `docs/ja/`, or `docs/fr/`
-  - Use `docs/<type>/<name>.<locale>.md` instead.
+- Root-level translated entry docs such as `README.zh.md`
+  - Use `docs/project/README.zh.md` instead.
+- Language directories under `docs/` such as `docs/zh/` or `docs/ZH/`
+  - Use `docs/<type>/<name>.zh.md` instead.
 - Nested locale buckets such as `docs/guides/zh/configuration.md` or `docs/channels/telegram/zh/README.md`
   - Keep translations beside the English source file instead.
 - Legacy translation filenames such as `README_zh.md` or `README_CN.md`

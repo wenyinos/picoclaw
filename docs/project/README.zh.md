@@ -232,7 +232,7 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 ## 文档
 
 - [长期记忆](../guides/memory.zh.md) · [English](../guides/memory.md)
-- [从 0.3.x 迁移到 0.4.0](../migration/0.4.0.md)
+- [从 0.3.x 迁移到 0.4.0](../migration/0.4.0.zh.md)
 - [变更日志](../../CHANGELOG.md)
 - [配置指南](../guides/configuration.zh.md)
 - [路由与会话](../guides/routing-guide.md)
