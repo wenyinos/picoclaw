@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PicoClaw 0.4.1 · 超轻量个人 AI 助手</title>
-<meta name="description" content="PicoClaw 0.4：SQLite 长期记忆、陪伴控制台、可迁移 workspace。可直接接入 QQ、微信/企业微信、飞书、钉钉等聊天渠道，无需自建前端。">
+<title>PicoClaw · 超轻量个人 AI 助手</title>
+<meta name="description" content="PicoClaw：SQLite 长期记忆、陪伴控制台、可迁移 workspace。可直接接入 QQ、微信/企业微信、飞书、钉钉等聊天渠道，无需自建前端。">
 <style>
   :root {
     --bg: #070b14;
@@ -93,14 +93,14 @@
     <div class="brand">
       <img src="assets/logo.webp" alt="PicoClaw">
       <div>
-        <h1>PicoClaw <span>0.4.1</span></h1>
+        <h1>PicoClaw <span>长期记忆</span></h1>
         <p class="tagline">超轻量个人 AI 助手。SQLite 长期记忆、陪伴控制台、可迁移 workspace；直接接入 QQ、微信等聊天渠道，无需自建前端。</p>
       </div>
     </div>
     <div class="badges">
       <span class="badge"><strong>Go</strong> 单二进制</span>
       <span class="badge"><strong>SQLite</strong> 长期记忆</span>
-      <span class="badge"><strong>0.4.1</strong> 自动抽取修复</span>
+      <span class="badge"><strong>自动抽取</strong> 普通聊天不误记</span>
       <span class="badge"><strong>MIT</strong> 自托管</span>
       <span class="badge"><strong>Linux / macOS / Windows</strong></span>
     </div>
@@ -112,7 +112,7 @@
     </div>
     <div class="stats">
       <div class="stat"><b>SQLite 记忆</b><span>去重 / 审核 / 检索注入</span></div>
-      <div class="stat"><b>0.4.1</b><span>普通聊天不再误入待审核池</span></div>
+      <div class="stat"><b>自动抽取</b><span>普通聊天不再误入待审核池</span></div>
       <div class="stat"><b>10+ 渠道</b><span>QQ、微信、飞书、钉钉等</span></div>
       <div class="stat"><b>可迁移</b><span>复制 workspace 即可换机</span></div>
     </div>
@@ -121,10 +121,10 @@
 
 <main class="wrap">
   <section id="memory">
-    <h2>0.4 以上新特性</h2>
+    <h2>长期记忆与陪伴新特性</h2>
     <p class="lead">从“模型自己写 MEMORY.md”升级为结构化、可审核、可迁移的长期记忆系统。</p>
     <div class="grid cols-3">
-      <div class="card"><span class="tag">Memory</span><h3>SQLite 长期记忆</h3><p><code>workspace/memory/memory.db</code> 作为唯一事实源，支持分层条目、关系状态、人格与来源追踪。</p></div>
+      <div class="card"><span class="tag">Memory</span><h3>SQLite 长期记忆</h3><p><code>workspace/memory/memory.db</code> 是唯一运行时事实源；旧 <code>MEMORY.md</code> 不再读取。支持分层条目、关系状态、人格与来源追踪。</p></div>
       <div class="card"><span class="tag">Dedupe</span><h3>去重与冲突替代</h3><p>精确哈希 + 中文相似度 + SimHash 近似合并；同一事实变化时保留历史版本。</p></div>
       <div class="card"><span class="tag">Review</span><h3>人工审核队列</h3><p>不确定的记忆停留在 <code>pending_review</code>，审核通过前不进入提示词。</p></div>
       <div class="card"><span class="tag">Companion</span><h3>关系与人格</h3><p>称呼、关系阶段、亲密边界、纪念日与版本化人设，适合长期陪伴场景。</p></div>
@@ -177,15 +177,15 @@
   <section id="architecture">
     <div class="split">
       <div>
-        <h2>0.4 记忆链路</h2>
+        <h2>记忆链路</h2>
         <p class="lead">每轮对话只做一次轻量抽取；写入前完成去重和冲突检查，注入时按预算和渠道筛选。</p>
         <div class="flow">
           <span>用户消息</span><em>→</em><span>规则抽取</span><em>→</em><span>去重 / 冲突</span><em>→</em><span class="hot">SQLite</span><em>→</em><span>审核</span><em>→</em><span>按需注入</span>
         </div>
-        <pre><code># 0.4.1 修复：普通聊天不再写入记忆
+        <pre><code># 自动抽取修复：普通聊天不再写入记忆
 # 只有明确“记住”、称呼、偏好、生日、日期事件才会抽取
 picoclaw memory audit
-picoclaw memory render</code></pre>
+picoclaw memory render  # 可选导出，不会被运行时读回</code></pre>
       </div>
       <div>
         <h2>返回性能</h2>
@@ -218,8 +218,8 @@ picoclaw-launcher</code></pre>
         <a href="guides/chat-apps.zh.html">聊天渠道接入<small>QQ、微信、飞书、钉钉等</small></a>
         <a href="guides/providers.zh.html">模型服务<small>OpenAI 兼容 / Anthropic / Gemini</small></a>
         <a href="guides/memory.zh.html">长期记忆<small>SQLite、去重、审核</small></a>
-        <a href="migration/0.4.0.zh.html">0.3.x 迁移<small>导入旧 MEMORY.md</small></a>
-        <a href="https://github.com/wenyinos/picoclaw/blob/main/CHANGELOG.md">变更日志<small>0.4.1 / 0.4.0</small></a>
+        <a href="migration/0.4.0.zh.html">0.3.x 迁移<small>旧数据一次性导入</small></a>
+        <a href="https://github.com/wenyinos/picoclaw/releases/latest">变更日志<small>查看最新版本</small></a>
       </div>
     </div>
   </section>
@@ -227,10 +227,10 @@ picoclaw-launcher</code></pre>
   <section id="poster">
     <h2>项目海报</h2>
     <div class="poster">
-      <a href="assets/picoclaw-0.4-poster.png"><img src="assets/picoclaw-0.4-poster.png" alt="PicoClaw 0.4 项目海报"></a>
+      <a href="assets/picoclaw-poster.png"><img src="assets/picoclaw-poster.png" alt="PicoClaw 项目海报"></a>
       <div>
-        <p>高密度版 0.4 特性海报，包含记忆系统、聊天渠道、架构链路、快速开始与平台支持。</p>
-        <p><a class="btn" href="assets/picoclaw-0.4-poster.png">查看 / 下载 PNG</a></p>
+        <p>高密度特性海报，包含记忆系统、聊天渠道、架构链路、快速开始与平台支持。</p>
+        <p><a class="btn" href="assets/picoclaw-poster.png">查看 / 下载 PNG</a></p>
         <p style="font-size:13px">适合放在项目主页、Release 说明或内部分享。</p>
       </div>
     </div>
@@ -239,7 +239,7 @@ picoclaw-launcher</code></pre>
 
 <footer>
   <div class="wrap">
-    PicoClaw 0.4.1 · MIT · <a href="https://github.com/wenyinos/picoclaw">github.com/wenyinos/picoclaw</a> · <a href="https://github.com/wenyinos/picoclaw/releases">Releases</a>
+    PicoClaw · MIT · <a href="https://github.com/wenyinos/picoclaw">github.com/wenyinos/picoclaw</a> · <a href="https://github.com/wenyinos/picoclaw/releases/latest">最新版本</a>
   </div>
 </footer>
 </body>

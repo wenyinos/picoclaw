@@ -14,7 +14,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
-  <img src="https://img.shields.io/badge/Version-0.4.1-blue" alt="0.4.1">
+  <img src="https://img.shields.io/github/v/release/wenyinos/picoclaw?label=Version&color=blue" alt="Version">
   <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64%20%7C%20RISC--V%20%7C%20LoongArch-blue" alt="Architectures">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
 </p>
@@ -111,6 +111,14 @@ make build-launcher     # desktop launcher with embedded Web UI
 
 Artifacts are written to `build/`.
 
+If you invoke Go directly, include the project build tags:
+
+```bash
+CGO_ENABLED=0 go build -tags goolm,stdjson ./...
+```
+
+`goolm` selects mautrix's pure-Go crypto implementation. Without it, the default libolm backend requires CGO and a system libolm installation, so a `CGO_ENABLED=0` build fails with an empty `crypto/libolm` package.
+
 ---
 
 ## Memory configuration
@@ -136,6 +144,8 @@ Artifacts are written to `build/`.
 ```
 
 Older 0.3.x configs do not need a `memory` section: loading them applies these defaults automatically. Use `"workspace": "workspace"` to keep the configuration portable across machines and users.
+
+The SQLite database is the only runtime memory source. PicoClaw never reads `MEMORY.md` or daily notes at runtime, including when `memory.enabled` is `false`; disabling memory means no long-term memory is injected, not a Markdown fallback.
 
 ### Memory CLI
 
@@ -184,10 +194,10 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
      chown -R <service-user>:<service-group> ~/.picoclaw/workspace
      ```
 
-4. **Generate the readable view and check the result**
+4. **Optionally generate a readable export and check the result**
 
    ```bash
-   picoclaw memory render
+   picoclaw memory render   # optional Markdown export, never read back
    picoclaw memory audit
    ```
 
@@ -211,7 +221,7 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 Notes:
 
-- The old `MEMORY.md` is not read by 0.4. Import it before deleting the old workspace if you want to keep its facts.
+- The old `MEMORY.md` is never read at runtime, even when memory is disabled. Import it before deleting the old workspace if you want to keep its facts.
 - Raw session history remains in `workspace/sessions/*.jsonl` and is unchanged.
 - `memory.db` is WAL-mode SQLite; stop the process before copying the workspace, or run `picoclaw memory audit` once to checkpoint an idle store.
 
@@ -232,7 +242,7 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 ## Documentation
 
 - [Online documentation](https://wenyinos.github.io/picoclaw/)
-- [0.4 poster](docs/assets/picoclaw-0.4-poster.png)
+- [Project poster](docs/assets/picoclaw-poster.png)
 - [Long-term memory](docs/guides/memory.md) · [中文](docs/guides/memory.zh.md)
 - [Migrating from 0.3.x to 0.4.0](docs/migration/0.4.0.md)
 - [Changelog](CHANGELOG.md)

@@ -14,7 +14,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
-  <img src="https://img.shields.io/badge/Version-0.4.1-blue" alt="0.4.1">
+  <img src="https://img.shields.io/github/v/release/wenyinos/picoclaw?label=Version&color=blue" alt="版本">
   <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64%20%7C%20RISC--V%20%7C%20LoongArch-blue" alt="架构">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="许可证">
 </p>
@@ -111,6 +111,14 @@ make build-launcher     # 内嵌 Web UI 的桌面 Launcher
 
 产物输出到 `build/`。
 
+如果直接调用 Go，请带上项目构建标签：
+
+```bash
+CGO_ENABLED=0 go build -tags goolm,stdjson ./...
+```
+
+`goolm` 选择 mautrix 的纯 Go 加密实现。缺少它时会走默认的 libolm 后端，需要 CGO 和系统 libolm，因此 `CGO_ENABLED=0` 构建会因为 `crypto/libolm` 包没有可编译文件而失败。
+
 ---
 
 ## 记忆配置
@@ -136,6 +144,8 @@ make build-launcher     # 内嵌 Web UI 的桌面 Launcher
 ```
 
 0.3.x 的旧配置不需要手动添加 `memory` 节：加载时会自动补齐默认值。把 workspace 写成相对路径 `"workspace"`，配置即可跨机器、跨用户迁移。
+
+SQLite 数据库是唯一的运行时记忆源。PicoClaw 运行时永远不会读取 `MEMORY.md` 或每日笔记；即使 `memory.enabled` 为 `false`，也只是完全不注入长期记忆，不会回退到 Markdown。
 
 ### 记忆 CLI
 
@@ -184,10 +194,10 @@ picoclaw memory render
      chown -R <service-user>:<service-group> ~/.picoclaw/workspace
      ```
 
-4. **生成可读视图并检查**
+4. **可选：生成可读导出并检查**
 
    ```bash
-   picoclaw memory render
+   picoclaw memory render   # 可选 Markdown 导出，不会被运行时读回
    picoclaw memory audit
    ```
 
@@ -211,7 +221,7 @@ picoclaw memory render
 
 注意：
 
-- 0.4 不再读取旧 `MEMORY.md`。如果希望保留其中的事实，请在删除旧 workspace 前执行导入。
+- 运行时永远不会读取旧 `MEMORY.md`，即使记忆功能关闭也不会回退。如果希望保留其中的事实，请在删除旧 workspace 前执行导入。
 - 原始会话历史仍在 `workspace/sessions/*.jsonl`，格式不变。
 - `memory.db` 使用 WAL 模式；复制 workspace 前请停止进程，或先执行一次 `picoclaw memory audit` 让空闲库完成 checkpoint。
 
@@ -232,7 +242,7 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 ## 文档
 
 - [在线文档](https://wenyinos.github.io/picoclaw/)
-- [0.4 项目海报](../assets/picoclaw-0.4-poster.png)
+- [项目海报](../assets/picoclaw-poster.png)
 - [长期记忆](../guides/memory.zh.md) · [English](../guides/memory.md)
 - [从 0.3.x 迁移到 0.4.0](../migration/0.4.0.zh.md)
 - [变更日志](https://github.com/wenyinos/picoclaw/blob/main/CHANGELOG.md)

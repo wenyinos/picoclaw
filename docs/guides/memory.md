@@ -1,6 +1,6 @@
 # Long-term memory (SQLite)
 
-PicoClaw 0.4 stores long-term memory in SQLite instead of a free-form `MEMORY.md`. The database is the source of truth; `MEMORY.md` is a regenerable view.
+PicoClaw stores long-term memory in SQLite instead of a free-form `MEMORY.md`. The database is the only runtime source. `MEMORY.md` is an optional, regenerable export: PicoClaw never reads it at runtime, including when `memory.enabled` is `false`.
 
 ## Portability
 
@@ -15,7 +15,7 @@ PicoClaw 0.4 stores long-term memory in SQLite instead of a free-form `MEMORY.md
 workspace/
 ├── memory/
 │   ├── memory.db          # SQLite database (WAL)
-│   ├── MEMORY.md          # generated view
+│   ├── MEMORY.md          # optional export (never read at runtime)
 │   └── import-report.md   # one-shot import report
 └── sessions/              # raw session history, unchanged
 ```
@@ -36,6 +36,7 @@ workspace/
 }
 ```
 
+- `enabled`: disables long-term memory entirely when `false`; there is no Markdown fallback.
 - `budget_tokens`: total injection budget for fixed and retrieved blocks.
 - `auto_extract`: run rule-based extraction after each turn.
 - `review_required`: uncertain memories enter `pending_review` and are not injected.
@@ -84,16 +85,18 @@ picoclaw memory audit
 picoclaw memory stats
 picoclaw memory compact --retention-days 365
 picoclaw memory export --out memories.jsonl
-picoclaw memory render
+picoclaw memory render   # optional Markdown export, never read back
 ```
 
-## 0.4 migration
+`memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does.
 
-There is no runtime schema migration. 0.4 only reads `memory.db`:
+## Migrating from 0.3.x
+
+There is no runtime schema migration. New versions only read `memory.db`:
 
 1. Stop the gateway and launcher.
 2. Back up the old `workspace/memory`.
-3. Overwrite the workspace with 0.4 and run `memory import`, or import before replacing.
+3. Use the new workspace and run `memory import` once, or import before replacing.
 4. Start the service and review pending entries at `/memory`.
 
 ## API

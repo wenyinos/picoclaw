@@ -1,6 +1,6 @@
 # 长期记忆（SQLite）
 
-PicoClaw 0.4 起使用 SQLite 保存长期记忆，替代旧的 `MEMORY.md` 自由文本模式。记忆库是唯一事实源，`MEMORY.md` 只是可重建的渲染视图。
+PicoClaw 使用 SQLite 保存长期记忆，替代旧的 `MEMORY.md` 自由文本模式。记忆库是唯一运行时事实源。`MEMORY.md` 只是可选的手动导出：运行时永远不会读取，即使 `memory.enabled` 为 `false` 也不会回退。
 
 ## 可移植性
 
@@ -15,7 +15,7 @@ PicoClaw 0.4 起使用 SQLite 保存长期记忆，替代旧的 `MEMORY.md` 自�
 workspace/
 ├── memory/
 │   ├── memory.db          # SQLite 主库（WAL）
-│   ├── MEMORY.md          # 派生视图，可由 CLI 重建
+│   ├── MEMORY.md          # 可选导出，运行时不会读取
 │   └── import-report.md   # 一次性导入报告
 └── sessions/              # 原始会话历史，不变
 ```
@@ -36,6 +36,7 @@ workspace/
 }
 ```
 
+- `enabled`：为 `false` 时完全关闭长期记忆，不会回退到 Markdown。
 - `budget_tokens`：固定块与检索块的总注入预算。
 - `auto_extract`：每轮结束后用规则抽取候选记忆。
 - `review_required`：新抽取的未知领域记忆进入待审核队列，不进入提示词。
@@ -84,16 +85,18 @@ picoclaw memory audit
 picoclaw memory stats
 picoclaw memory compact --retention-days 365
 picoclaw memory export --out memories.jsonl
-picoclaw memory render
+picoclaw memory render   # 可选 Markdown 导出，不会被运行时读回
 ```
 
-## 0.4 切换
+`memory import` 是唯一会读取旧 `MEMORY.md` 的命令；运行时不读取。
+
+## 从 0.3.x 迁移
 
 0.3.x → 0.4.x 不做运行时迁移。新版本只读取 `memory.db`：
 
 1. 停止 gateway 与 launcher。
 2. 备份旧 `workspace/memory`。
-3. 用 0.4 覆盖 workspace，或先运行一次 `memory import` 导入旧任务记录和摘要。
+3. 使用新 workspace，并运行一次 `memory import` 导入旧任务记录和摘要；也可以在替换前导入。
 4. 启动后在 `/memory` 审核待确认条目。
 
 ## API
