@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PicoClaw 0.4.1 · 超轻量个人 AI 助手</title>
+<meta name="description" content="PicoClaw 0.4：SQLite 长期记忆、陪伴控制台、可迁移 workspace。可直接接入 QQ、微信/企业微信、飞书、钉钉等聊天渠道，无需自建前端。">
+<style>
+  :root {
+    --bg: #070b14;
+    --panel: #0f172a;
+    --panel-2: #111c33;
+    --line: #22314f;
+    --text: #e6edf7;
+    --muted: #93a4bd;
+    --cyan: #38bdf8;
+    --green: #34d399;
+    --violet: #a78bfa;
+    --amber: #fbbf24;
+    --max: 1180px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: radial-gradient(1100px 600px at 15% -10%, #12305a 0%, transparent 60%), var(--bg);
+    color: var(--text);
+    font-family: "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif;
+    line-height: 1.65;
+  }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { width: min(var(--max), calc(100% - 40px)); margin: 0 auto; }
+  .hero { padding: 52px 0 30px; border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .brand img { width: 88px; height: 88px; object-fit: contain; }
+  .brand h1 { margin: 0; font-size: clamp(34px, 5vw, 58px); line-height: 1.05; letter-spacing: -.02em; }
+  .brand h1 span { color: var(--cyan); }
+  .tagline { margin: 14px 0 0; font-size: clamp(17px, 2vw, 21px); color: var(--muted); max-width: 850px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; }
+  .badge { border: 1px solid var(--line); background: rgba(15,23,42,.75); color: var(--muted); border-radius: 999px; padding: 5px 11px; font-size: 13px; }
+  .badge strong { color: var(--text); }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+  .btn { display: inline-block; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line); color: var(--text); background: var(--panel); font-weight: 600; font-size: 14px; }
+  .btn.primary { background: linear-gradient(135deg, #0ea5e9, #2563eb); border-color: transparent; color: #fff; }
+  .btn:hover { text-decoration: none; border-color: var(--cyan); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 22px 0 0; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .stat b { display: block; font-size: 22px; color: var(--text); }
+  .stat span { color: var(--muted); font-size: 13px; }
+  section { padding: 40px 0; border-bottom: 1px solid var(--line); }
+  h2 { font-size: clamp(24px, 3vw, 32px); margin: 0 0 8px; letter-spacing: -.01em; }
+  .lead { color: var(--muted); margin: 0 0 22px; max-width: 900px; }
+  .grid { display: grid; gap: 12px; }
+  .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .card { background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); border-radius: 14px; padding: 16px 17px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  .card .tag { display: inline-block; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--cyan); margin-bottom: 7px; }
+  .channels { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 20px; }
+  .channel { border: 1px solid var(--line); background: #0b1426; border-radius: 9px; padding: 7px 11px; font-size: 14px; }
+  .channel b { color: var(--green); }
+  .callout { display: grid; grid-template-columns: 1.2fr .8fr; gap: 14px; align-items: stretch; }
+  .callout-main { background: linear-gradient(135deg, #0b2a3d, #101a2f); border: 1px solid #1b4b63; border-radius: 16px; padding: 20px; }
+  .callout-main h3 { margin: 0 0 8px; font-size: 22px; }
+  .callout-main p { margin: 0; color: #b9d7e8; }
+  .callout-side { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  .callout-side ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+  .flow span { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; font-size: 13px; color: var(--muted); }
+  .flow span.hot { color: var(--text); border-color: var(--cyan); }
+  .flow em { color: var(--cyan); font-style: normal; }
+  pre { margin: 14px 0 0; padding: 14px 16px; background: #060a12; border: 1px solid var(--line); border-radius: 12px; overflow: auto; color: #c8d6ea; font-size: 13px; line-height: 1.7; }
+  code { font-family: "Noto Sans Mono CJK SC", ui-monospace, monospace; }
+  .split { display: grid; grid-template-columns: 1.05fr .95fr; gap: 18px; }
+  .links { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .links a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 11px; padding: 12px 14px; color: var(--text); }
+  .links a small { display: block; color: var(--muted); margin-top: 3px; }
+  .poster { display: grid; grid-template-columns: 1.15fr .85fr; gap: 18px; align-items: center; }
+  .poster img { width: 100%; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 24px 80px rgba(0,0,0,.45); }
+  .poster p { color: var(--muted); }
+  footer { padding: 26px 0 42px; color: var(--muted); font-size: 13px; }
+  @media (max-width: 880px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .grid.cols-3, .grid.cols-2, .callout, .split, .poster, .links { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="brand">
+      <img src="assets/logo.webp" alt="PicoClaw">
+      <div>
+        <h1>PicoClaw <span>0.4.1</span></h1>
+        <p class="tagline">超轻量个人 AI 助手。SQLite 长期记忆、陪伴控制台、可迁移 workspace；直接接入 QQ、微信等聊天渠道，无需自建前端。</p>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge"><strong>Go</strong> 单二进制</span>
+      <span class="badge"><strong>SQLite</strong> 长期记忆</span>
+      <span class="badge"><strong>0.4.1</strong> 自动抽取修复</span>
+      <span class="badge"><strong>MIT</strong> 自托管</span>
+      <span class="badge"><strong>Linux / macOS / Windows</strong></span>
+    </div>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/wenyinos/picoclaw">GitHub 仓库</a>
+      <a class="btn" href="#start">快速开始</a>
+      <a class="btn" href="guides/memory.zh.html">长期记忆</a>
+      <a class="btn" href="migration/0.4.0.zh.html">从 0.3.x 升级</a>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>SQLite 记忆</b><span>去重 / 审核 / 检索注入</span></div>
+      <div class="stat"><b>0.4.1</b><span>普通聊天不再误入待审核池</span></div>
+      <div class="stat"><b>10+ 渠道</b><span>QQ、微信、飞书、钉钉等</span></div>
+      <div class="stat"><b>可迁移</b><span>复制 workspace 即可换机</span></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="memory">
+    <h2>0.4 以上新特性</h2>
+    <p class="lead">从“模型自己写 MEMORY.md”升级为结构化、可审核、可迁移的长期记忆系统。</p>
+    <div class="grid cols-3">
+      <div class="card"><span class="tag">Memory</span><h3>SQLite 长期记忆</h3><p><code>workspace/memory/memory.db</code> 作为唯一事实源，支持分层条目、关系状态、人格与来源追踪。</p></div>
+      <div class="card"><span class="tag">Dedupe</span><h3>去重与冲突替代</h3><p>精确哈希 + 中文相似度 + SimHash 近似合并；同一事实变化时保留历史版本。</p></div>
+      <div class="card"><span class="tag">Review</span><h3>人工审核队列</h3><p>不确定的记忆停留在 <code>pending_review</code>，审核通过前不进入提示词。</p></div>
+      <div class="card"><span class="tag">Companion</span><h3>关系与人格</h3><p>称呼、关系阶段、亲密边界、纪念日与版本化人设，适合长期陪伴场景。</p></div>
+      <div class="card"><span class="tag">Dashboard</span><h3>记忆控制台</h3><p>Launcher 的 <code>/memory</code> 页面集中完成查看、搜索、审核、关系/人格与设置。</p></div>
+      <div class="card"><span class="tag">Portable</span><h3>workspace 自由迁移</h3><p>不保存机器相关绝对路径；相对 workspace + WAL checkpoint，复制目录即可换机。</p></div>
+    </div>
+  </section>
+
+  <section id="channels">
+    <h2>无需自建前端，直接接入现有聊天渠道</h2>
+    <p class="lead">PicoClaw 是自托管网关。你可以在 QQ、微信/企业微信、飞书、钉钉里直接和它对话，也可以使用内置 Launcher；不需要再开发一套 Web 聊天前端。</p>
+    <div class="callout">
+      <div class="callout-main">
+        <h3>把 AI 放进你已经在用的聊天软件</h3>
+        <p>QQ 机器人、微信公众号/企业微信、飞书/Lark、钉钉、Telegram、Discord、Slack、LINE、Matrix、IRC、MQTT、VK 等渠道均可配置。Pico WebSocket 与 Launcher 只是可选的控制台入口。</p>
+        <div class="channels">
+          <span class="channel"><b>QQ</b> 机器人</span>
+          <span class="channel"><b>微信</b> / 企业微信</span>
+          <span class="channel"><b>飞书</b> / Lark</span>
+          <span class="channel"><b>钉钉</b></span>
+          <span class="channel"><b>Telegram</b></span>
+          <span class="channel"><b>Discord</b></span>
+          <span class="channel"><b>Slack</b></span>
+          <span class="channel"><b>LINE</b></span>
+          <span class="channel"><b>Matrix</b></span>
+          <span class="channel"><b>IRC</b></span>
+          <span class="channel"><b>MQTT</b></span>
+          <span class="channel"><b>VK</b></span>
+        </div>
+      </div>
+      <div class="callout-side">
+        <h3>为什么不用自建前端</h3>
+        <ul>
+          <li>消息、图片、文件都走已有聊天客户端</li>
+          <li>会话、记忆、工具调用由网关统一处理</li>
+          <li>需要桌面管理时再启动 Launcher</li>
+          <li>多端、多人、群聊按渠道天然隔离</li>
+        </ul>
+      </div>
+    </div>
+    <div class="flow">
+      <span class="hot">QQ / 微信 / 飞书 / 钉钉</span><em>→</em>
+      <span>PicoClaw Gateway</span><em>→</em>
+      <span>Agent + 工具</span><em>→</em>
+      <span>SQLite 记忆</span><em>→</em>
+      <span>模型服务</span>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <div class="split">
+      <div>
+        <h2>0.4 记忆链路</h2>
+        <p class="lead">每轮对话只做一次轻量抽取；写入前完成去重和冲突检查，注入时按预算和渠道筛选。</p>
+        <div class="flow">
+          <span>用户消息</span><em>→</em><span>规则抽取</span><em>→</em><span>去重 / 冲突</span><em>→</em><span class="hot">SQLite</span><em>→</em><span>审核</span><em>→</em><span>按需注入</span>
+        </div>
+        <pre><code># 0.4.1 修复：普通聊天不再写入记忆
+# 只有明确“记住”、称呼、偏好、生日、日期事件才会抽取
+picoclaw memory audit
+picoclaw memory render</code></pre>
+      </div>
+      <div>
+        <h2>返回性能</h2>
+        <p class="lead">流式中间帧限流；最终帧先于持久化发送；WebSocket 写超时；会话 JSONL 批量异步落盘。</p>
+        <div class="grid cols-2">
+          <div class="card"><h3>首帧快</h3><p>本地 Pico WebSocket 首帧通常在 1ms 内，主要延迟来自模型。</p></div>
+          <div class="card"><h3>收尾短</h3><p>最终帧不再等待 session 保存和上下文压缩。</p></div>
+          <div class="card"><h3>连接复用</h3><p>Provider HTTP 连接池，减少反复 TLS 握手。</p></div>
+          <div class="card"><h3>并发修复</h3><p>异步子任务、渠道关闭、会话读取的数据竞争已处理。</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>快速开始</h2>
+    <div class="split">
+      <div>
+        <pre><code># 首次初始化
+picoclaw onboard
+
+# 启动网关（接入 QQ / 微信 / 飞书等渠道）
+picoclaw gateway
+
+# 可选：桌面 Launcher（含 /memory 页面）
+picoclaw-launcher</code></pre>
+      </div>
+      <div class="links">
+        <a href="guides/configuration.zh.html">配置指南<small>workspace、渠道、模型</small></a>
+        <a href="guides/chat-apps.zh.html">聊天渠道接入<small>QQ、微信、飞书、钉钉等</small></a>
+        <a href="guides/providers.zh.html">模型服务<small>OpenAI 兼容 / Anthropic / Gemini</small></a>
+        <a href="guides/memory.zh.html">长期记忆<small>SQLite、去重、审核</small></a>
+        <a href="migration/0.4.0.zh.html">0.3.x 迁移<small>导入旧 MEMORY.md</small></a>
+        <a href="https://github.com/wenyinos/picoclaw/blob/main/CHANGELOG.md">变更日志<small>0.4.1 / 0.4.0</small></a>
+      </div>
+    </div>
+  </section>
+
+  <section id="poster">
+    <h2>项目海报</h2>
+    <div class="poster">
+      <a href="assets/picoclaw-0.4-poster.png"><img src="assets/picoclaw-0.4-poster.png" alt="PicoClaw 0.4 项目海报"></a>
+      <div>
+        <p>高密度版 0.4 特性海报，包含记忆系统、聊天渠道、架构链路、快速开始与平台支持。</p>
+        <p><a class="btn" href="assets/picoclaw-0.4-poster.png">查看 / 下载 PNG</a></p>
+        <p style="font-size:13px">适合放在项目主页、Release 说明或内部分享。</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    PicoClaw 0.4.1 · MIT · <a href="https://github.com/wenyinos/picoclaw">github.com/wenyinos/picoclaw</a> · <a href="https://github.com/wenyinos/picoclaw/releases">Releases</a>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,15 @@
+title: PicoClaw
+description: 超轻量个人 AI 助手。SQLite 长期记忆、陪伴控制台、可迁移 workspace。
+url: https://wenyinos.github.io
+baseurl: /picoclaw
+theme: jekyll-theme-primer
+markdown: kramdown
+kramdown:
+  input: GFM
+plugins:
+  - jekyll-relative-links
+  - jekyll-optional-front-matter
+  - jekyll-titles-from-headings
+  - jekyll-readme-index
+exclude:
+  - assets/poster.html

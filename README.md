@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="docs/project/README.zh.md">简体中文</a> ·
-  <a href="docs/README.md">Documentation</a>
+  <a href="https://wenyinos.github.io/picoclaw/">Online docs</a>
 </p>
 
 <p align="center">
@@ -231,6 +231,8 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 
 ## Documentation
 
+- [Online documentation](https://wenyinos.github.io/picoclaw/)
+- [0.4 poster](docs/assets/picoclaw-0.4-poster.png)
 - [Long-term memory](docs/guides/memory.md) · [中文](docs/guides/memory.zh.md)
 - [Migrating from 0.3.x to 0.4.0](docs/migration/0.4.0.md)
 - [Changelog](CHANGELOG.md)

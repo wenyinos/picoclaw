@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../../assets/logo.webp" alt="PicoClaw" width="360">
+  <img src="../assets/logo.webp" alt="PicoClaw" width="360">
 </p>
 
 <p align="center">
@@ -8,8 +8,8 @@
 </p>
 
 <p align="center">
-  <a href="../../README.md">English</a> ·
-  <a href="../README.md">文档</a>
+  <a href="https://github.com/wenyinos/picoclaw/blob/main/README.md">English</a> ·
+  <a href="https://wenyinos.github.io/picoclaw/">在线文档</a>
 </p>
 
 <p align="center">
@@ -231,9 +231,11 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 
 ## 文档
 
+- [在线文档](https://wenyinos.github.io/picoclaw/)
+- [0.4 项目海报](../assets/picoclaw-0.4-poster.png)
 - [长期记忆](../guides/memory.zh.md) · [English](../guides/memory.md)
 - [从 0.3.x 迁移到 0.4.0](../migration/0.4.0.zh.md)
-- [变更日志](../../CHANGELOG.md)
+- [变更日志](https://github.com/wenyinos/picoclaw/blob/main/CHANGELOG.md)
 - [配置指南](../guides/configuration.zh.md)
 - [路由与会话](../guides/routing-guide.md)
 - [会话系统](../architecture/session-system.zh.md)
@@ -248,4 +250,4 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 
 ## 许可证
 
-MIT，详见 [LICENSE](../../LICENSE)。
+MIT，详见 [LICENSE](https://github.com/wenyinos/picoclaw/blob/main/LICENSE)。
