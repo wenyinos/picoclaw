@@ -9,9 +9,7 @@
 
 <p align="center">
   <a href="../../README.md">English</a> ·
-  <a href="https://picoclaw.io">官网</a> ·
-  <a href="https://docs.picoclaw.io/">文档</a> ·
-  <a href="https://discord.gg/V4sAZ9XWpN">Discord</a>
+  <a href="../README.md">文档</a>
 </p>
 
 <p align="center">
@@ -87,7 +85,7 @@ picoclaw-launcher
 需要 Go 1.25+、Node.js 20+、pnpm、make。
 
 ```bash
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/wenyinos/picoclaw.git
 cd picoclaw
 
 make build              # 终端/gateway 二进制
@@ -227,16 +225,9 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 
 ---
 
-## 社区
-
-- 官网：<https://picoclaw.io>
-- 文档：<https://docs.picoclaw.io/>
-- Discord：<https://discord.gg/V4sAZ9XWpN>
-- X/Twitter：<https://x.com/SipeedIO>
-
 ## 关于本仓库
 
-本仓库跟踪 `sipeed/picoclaw`，并包含 0.4 记忆系统、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
+本仓库维护 PicoClaw 0.4，包含 SQLite 记忆系统、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
 
 ## 许可证
 

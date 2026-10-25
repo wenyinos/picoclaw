@@ -130,7 +130,7 @@ Bất kỳ điện thoại Android ARM64 nào (2015+) với 1GB+ RAM. Cài đặ
 
 ```bash
 # 1. Tải xuống cho kiến trúc của bạn
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/wenyinos/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 
 # 2. Khởi tạo
@@ -149,4 +149,4 @@ Các bản dựng có sẵn: `linux-amd64`, `linux-arm64`, `linux-arm`, `linux-r
 3. Bao gồm: tên, kiến trúc, SoC, RAM, năm và liên kết nếu có
 4. Gửi PR
 
-Nhà sản xuất phần cứng: muốn thêm hỗ trợ chính thức hoặc đồng quảng bá? Mở issue hoặc liên hệ qua [Discord](https://discord.gg/V4sAZ9XWpN).
+Nhà sản xuất phần cứng: muốn thêm hỗ trợ chính thức hoặc đồng quảng bá? Mở issue hoặc liên hệ qua [issue tracker](https://github.com/wenyinos/picoclaw/issues).

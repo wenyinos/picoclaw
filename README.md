@@ -9,9 +9,7 @@
 
 <p align="center">
   <a href="docs/project/README.zh.md">简体中文</a> ·
-  <a href="https://picoclaw.io">Website</a> ·
-  <a href="https://docs.picoclaw.io/">Documentation</a> ·
-  <a href="https://discord.gg/V4sAZ9XWpN">Discord</a>
+  <a href="docs/README.md">Documentation</a>
 </p>
 
 <p align="center">
@@ -87,7 +85,7 @@ Open `http://localhost:18800` for the launcher. The memory page is at `/memory`.
 Requirements: Go 1.25+, Node.js 20+, pnpm, make.
 
 ```bash
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/wenyinos/picoclaw.git
 cd picoclaw
 
 make build              # terminal/gateway binary
@@ -227,16 +225,9 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 
 ---
 
-## Community
+## About this repository
 
-- Website: <https://picoclaw.io>
-- Docs: <https://docs.picoclaw.io/>
-- Discord: <https://discord.gg/V4sAZ9XWpN>
-- X/Twitter: <https://x.com/SipeedIO>
-
-## About this fork
-
-This fork tracks `sipeed/picoclaw` and carries the 0.4 memory system, QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
+This repository maintains PicoClaw 0.4 with the SQLite memory system, QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
 
 ## License
 

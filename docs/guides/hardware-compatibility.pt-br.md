@@ -130,7 +130,7 @@ Qualquer celular Android ARM64 (2015+) com 1GB+ de RAM. Instale o [Termux](https
 
 ```bash
 # 1. Baixar para sua arquitetura
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/wenyinos/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 
 # 2. Inicializar
@@ -149,4 +149,4 @@ Builds disponíveis: `linux-amd64`, `linux-arm64`, `linux-arm`, `linux-riscv64`,
 3. Inclua: nome, arquitetura, SoC, RAM, ano e um link se disponível
 4. Envie um PR
 
-Fabricantes de hardware: deseja adicionar suporte oficial ou co-promover? Abra uma issue ou entre em contato via [Discord](https://discord.gg/V4sAZ9XWpN).
+Fabricantes de hardware: deseja adicionar suporte oficial ou co-promover? Abra uma issue ou entre em contato via [issue tracker](https://github.com/wenyinos/picoclaw/issues).

@@ -130,7 +130,7 @@ PicoClaw でテスト済みのコンシューマー製品、ルーター、産�
 
 ```bash
 # 1. お使いのアーキテクチャ向けをダウンロード
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
+wget https://github.com/wenyinos/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
 tar xzf picoclaw_Linux_arm64.tar.gz
 
 # 2. 初期化
@@ -149,4 +149,4 @@ tar xzf picoclaw_Linux_arm64.tar.gz
 3. 名前、アーキテクチャ、SoC、RAM、年、リンク（あれば）を含める
 4. PR を送信
 
-ハードウェアベンダーの方へ：公式サポートの追加や共同プロモーションをご希望ですか？Issue を作成するか、[Discord](https://discord.gg/V4sAZ9XWpN) でお問い合わせください。
+ハードウェアベンダーの方へ：公式サポートの追加や共同プロモーションをご希望ですか？Issue を作成するか、[issue tracker](https://github.com/wenyinos/picoclaw/issues) でお問い合わせください。
