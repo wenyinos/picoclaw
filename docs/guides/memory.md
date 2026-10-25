@@ -52,6 +52,10 @@ workspace/
 
 `relationship_state` stores names, stage, intimacy, anniversaries, and boundaries as versioned current values. `personas` stores versioned character definitions.
 
+## Automatic extraction
+
+After a turn, only explicit user statements are considered: `记住/记一下/别忘了`, preferred names, preferences/allergies, birthdays/anniversaries, and dated events. Ordinary chat, role-play keywords (`设定/扮演/剧情/人设/世界观/虚构/故事线`), and assistant replies are never auto-saved.
+
 ## Deduplication and conflicts
 
 Writes are processed in order:

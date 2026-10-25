@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.1
+
+### Fixed
+
+- Automatic memory extraction no longer creates `pending_review` entries from common role-play words such as `设定`, `扮演`, `剧情`, `人设`, `世界观`, `虚构`, or `故事线`. Ordinary chat therefore stays out of the memory review queue.
+- Assistant replies are no longer scanned for memory keywords; only explicit user statements can create memories.
+- Auto-extraction is limited to explicit `记住/记一下/别忘了`, preferred names, preferences/allergies, birthdays/anniversaries, and dated events.
+
 ## v0.4.0
 
 ### Added
