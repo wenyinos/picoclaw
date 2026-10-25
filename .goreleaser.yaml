@@ -39,12 +39,9 @@ builds:
       - loong64
       - arm
       - s390x
-      - mipsle
     goarm:
       - "6"
       - "7"
-    gomips:
-      - softfloat
     main: ./cmd/picoclaw
     ignore:
       - goos: windows
@@ -52,7 +49,7 @@ builds:
       - goos: netbsd
         goarch: s390x
       - goos: netbsd
-        goarch: mips64
+        goarch: arm64
       - goos: netbsd
         goarch: arm
 
@@ -82,12 +79,9 @@ builds:
       - loong64
       - arm
       - s390x
-      - mipsle
     goarm:
       - "6"
       - "7"
-    gomips:
-      - softfloat
     main: ./web/backend
     ignore:
       - goos: windows
@@ -95,7 +89,7 @@ builds:
       - goos: netbsd
         goarch: s390x
       - goos: netbsd
-        goarch: mips64
+        goarch: arm64
       - goos: netbsd
         goarch: arm
 

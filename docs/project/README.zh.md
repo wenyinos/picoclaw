@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
   <img src="https://img.shields.io/badge/Version-0.4.0-blue" alt="0.4.0">
-  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64%20%7C%20MIPS%20%7C%20RISC--V%20%7C%20LoongArch-blue" alt="架构">
+  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64%20%7C%20RISC--V%20%7C%20LoongArch-blue" alt="架构">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="许可证">
 </p>
 
@@ -60,7 +60,8 @@ Launcher 新增独立的 **记忆** 页面（`/memory`）：
 
 ### 几乎随处可跑
 
-- x86_64、ARM64、ARMv7、MIPS、RISC-V、LoongArch。
+- x86_64、ARM64、ARMv7、RISC-V、LoongArch。
+- 0.4 不再发布 Linux/mipsle：纯 Go SQLite 驱动不支持 MIPS32。
 - Linux、macOS、Windows、Android/Termux、Docker。
 - OpenAI 兼容接口、Anthropic、Gemini、Bedrock、Azure、本地模型等。
 - Telegram、Discord、Slack、飞书、企业微信、QQ、Matrix、IRC、MQTT，以及原生 Pico WebSocket 界面。

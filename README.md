@@ -15,7 +15,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
   <img src="https://img.shields.io/badge/Version-0.4.0-blue" alt="0.4.0">
-  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64%20%7C%20MIPS%20%7C%20RISC--V%20%7C%20LoongArch-blue" alt="Architectures">
+  <img src="https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64%20%7C%20RISC--V%20%7C%20LoongArch-blue" alt="Architectures">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
 </p>
 
@@ -60,7 +60,8 @@ The launcher includes a dedicated **Memory** page at `/memory`:
 
 ### Runs almost anywhere
 
-- x86_64, ARM64, ARMv7, MIPS, RISC-V, LoongArch.
+- x86_64, ARM64, ARMv7, RISC-V, LoongArch.
+- Linux/mipsle is not published in 0.4: the pure-Go SQLite driver does not support MIPS32.
 - Linux, macOS, Windows, Android/Termux, Docker.
 - OpenAI-compatible APIs, Anthropic, Gemini, Bedrock, Azure, local models, and more.
 - Telegram, Discord, Slack, Feishu, WeCom, QQ, Matrix, IRC, MQTT, and a native Pico WebSocket UI.

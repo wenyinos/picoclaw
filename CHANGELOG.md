@@ -43,6 +43,7 @@
 
 ### Breaking changes
 
+- Linux/mipsle binaries are no longer published: the pure-Go SQLite driver does not support MIPS32.
 - Runtime memory state lives in `workspace/memory/memory.db`.
 - Old `MEMORY.md` content must be imported once to be preserved.
 - Old workspaces should be copied or imported while the gateway and launcher are stopped.
