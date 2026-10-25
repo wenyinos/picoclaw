@@ -190,8 +190,8 @@ func TestBuildMessages_CurrentSenderDynamicContext(t *testing.T) {
 
 // TestMtimeAutoInvalidation verifies that the cache detects source file changes
 // via mtime without requiring explicit InvalidateCache().
-// Fix: original implementation had no auto-invalidation — edits to bootstrap files,
-// memory, or skills were invisible until process restart.
+// Fix: original implementation had no auto-invalidation — edits to bootstrap files
+// or skills were invisible until process restart.
 func TestMtimeAutoInvalidation(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -206,13 +206,6 @@ func TestMtimeAutoInvalidation(t *testing.T) {
 			contentV1:  "# Original Agent",
 			contentV2:  "# Updated Agent",
 			checkField: "Updated Agent",
-		},
-		{
-			name:       "memory file change",
-			file:       "memory/MEMORY.md",
-			contentV1:  "# Memory\nUser likes Go.",
-			contentV2:  "# Memory\nUser likes Rust.",
-			checkField: "User likes Rust",
 		},
 	}
 
@@ -347,17 +340,11 @@ func TestNewFileCreationInvalidatesCache(t *testing.T) {
 			content:    "# Soul\nBe kind and helpful.",
 			checkField: "Be kind and helpful",
 		},
-		{
-			name:       "new memory file",
-			file:       "memory/MEMORY.md",
-			content:    "# Memory\nUser prefers dark mode.",
-			checkField: "User prefers dark mode",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Start with an empty workspace (no bootstrap/memory files)
+			// Start with an empty workspace (no bootstrap files)
 			tmpDir := setupWorkspace(t, nil)
 			defer os.RemoveAll(tmpDir)
 
@@ -609,7 +596,6 @@ func TestConcurrentBuildSystemPromptWithCache(t *testing.T) {
 	tmpDir := setupWorkspace(t, map[string]string{
 		"AGENT.md":             "# Agent\nConcurrency test agent.",
 		"SOUL.md":              "# Soul\nBe helpful.",
-		"memory/MEMORY.md":     "# Memory\nUser prefers Go.",
 		"skills/demo/SKILL.md": "---\nname: demo\ndescription: \"demo skill\"\n---\n# Demo",
 	})
 	defer os.RemoveAll(tmpDir)

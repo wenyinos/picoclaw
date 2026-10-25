@@ -269,7 +269,6 @@ func TestTurnProfile_BtwCommandUsesEnabledTurnProfile(t *testing.T) {
 		"ALWAYS use tools",
 		"When using tools",
 		"read_file tool",
-		"update " + workspace + "/memory/MEMORY.md",
 	}
 	for _, snippet := range blockedSnippets {
 		if strings.Contains(systemPrompt, snippet) {

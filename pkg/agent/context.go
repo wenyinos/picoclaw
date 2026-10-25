@@ -25,7 +25,6 @@ import (
 type ContextBuilder struct {
 	workspace      string
 	skillsLoader   *skills.SkillsLoader
-	memory         *MemoryStore
 	longTerm       *memstore.Store
 	longTermCfg    config.MemoryConfig
 	splitOnMarker  bool
@@ -70,7 +69,7 @@ func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuil
 }
 
 // WithLongTermMemory enables SQLite-backed memory injection. When store is
-// nil the legacy MEMORY.md path is used.
+// nil, no long-term memory is injected.
 func (cb *ContextBuilder) WithLongTermMemory(store *memstore.Store, cfg config.MemoryConfig) *ContextBuilder {
 	cb.longTerm = store
 	cb.longTermCfg = cfg
@@ -128,7 +127,6 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	return &ContextBuilder{
 		workspace:      workspace,
 		skillsLoader:   skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
-		memory:         NewMemoryStore(workspace),
 		promptRegistry: NewPromptRegistry(),
 	}
 }
@@ -172,13 +170,10 @@ func (cb *ContextBuilder) getIdentity(includeToolUseRule bool) string {
 		accuracyRule,
 		"**Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.",
 	)
-	if includeToolUseRule {
+	if includeToolUseRule && cb.longTerm != nil && cb.longTermCfg.Enabled {
 		rules = append(
 			rules,
-			fmt.Sprintf(
-				"**Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md",
-				workspacePath,
-			),
+			"**Memory** - Use the `memory` tool to save stable facts, preferences, relationship details, and important events. Search or forget memories when needed.",
 		)
 	}
 	for i, rule := range rules {
@@ -192,8 +187,6 @@ You are picoclaw, a helpful AI assistant.
 
 ## Workspace
 Your workspace is at: %s
-- Memory: %s/memory/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
 - Skills: %s/skills/{skill-name}/SKILL.md
 
 ## Important Rules
@@ -201,8 +194,6 @@ Your workspace is at: %s
 %s
 `,
 		version,
-		workspacePath,
-		workspacePath,
 		workspacePath,
 		workspacePath,
 		strings.Join(rules, "\n\n"),
@@ -315,23 +306,6 @@ func (cb *ContextBuilder) buildSystemPromptParts(opts systemPromptBuildOptions) 
 			Stable: true,
 			Cache:  PromptCacheEphemeral,
 		})
-	}
-
-	// Legacy file-based memory. The SQLite store is injected per request in
-	// BuildMessagesFromPrompt so audience/channel filtering can be applied.
-	if cb.longTerm == nil || !cb.longTermCfg.Enabled {
-		if memoryContext := cb.memory.GetMemoryContext(); memoryContext != "" {
-			add(PromptPart{
-				ID:      "context.memory",
-				Layer:   PromptLayerContext,
-				Slot:    PromptSlotMemory,
-				Source:  PromptSource{ID: PromptSourceMemory, Name: "memory:workspace"},
-				Title:   "memory",
-				Content: "# Memory\n\n" + memoryContext,
-				Stable:  true,
-				Cache:   PromptCacheEphemeral,
-			})
-		}
 	}
 
 	// Multi-Message Sending (if enabled)
@@ -552,13 +526,11 @@ func (cb *ContextBuilder) InvalidateCache() {
 }
 
 // sourcePaths returns non-skill workspace source files tracked for cache
-// invalidation (bootstrap files + memory). Skill roots are handled separately
-// because they require both directory-level and recursive file-level checks.
+// invalidation (bootstrap files). Skill roots are handled separately because
+// they require both directory-level and recursive file-level checks.
 func (cb *ContextBuilder) sourcePaths() []string {
 	agentDefinition := cb.LoadAgentDefinition()
-	paths := agentDefinition.trackedPaths(cb.workspace)
-	paths = append(paths, filepath.Join(cb.workspace, "memory", "MEMORY.md"))
-	return uniquePaths(paths)
+	return uniquePaths(agentDefinition.trackedPaths(cb.workspace))
 }
 
 // skillRoots returns all skill root directories that can affect

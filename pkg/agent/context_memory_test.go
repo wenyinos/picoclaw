@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -48,6 +49,14 @@ func TestContextBuilder_LongTermMemoryInjectionAndCacheInvalidation(t *testing.T
 			t.Fatalf("system prompt missing %q:\n%s", want, system)
 		}
 	}
+	for _, forbidden := range []string{"MEMORY.md", "Daily Notes"} {
+		if strings.Contains(system, forbidden) {
+			t.Fatalf("system prompt still references legacy memory file %q:\n%s", forbidden, system)
+		}
+	}
+	if !strings.Contains(system, "`memory` tool") {
+		t.Fatalf("system prompt missing memory tool instruction:\n%s", system)
+	}
 
 	// A memory write must invalidate the cached system prompt.
 	if _, err := store.Add(ctx, memstore.AddInput{
@@ -70,5 +79,31 @@ func TestContextBuilder_LongTermMemoryInjectionAndCacheInvalidation(t *testing.T
 	system = build("还记得我们去看海吗")
 	if !strings.Contains(system, "一起去看了海") {
 		t.Fatalf("retrieval missing for private channel:\n%s", system)
+	}
+}
+
+func TestContextBuilder_DoesNotInjectLegacyMemoryFiles(t *testing.T) {
+	workspace := t.TempDir()
+	memoryDir := filepath.Join(workspace, "memory")
+	if err := os.MkdirAll(filepath.Join(memoryDir, "202610"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memoryDir, "MEMORY.md"), []byte("# Memory\nLEGACY_MD_MARKER"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memoryDir, "202610", "20261025.md"), []byte("LEGACY_DAILY_MARKER"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cb := NewContextBuilder(workspace)
+	msgs := cb.BuildMessages(nil, "", "hello", nil, "pico", "chat1", "user1", "User")
+	if len(msgs) == 0 {
+		t.Fatal("no messages built")
+	}
+	system := msgs[0].Content
+	for _, marker := range []string{"LEGACY_MD_MARKER", "LEGACY_DAILY_MARKER", "MEMORY.md", "Daily Notes"} {
+		if strings.Contains(system, marker) {
+			t.Fatalf("system prompt still reads legacy memory marker %q:\n%s", marker, system)
+		}
 	}
 }

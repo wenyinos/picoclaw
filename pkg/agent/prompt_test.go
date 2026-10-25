@@ -233,8 +233,7 @@ func TestContextBuilder_SuppressesToolReferencesWhenToolsUnavailable(t *testing.
 	})
 	system := messages[0]
 	if strings.Contains(system.Content, "When using tools") ||
-		strings.Contains(system.Content, "read_file tool") ||
-		strings.Contains(system.Content, "update "+workspace+"/memory/MEMORY.md") {
+		strings.Contains(system.Content, "read_file tool") {
 		t.Fatalf("system prompt includes tool references despite tools being unavailable: %q", system.Content)
 	}
 	if !strings.Contains(system.Content, "<name>research</name>") {
