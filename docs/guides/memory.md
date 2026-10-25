@@ -72,7 +72,7 @@ Writes are processed in order:
 Open `/memory` in the launcher:
 
 - Overview: counts, database size, relationship state, archival action.
-- Memory library: search, filter, edit, archive, restore.
+- Memory library: server-side pagination (100 per page), search, filter, edit, archive, restore.
 - Review: confirm real, mark fictional, mark work, ignore.
 - Relationship and persona: names, stage, anniversaries, boundaries, persona versions.
 - Settings: budget, auto-extraction, private channels, import.
