@@ -1,18 +1,24 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  memoryApi,
   type MemoryEntry,
   type MemoryOverview,
   type MemorySettings,
   type Persona,
   type RelationshipValue,
+  memoryApi,
 } from "@/lib/memory-api"
 
-const TABS = ["overview", "entries", "review", "relationship", "settings"] as const
+const TABS = [
+  "overview",
+  "entries",
+  "review",
+  "relationship",
+  "settings",
+] as const
 type Tab = (typeof TABS)[number]
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -23,6 +29,8 @@ const TAB_LABELS: Record<Tab, string> = {
   settings: "设置",
 }
 
+const PAGE_SIZE = 100
+
 function fmtDate(ms?: number) {
   if (!ms) return "-"
   return new Date(ms).toLocaleString()
@@ -30,7 +38,7 @@ function fmtDate(ms?: number) {
 
 function badge(value: string) {
   return (
-    <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+    <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[11px]">
       {value}
     </span>
   )
@@ -42,38 +50,56 @@ export function MemoryPage() {
   const [notice, setNotice] = useState("")
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold">记忆</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          管理长期记忆、关系状态、角色设定和注入预算。
-        </p>
+    <div className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
+        <div>
+          <h1 className="text-2xl font-semibold">记忆</h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            管理长期记忆、关系状态、角色设定和注入预算。
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2 border-b pb-3">
+          {TABS.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+                tab === t
+                  ? "bg-primary text-primary-foreground"
+                  : "hover:bg-muted"
+              }`}
+            >
+              {TAB_LABELS[t]}
+            </button>
+          ))}
+        </div>
+
+        {error && (
+          <div className="rounded-md bg-red-500/10 p-3 text-sm text-red-500">
+            {error}
+          </div>
+        )}
+        {notice && (
+          <div className="rounded-md bg-emerald-500/10 p-3 text-sm text-emerald-600">
+            {notice}
+          </div>
+        )}
+
+        {tab === "overview" && <OverviewTab onError={setError} />}
+        {tab === "entries" && (
+          <EntriesTab onError={setError} onNotice={setNotice} />
+        )}
+        {tab === "review" && (
+          <ReviewTab onError={setError} onNotice={setNotice} />
+        )}
+        {tab === "relationship" && (
+          <RelationshipTab onError={setError} onNotice={setNotice} />
+        )}
+        {tab === "settings" && (
+          <SettingsTab onError={setError} onNotice={setNotice} />
+        )}
       </div>
-
-      <div className="flex flex-wrap gap-2 border-b pb-3">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-              tab === t ? "bg-primary text-primary-foreground" : "hover:bg-muted"
-            }`}
-          >
-            {TAB_LABELS[t]}
-          </button>
-        ))}
-      </div>
-
-      {error && <div className="rounded-md bg-red-500/10 p-3 text-sm text-red-500">{error}</div>}
-      {notice && (
-        <div className="rounded-md bg-emerald-500/10 p-3 text-sm text-emerald-600">{notice}</div>
-      )}
-
-      {tab === "overview" && <OverviewTab onError={setError} />}
-      {tab === "entries" && <EntriesTab onError={setError} onNotice={setNotice} />}
-      {tab === "review" && <ReviewTab onError={setError} onNotice={setNotice} />}
-      {tab === "relationship" && <RelationshipTab onError={setError} onNotice={setNotice} />}
-      {tab === "settings" && <SettingsTab onError={setError} onNotice={setNotice} />}
     </div>
   )
 }
@@ -99,7 +125,10 @@ function OverviewTab({ onError }: { onError: (v: string) => void }) {
       { label: "生效", value: overview?.active ?? 0 },
       { label: "待审核", value: overview?.pending ?? 0 },
       { label: "已归档", value: overview?.archived ?? 0 },
-      { label: "数据库大小", value: `${Math.round((overview?.db_size ?? 0) / 1024)} KB` },
+      {
+        label: "数据库大小",
+        value: `${Math.round((overview?.db_size ?? 0) / 1024)} KB`,
+      },
       { label: "版本号", value: overview?.revision ?? 0 },
     ],
     [overview],
@@ -119,11 +148,16 @@ function OverviewTab({ onError }: { onError: (v: string) => void }) {
       <div className="rounded-lg border p-4">
         <h2 className="mb-3 text-sm font-semibold">关系状态</h2>
         {relationship.length === 0 ? (
-          <p className="text-muted-foreground text-sm">尚未设置称呼、阶段或纪念日。</p>
+          <p className="text-muted-foreground text-sm">
+            尚未设置称呼、阶段或纪念日。
+          </p>
         ) : (
           <ul className="grid gap-2 text-sm md:grid-cols-2">
             {relationship.map((r) => (
-              <li key={r.key} className="flex justify-between gap-3 border-b pb-1">
+              <li
+                key={r.key}
+                className="flex justify-between gap-3 border-b pb-1"
+              >
                 <span className="text-muted-foreground">{r.key}</span>
                 <span className="font-medium">{r.value}</span>
               </li>
@@ -164,23 +198,55 @@ function EntriesTab({
   const [realm, setRealm] = useState("")
   const [layer, setLayer] = useState("")
   const [status, setStatus] = useState("")
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<MemoryEntry | null>(null)
   const [draft, setDraft] = useState("")
   const [importance, setImportance] = useState(0.7)
+  const listRef = useRef<HTMLDivElement>(null)
 
-  const load = () => {
-    const params: Record<string, string> = { limit: "200" }
-    if (query) params.q = query
-    if (realm) params.realm = realm
-    if (layer) params.layer = layer
-    if (status) params.status = status
+  const load = (
+    nextPage = page,
+    filters: { query: string; realm: string; layer: string; status: string } = {
+      query,
+      realm,
+      layer,
+      status,
+    },
+    scroll = nextPage !== page,
+  ) => {
+    const targetPage = Math.max(1, nextPage)
+    const params: Record<string, string> = {
+      limit: String(PAGE_SIZE + 1),
+      offset: String((targetPage - 1) * PAGE_SIZE),
+    }
+    if (filters.query) params.q = filters.query
+    if (filters.realm) params.realm = filters.realm
+    if (filters.layer) params.layer = filters.layer
+    if (filters.status) params.status = filters.status
+
+    setLoading(true)
     memoryApi
       .entries(params)
-      .then((r) => setEntries(r.entries || []))
+      .then((r) => {
+        const list = r.entries || []
+        setEntries(list.slice(0, PAGE_SIZE))
+        setHasMore(list.length > PAGE_SIZE)
+        setPage(targetPage)
+        if (scroll) {
+          requestAnimationFrame(() =>
+            listRef.current?.scrollIntoView({ block: "start" }),
+          )
+        }
+      })
       .catch((e: Error) => onError(e.message))
+      .finally(() => setLoading(false))
   }
 
-  useEffect(load, [])
+  useEffect(() => {
+    load(1)
+  }, [])
 
   const select = (e: MemoryEntry) => {
     setSelected(e)
@@ -190,18 +256,26 @@ function EntriesTab({
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
-      <div className="flex flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-3">
         <div className="flex flex-wrap gap-2">
           <Input
             placeholder="搜索内容"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter")
+                load(1, { query, realm, layer, status }, true)
+            }}
             className="w-48"
           />
           <select
             className="h-9 rounded-md border bg-transparent px-2 text-sm"
             value={realm}
-            onChange={(e) => setRealm(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value
+              setRealm(value)
+              load(1, { query, realm: value, layer, status }, true)
+            }}
           >
             <option value="">全部领域</option>
             <option value="real">real</option>
@@ -212,7 +286,11 @@ function EntriesTab({
           <select
             className="h-9 rounded-md border bg-transparent px-2 text-sm"
             value={layer}
-            onChange={(e) => setLayer(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value
+              setLayer(value)
+              load(1, { query, realm, layer: value, status }, true)
+            }}
           >
             <option value="">全部类型</option>
             <option value="profile">profile</option>
@@ -224,7 +302,11 @@ function EntriesTab({
           <select
             className="h-9 rounded-md border bg-transparent px-2 text-sm"
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value
+              setStatus(value)
+              load(1, { query, realm, layer, status: value }, true)
+            }}
           >
             <option value="">全部状态</option>
             <option value="active">active</option>
@@ -232,14 +314,18 @@ function EntriesTab({
             <option value="superseded">superseded</option>
             <option value="archived">archived</option>
           </select>
-          <Button variant="outline" onClick={load}>
+          <Button
+            variant="outline"
+            onClick={() => load(1, { query, realm, layer, status }, true)}
+            disabled={loading}
+          >
             搜索
           </Button>
         </div>
 
-        <div className="max-h-[520px] overflow-auto rounded-lg border">
+        <div ref={listRef} className="overflow-x-auto rounded-lg border">
           <table className="w-full text-left text-sm">
-            <thead className="bg-muted/50 sticky top-0">
+            <thead className="bg-muted sticky top-0 z-10">
               <tr>
                 <th className="p-2">内容</th>
                 <th className="p-2">类型</th>
@@ -267,19 +353,49 @@ function EntriesTab({
               ))}
               {entries.length === 0 && (
                 <tr>
-                  <td className="text-muted-foreground p-4 text-center" colSpan={4}>
-                    没有匹配的记忆
+                  <td
+                    className="text-muted-foreground p-4 text-center"
+                    colSpan={4}
+                  >
+                    {loading ? "加载中…" : "没有匹配的记忆"}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span className="text-muted-foreground">
+            {loading ? "加载中…" : `每页 ${PAGE_SIZE} 条`}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => load(page - 1)}
+              disabled={page <= 1 || loading}
+            >
+              上一页
+            </Button>
+            <span className="min-w-16 text-center">第 {page} 页</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => load(page + 1)}
+              disabled={!hasMore || loading}
+            >
+              下一页
+            </Button>
+          </div>
+        </div>
       </div>
 
-      <div className="rounded-lg border p-4">
+      <div className="self-start rounded-lg border p-4 lg:sticky lg:top-4">
         {!selected ? (
-          <p className="text-muted-foreground text-sm">选择左侧条目进行编辑。</p>
+          <p className="text-muted-foreground text-sm">
+            选择左侧条目进行编辑。
+          </p>
         ) : (
           <div className="flex flex-col gap-3">
             <div className="text-muted-foreground text-xs">{selected.id}</div>
@@ -308,7 +424,7 @@ function EntriesTab({
                     .then((e) => {
                       setSelected(e)
                       onNotice("已保存")
-                      load()
+                      load(page)
                     })
                     .catch((err: Error) => onError(err.message))
                 }
@@ -323,7 +439,7 @@ function EntriesTab({
                     .then(() => {
                       onNotice("已归档")
                       setSelected(null)
-                      load()
+                      load(page)
                     })
                     .catch((err: Error) => onError(err.message))
                 }
@@ -337,7 +453,7 @@ function EntriesTab({
                     .restoreEntry(selected.id)
                     .then(() => {
                       onNotice("已恢复")
-                      load()
+                      load(page)
                     })
                     .catch((err: Error) => onError(err.message))
                 }
@@ -346,7 +462,8 @@ function EntriesTab({
               </Button>
             </div>
             <div className="text-muted-foreground text-xs">
-              来源：{selected.sources?.[0]?.source_type || "-"} · 更新：{fmtDate(selected.updated_at)}
+              来源：{selected.sources?.[0]?.source_type || "-"} · 更新：
+              {fmtDate(selected.updated_at)}
             </div>
           </div>
         )}
@@ -393,20 +510,34 @@ function ReviewTab({
           <div className="flex flex-wrap items-center gap-2 text-xs">
             {badge(e.realm)}
             {badge(e.layer)}
-            <span className="text-muted-foreground">{fmtDate(e.created_at)}</span>
+            <span className="text-muted-foreground">
+              {fmtDate(e.created_at)}
+            </span>
           </div>
           <p className="mt-2 text-sm">{e.text}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={() => resolve(e.id, "approve")}>
               确认为真实
             </Button>
-            <Button size="sm" variant="outline" onClick={() => resolve(e.id, "approve_fictional")}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => resolve(e.id, "approve_fictional")}
+            >
               标记虚构
             </Button>
-            <Button size="sm" variant="outline" onClick={() => resolve(e.id, "approve_work")}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => resolve(e.id, "approve_work")}
+            >
               标记工作
             </Button>
-            <Button size="sm" variant="outline" onClick={() => resolve(e.id, "archive")}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => resolve(e.id, "archive")}
+            >
               忽略
             </Button>
           </div>
@@ -465,11 +596,21 @@ function RelationshipTab({
               <span>{v.value}</span>
             </li>
           ))}
-          {values.length === 0 && <li className="text-muted-foreground">尚未设置。</li>}
+          {values.length === 0 && (
+            <li className="text-muted-foreground">尚未设置。</li>
+          )}
         </ul>
         <div className="mt-2 flex gap-2">
-          <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="键" />
-          <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="值" />
+          <Input
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="键"
+          />
+          <Input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="值"
+          />
           <Button
             onClick={() =>
               memoryApi
@@ -489,7 +630,10 @@ function RelationshipTab({
 
       <div className="flex flex-col gap-3 rounded-lg border p-4">
         <h2 className="text-sm font-semibold">角色设定</h2>
-        <Input value={personaName} onChange={(e) => setPersonaName(e.target.value)} />
+        <Input
+          value={personaName}
+          onChange={(e) => setPersonaName(e.target.value)}
+        />
         <Textarea
           value={personaContent}
           onChange={(e) => setPersonaContent(e.target.value)}
@@ -545,8 +689,10 @@ function SettingsTab({
 
   if (!settings) return <p className="text-muted-foreground text-sm">加载中…</p>
 
-  const update = <K extends keyof MemorySettings>(key: K, value: MemorySettings[K]) =>
-    setSettings({ ...settings, [key]: value })
+  const update = <K extends keyof MemorySettings>(
+    key: K,
+    value: MemorySettings[K],
+  ) => setSettings({ ...settings, [key]: value })
 
   return (
     <div className="flex max-w-2xl flex-col gap-4">
@@ -612,7 +758,9 @@ function SettingsTab({
         <Input
           type="number"
           value={settings.episodic_retention_days ?? 365}
-          onChange={(e) => update("episodic_retention_days", Number(e.target.value))}
+          onChange={(e) =>
+            update("episodic_retention_days", Number(e.target.value))
+          }
           className="mt-1"
         />
       </label>
