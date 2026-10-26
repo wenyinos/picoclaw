@@ -77,7 +77,7 @@ The 0.4 memory work sits alongside PicoClaw's original assistant features:
 - **Tools** — file read/write/edit, shell execution, web search/fetch, messaging, media and image handling, scheduling, and sub-agents. See [Tools](docs/reference/tools_configuration.md).
 - **MCP** — connect external Model Context Protocol servers and expose their tools to the agent. See [MCP CLI](docs/reference/mcp-cli.md).
 - **Skills** — workspace, global, and builtin skill sources; search, install, and use skills from chat. See [Configuration](docs/guides/configuration.md).
-- **Automation** — cron jobs, heartbeat tasks, hooks, and optional agent self-evolution. See [Cron](docs/reference/cron.md), [Hooks](docs/architecture/hooks/README.md), and [Agent evolution](docs/architecture/agent-self-evolution.md).
+- **Automation** — cron jobs with live CLI reload, direct delivery, shell commands, and visible failure state; heartbeat tasks, hooks, and optional agent self-evolution. See [Cron](docs/reference/cron.md), [Hooks](docs/architecture/hooks/README.md), and [Agent evolution](docs/architecture/agent-self-evolution.md).
 - **Sub-agents** — async background work and long-running task orchestration. See [Spawn and async tasks](docs/guides/spawn-tasks.md).
 - **Interfaces** — CLI (`onboard`, `agent`, `gateway`), desktop launcher, Docker, and Android/Termux. See [Docker](docs/guides/docker.md) and [Termux](docs/guides/android-termux.md).
 - **Memory** — SQLite long-term memory, relationship/persona state, review queue, dashboard, and CLI. See [Long-term memory](docs/guides/memory.md).

@@ -200,6 +200,17 @@ picoclaw memory render  # 可选导出，不会被运行时读回</code></pre>
     </div>
   </section>
 
+  <section id="automation">
+    <h2>定时任务与提醒</h2>
+    <p class="lead">Agent、CLI 和聊天渠道共享同一任务库；CLI 修改会自动同步到运行中的 gateway，错过的一次性任务会在启动后补执行。</p>
+    <div class="grid cols-3">
+      <div class="card"><span class="tag">Schedule</span><h3>提醒与周期任务</h3><p>一次性提醒、固定间隔和 cron 表达式，统一持久化在 <code>workspace/cron/jobs.json</code>。</p></div>
+      <div class="card"><span class="tag">Reliability</span><h3>错过也会补执行</h3><p>停机期间到期的一次性任务在启动后立即执行；失败任务保留错误状态，可重新启用重试。</p></div>
+      <div class="card"><span class="tag">Delivery</span><h3>三种执行模式</h3><p>Agent 推理、<code>--deliver</code> 直接发送、Shell 命令；CLI 修改约 1 秒内同步。</p></div>
+    </div>
+    <p class="lead" style="margin-top:18px;margin-bottom:0"><a class="btn" href="reference/cron.html">查看定时任务文档</a></p>
+  </section>
+
   <section id="start">
     <h2>快速开始</h2>
     <div class="split">

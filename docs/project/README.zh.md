@@ -77,7 +77,7 @@ Launcher 新增独立的 **记忆** 页面（`/memory`）：
 - **工具** — 文件读写编辑、Shell 执行、网页搜索/抓取、消息发送、媒体与图片处理、定时任务和子代理。见[工具配置](../reference/tools_configuration.zh.md)。
 - **MCP** — 连接外部 Model Context Protocol 服务，把其工具暴露给 Agent。见 [MCP CLI](../reference/mcp-cli.md)。
 - **技能** — 工作区、全局和内置技能源；支持搜索、安装并在对话中使用。见[配置指南](../guides/configuration.zh.md)。
-- **自动化** — 定时任务、心跳任务、Hooks，以及可选的 Agent 自进化。见[定时任务](../reference/cron.md)、[Hooks](../architecture/hooks/README.zh.md) 和 [Agent 自进化](../architecture/agent-self-evolution.md)。
+- **自动化** — 定时任务支持 CLI 热加载、直接投递、Shell 命令和失败状态可见；另有心跳任务、Hooks 和可选的 Agent 自进化。见[定时任务](../reference/cron.md)、[Hooks](../architecture/hooks/README.zh.md) 和 [Agent 自进化](../architecture/agent-self-evolution.md)。
 - **子代理** — 异步后台任务和长任务编排。见[派生与异步任务](../guides/spawn-tasks.md)。
 - **使用界面** — CLI（`onboard`、`agent`、`gateway`）、桌面 Launcher、Docker 和 Android/Termux。见 [Docker](../guides/docker.zh.md) 和 [Termux](../guides/android-termux.md)。
 - **记忆** — SQLite 长期记忆、关系/人设、审核队列、控制台和 CLI。见[长期记忆](../guides/memory.zh.md)。

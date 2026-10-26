@@ -1,5 +1,29 @@
 # 变更日志
 
+## v0.4.4
+
+### 修复
+
+- 运行中的 gateway 会自动加载 CLI 对 `cron/jobs.json` 的新增、删除、启用和禁用，约 500ms 内生效，不再需要重启。
+- gateway 停机期间到期的一次性任务会在启动后立即执行一次，不再永久丢失。
+- 失败的一次性任务保留为 disabled，写入 `lastStatus`/`lastError`，可通过重新启用立即重试。
+- Agent 调用、shell 命令和消息提交失败会真实写入任务状态；`cron list` 显示模式、上次运行、状态和错误信息。
+- 配置重载时停止旧的 Cron/Heartbeat 调度器，避免新旧循环重复执行同一任务。
+- `tools.cron.enabled=false` 时不再让已持久化任务静默空转，执行器仍会安装。
+- 删除最后一个任务后 `jobs.json` 写入 `[]`，不再写入 `null`。
+- Cron 日志接入项目 logger，失败和重载信息进入 gateway 日志。
+
+### 新增
+
+- Cron 任务支持 `deliver: true` / `--deliver` 直接投递，不经过 Agent 推理。
+- CLI `cron add` 要求 `--channel` 和 `--to`，避免任务执行后没有投递目标。
+- 定时任务文档补充热加载、过期补执行、失败保留、直接投递和超时说明。
+
+### 升级
+
+- 无配置或数据库结构变更。
+- 更新 gateway / launcher 二进制并重启即可。
+
 ## v0.4.3
 
 ### 修复
