@@ -32,6 +32,7 @@ type CronTool struct {
 	execTool              *ExecTool
 	allowCommand          bool
 	execEnabled           bool
+	execTimeout           time.Duration
 	commandAllowedRemotes []string
 }
 
@@ -69,6 +70,7 @@ func NewCronTool(
 		execTool:              execTool,
 		allowCommand:          allowCommand,
 		execEnabled:           execEnabled,
+		execTimeout:           execTimeout,
 		commandAllowedRemotes: commandAllowedRemotes,
 	}, nil
 }
@@ -85,7 +87,8 @@ IMPORTANT: When user asks to be reminded or scheduled, you MUST call this tool.
 Use 'at_seconds' for one-time reminders (e.g., 'remind me in 10 minutes' → at_seconds=600). 
 Use 'every_seconds' ONLY for recurring tasks (e.g., 'every 2 hours' → every_seconds=7200). 
 Use 'cron_expr' for complex recurring schedules. 
-Use 'command' to execute shell commands directly.`
+Use 'command' to execute shell commands directly.
+Set 'deliver=true' to publish the message directly instead of running an agent turn.`
 }
 
 // Parameters returns the tool parameters schema
@@ -115,6 +118,10 @@ func (t *CronTool) Parameters() map[string]any {
 			"command_confirm": map[string]any{
 				"type":        "boolean",
 				"description": "Optional explicit confirmation flag for scheduling a shell command. Command execution must also be enabled via tools.cron.allow_command.",
+			},
+			"deliver": map[string]any{
+				"type":        "boolean",
+				"description": "Optional: publish the message directly when due instead of running an agent turn.",
 			},
 			"at_seconds": map[string]any{
 				"type":        "integer",
@@ -245,14 +252,21 @@ func (t *CronTool) addJob(ctx context.Context, args map[string]any) *ToolResult 
 		return ErrorResult(fmt.Sprintf("Error adding job: %v", err))
 	}
 
-	// Apply optional payload fields and persist in a single UpdateJob call
+	// Apply optional payload fields and persist in a single UpdateJob call.
+	// Command jobs always use command mode, regardless of the deliver flag.
 	needsUpdate := false
 	if command != "" {
 		job.Payload.Command = command
+		job.Payload.Deliver = false
+		needsUpdate = true
+	} else if deliver, _ := args["deliver"].(bool); deliver {
+		job.Payload.Deliver = true
 		needsUpdate = true
 	}
 	if needsUpdate {
-		t.cronService.UpdateJob(job)
+		if err := t.cronService.UpdateJob(job); err != nil {
+			return ErrorResult(fmt.Sprintf("Error updating job: %v", err))
+		}
 	}
 
 	return SilentResult(fmt.Sprintf("Cron job added: %s (id: %s)", job.Name, job.ID))
@@ -365,6 +379,18 @@ func (t *CronTool) updateJob(ctx context.Context, args map[string]any) *ToolResu
 		patches++
 	}
 
+	deliver, deliverPresent, deliverErr := optionalBool(args, "deliver")
+	if deliverErr != nil {
+		return deliverErr
+	}
+	if deliverPresent {
+		job.Payload.Deliver = deliver
+		patches++
+	}
+	if job.Payload.Command != "" {
+		job.Payload.Deliver = false
+	}
+
 	if patches == 0 {
 		return ErrorResult("at least one update field is required")
 	}
@@ -430,6 +456,18 @@ func optionalString(args map[string]any, key string) (string, bool, *ToolResult)
 		return "", false, ErrorResult(fmt.Sprintf("%s must be a string", key))
 	}
 	return text, true, nil
+}
+
+func optionalBool(args map[string]any, key string) (bool, bool, *ToolResult) {
+	value, present := args[key]
+	if !present {
+		return false, false, nil
+	}
+	flag, ok := value.(bool)
+	if !ok {
+		return false, false, ErrorResult(fmt.Sprintf("%s must be a boolean", key))
+	}
+	return flag, true, nil
 }
 
 func schedulePatch(args map[string]any) (cron.CronSchedule, bool, *ToolResult) {
@@ -590,31 +628,26 @@ func (t *CronTool) enableJob(ctx context.Context, args map[string]any, enable bo
 	return SilentResult(fmt.Sprintf("Cron job '%s' %s", updatedJob.Name, status))
 }
 
-// ExecuteJob executes a cron job through the agent
-func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
-	// Get channel/chatID from job payload
-	channel := job.Payload.Channel
-	chatID := job.Payload.To
-
-	// Default values if not set
-	if channel == "" {
-		channel = "cli"
-	}
-	if chatID == "" {
-		chatID = "direct"
+// ExecuteJob executes a cron job through the agent, a shell command, or a
+// direct delivery. The returned error is persisted in the job state.
+func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) (string, error) {
+	channel := strings.TrimSpace(job.Payload.Channel)
+	chatID := strings.TrimSpace(job.Payload.To)
+	if channel == "" || chatID == "" {
+		return "", fmt.Errorf("job has no delivery target (channel/to)")
 	}
 
-	// Execute command if present
+	// Execute command if present. Command mode takes precedence over deliver.
 	if job.Payload.Command != "" {
 		if !t.execEnabled || t.execTool == nil {
 			output := "Error executing scheduled command: command execution is disabled"
 			pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer pubCancel()
-			t.msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+			_ = t.msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
 				Context: bus.NewOutboundContext(channel, chatID, ""),
 				Content: output,
 			})
-			return "ok"
+			return "", fmt.Errorf("command execution is disabled")
 		}
 
 		args := map[string]any{
@@ -634,14 +667,41 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 
 		pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer pubCancel()
-		t.msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+		if err := t.msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
 			Context: bus.NewOutboundContext(channel, chatID, ""),
 			Content: output,
-		})
-		return "ok"
+		}); err != nil {
+			return "", fmt.Errorf("publish scheduled command result: %w", err)
+		}
+		if result.IsError {
+			return "", fmt.Errorf("scheduled command failed: %s", result.ForLLM)
+		}
+		return "ok", nil
+	}
+
+	if job.Payload.Deliver {
+		if strings.TrimSpace(job.Payload.Message) == "" {
+			return "", fmt.Errorf("deliver job has an empty message")
+		}
+		pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer pubCancel()
+		if err := t.msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+			Context: bus.NewOutboundContext(channel, chatID, ""),
+			Content: job.Payload.Message,
+		}); err != nil {
+			return "", fmt.Errorf("deliver scheduled message: %w", err)
+		}
+		return "ok", nil
 	}
 
 	sessionKey := fmt.Sprintf("agent:cron-%s-%s", job.ID, uuid.New().String())
+
+	ctx = context.WithoutCancel(ctx)
+	if t.execTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.execTimeout)
+		defer cancel()
+	}
 
 	// Call agent with the job message
 	response, err := t.executor.ProcessDirectWithChannel(
@@ -652,11 +712,11 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		chatID,
 	)
 	if err != nil {
-		return fmt.Sprintf("Error: %v", err)
+		return "", err
 	}
 
 	if response != "" {
 		t.executor.PublishResponseIfNeeded(ctx, channel, chatID, sessionKey, response)
 	}
-	return "ok"
+	return "ok", nil
 }

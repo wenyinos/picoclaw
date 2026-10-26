@@ -16,6 +16,7 @@ func newAddCommand(storePath func() string) *cobra.Command {
 		cronExp string
 		channel string
 		to      string
+		deliver bool
 	)
 
 	cmd := &cobra.Command{
@@ -25,6 +26,9 @@ func newAddCommand(storePath func() string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if every <= 0 && cronExp == "" {
 				return fmt.Errorf("either --every or --cron must be specified")
+			}
+			if channel == "" || to == "" {
+				return fmt.Errorf("--channel and --to are required so the job has a delivery target")
 			}
 
 			var schedule cron.CronSchedule
@@ -40,6 +44,12 @@ func newAddCommand(storePath func() string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("error adding job: %w", err)
 			}
+			if deliver {
+				job.Payload.Deliver = true
+				if err := cs.UpdateJob(job); err != nil {
+					return fmt.Errorf("error enabling direct delivery: %w", err)
+				}
+			}
 
 			fmt.Printf("✓ Added job '%s' (%s)\n", job.Name, job.ID)
 
@@ -53,9 +63,12 @@ func newAddCommand(storePath func() string) *cobra.Command {
 	cmd.Flags().StringVarP(&cronExp, "cron", "c", "", "Cron expression (e.g. '0 9 * * *')")
 	cmd.Flags().StringVar(&to, "to", "", "Recipient for delivery")
 	cmd.Flags().StringVar(&channel, "channel", "", "Channel for delivery")
+	cmd.Flags().BoolVar(&deliver, "deliver", false, "Publish the message directly instead of running the agent")
 
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("message")
+	_ = cmd.MarkFlagRequired("channel")
+	_ = cmd.MarkFlagRequired("to")
 	cmd.MarkFlagsMutuallyExclusive("every", "cron")
 
 	return cmd

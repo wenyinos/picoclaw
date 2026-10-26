@@ -660,6 +660,18 @@ func restartServices(
 ) error {
 	cfg := al.GetConfig()
 
+	// Stop the old schedulers before replacing them. Otherwise both the old
+	// and new CronService/HeartbeatService loops keep running and can execute
+	// the same job twice after a config reload.
+	if runningServices.CronService != nil {
+		runningServices.CronService.Stop()
+		runningServices.CronService = nil
+	}
+	if runningServices.HeartbeatService != nil {
+		runningServices.HeartbeatService.Stop()
+		runningServices.HeartbeatService = nil
+	}
+
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var err error
 	runningServices.CronService, err = setupCronTool(
@@ -845,23 +857,20 @@ func setupCronTool(
 
 	cronService := cron.NewCronService(cronStorePath, nil)
 
-	var cronTool *tools.CronTool
+	// Always construct the executor so already-persisted jobs still run when
+	// the agent-facing cron tool is disabled. Disabling the tool only hides
+	// creation/management from the agent; it must not turn scheduled jobs into
+	// silent no-ops.
+	cronTool, err := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("critical error during CronTool initialization: %w", err)
+	}
 	if cfg.Tools.IsToolEnabled("cron") {
-		var err error
-		cronTool, err = tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
-		if err != nil {
-			return nil, fmt.Errorf("critical error during CronTool initialization: %w", err)
-		}
-
 		agentLoop.RegisterTool(cronTool)
 	}
-
-	if cronTool != nil {
-		cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
-			result := cronTool.ExecuteJob(context.Background(), job)
-			return result, nil
-		})
-	}
+	cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
+		return cronTool.ExecuteJob(context.Background(), job)
+	})
 
 	return cronService, nil
 }

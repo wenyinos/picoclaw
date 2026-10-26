@@ -12,18 +12,18 @@ PicoClaw currently uses three schedule forms in the cron tool:
 - `every_seconds`: recurring interval, in seconds.
 - `cron_expr`: recurring cron expression such as `0 9 * * *`.
 
-The CLI command `picoclaw cron add` currently supports recurring jobs only:
+The CLI command `picoclaw cron add` supports recurring jobs only:
 
 - `--every <seconds>`
 - `--cron '<expr>'`
 
-There is no CLI flag for a one-time `at` job today.
+There is no CLI flag for a one-time `at` job today. `--channel` and `--to` are required so the job has a delivery target. Add `--deliver` to publish the message directly when due; otherwise the message runs through the agent loop.
 
 Examples:
 
 ```bash
-picoclaw cron add --name "Daily summary" --message "Summarize today's logs" --cron "0 18 * * *"
-picoclaw cron add --name "Ping" --message "heartbeat" --every 300 --deliver
+picoclaw cron add --name "Daily summary" --message "Summarize today's logs" --cron "0 18 * * *" --channel telegram --to 1234567890
+picoclaw cron add --name "Ping" --message "heartbeat" --every 300 --channel telegram --to 1234567890 --deliver
 ```
 
 ## Agent Tool Actions
@@ -56,11 +56,12 @@ Example tool calls:
 {"action":"update","job_id":"79095b2f5685a0f2","cron_expr":"30 10 * * *"}
 ```
 
-`update` accepts `name`, `message`, `command`, and exactly one schedule field
+`update` accepts `name`, `message`, `command`, `deliver`, and exactly one schedule field
 (`at_seconds`, `every_seconds`, or `cron_expr`).
 Omit `command` to preserve it, set `command` to a non-empty string to replace
 it, or set `command` to `""` to clear it. Command updates require the same
-channel allowlist and confirmation gates as command creation.
+channel allowlist and confirmation gates as command creation. Command jobs
+always run in command mode and ignore `deliver`.
 
 ## Execution Modes
 
@@ -92,9 +93,9 @@ The current CLI `picoclaw cron add` command does not expose a `command` flag.
 
 `tools.cron.enabled` controls whether the agent-facing `cron` tool is registered. Default: `true`.
 
-If you disable `tools.cron`, users can no longer create or manage jobs through the agent tool. The gateway still starts `CronService`, but it does not install the job execution callback. As a result, due jobs do not actually run; one-time jobs may be deleted and recurring jobs may be rescheduled without executing their payload. The CLI still uses the same job store.
+If you disable `tools.cron`, users can no longer create or manage jobs through the agent tool. Already-persisted jobs still run, including agent turns, direct deliveries, and command jobs. The CLI still uses the same job store.
 
-`tools.cron.exec_timeout_minutes` sets the timeout used for scheduled command execution. Default: `5`. Set `0` for no timeout.
+`tools.cron.exec_timeout_minutes` sets the timeout used for scheduled command execution and agent turns. Default: `5`. Set `0` for no timeout.
 
 ### `tools.exec`
 
@@ -171,10 +172,12 @@ If `PICOCLAW_HOME` is set, the default workspace becomes:
 $PICOCLAW_HOME/workspace
 ```
 
-Both the gateway and `picoclaw cron` CLI subcommands use the same `cron/jobs.json` file.
+Both the gateway and `picoclaw cron` CLI subcommands use the same `cron/jobs.json` file. A running gateway reloads external changes within about one second, so CLI add/remove/enable/disable changes take effect without a restart.
 
 Notes:
 
-- one-time `at_seconds` jobs are deleted after they run
+- one-time `at_seconds` jobs are deleted after a successful run; failed one-time jobs are kept disabled with `lastError` so they can be inspected or retried
+- an overdue one-time job runs once immediately after the gateway starts
 - recurring jobs stay in the store until removed
 - disabled jobs stay in the store and still appear in `picoclaw cron list`
+- job state records `lastStatus`, `lastError`, and the next/last run timestamps; execution failures are no longer reported as success

@@ -929,7 +929,16 @@ PicoClaw 通过 `cron` 工具支持 cron 风格的定时任务。Agent 可以设
 }
 ```
 
-定时任务在重启后持久保存，存储于 `~/.picoclaw/workspace/cron/`。
+定时任务在重启后持久保存，存储于 `~/.picoclaw/workspace/cron/`。运行中的 gateway 会在约 1 秒内感知 CLI 对这个文件的修改；错过时间的一次性任务会在启动后立即执行一次。
+
+```bash
+picoclaw cron add --name "每日总结" --message "总结今天的日志" \
+  --cron "0 18 * * *" --channel telegram --to 1234567890
+picoclaw cron add --name "Ping" --message "heartbeat" --every 300 \
+  --channel telegram --to 1234567890 --deliver
+```
+
+`--channel` 和 `--to` 必填；加 `--deliver` 时到点直接发送消息，不经过 Agent 推理。完整行为见[定时任务](../reference/cron.md)。
 
 ### 进阶主题
 

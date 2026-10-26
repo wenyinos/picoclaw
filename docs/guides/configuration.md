@@ -1164,7 +1164,16 @@ PicoClaw supports cron-style scheduled tasks via the `cron` tool. The agent can 
 }
 ```
 
-Scheduled tasks persist across restarts and are stored in `~/.picoclaw/workspace/cron/`.
+Scheduled tasks persist across restarts and are stored in `~/.picoclaw/workspace/cron/`. A running gateway reloads CLI changes to this file within about one second, and an overdue one-time job runs once immediately after startup.
+
+```bash
+picoclaw cron add --name "Daily summary" --message "Summarize today's logs" \
+  --cron "0 18 * * *" --channel telegram --to 1234567890
+picoclaw cron add --name "Ping" --message "heartbeat" --every 300 \
+  --channel telegram --to 1234567890 --deliver
+```
+
+`--channel` and `--to` are required. Use `--deliver` to publish the saved message directly instead of running an agent turn. See [Scheduled Tasks](../reference/cron.md) for the full behavior.
 
 Command cron jobs can execute shell commands. By default, remote channels cannot schedule command jobs. To allow specific remote channels, set `command_allowed_remotes` to entries such as `"telegram"` or `"telegram:1234567890"`; use `"*"` only if every non-empty channel should be allowed. The `"*"` wildcard is potentially dangerous because any remote channel that can talk to PicoClaw can schedule shell commands. This does not bypass `allow_command`, `command_confirm`, or exec safety checks.
 

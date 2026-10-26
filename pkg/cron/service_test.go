@@ -1,10 +1,12 @@
 package cron
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -364,4 +366,173 @@ func TestCronService_ConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestCronService_ReloadPicksUpExternalJobs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cron", "jobs.json")
+	cs := NewCronService(path, nil)
+	if err := cs.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer cs.Stop()
+
+	external := NewCronService(path, nil)
+	job, err := external.AddJob(
+		"external",
+		CronSchedule{Kind: "every", EveryMS: int64Ptr(60_000)},
+		"created by CLI",
+		"cli",
+		"direct",
+	)
+	if err != nil {
+		t.Fatalf("external AddJob failed: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := cs.GetJob(job.ID); ok {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("running service did not reload externally added job")
+}
+
+func TestCronService_StartRunsOverdueOneTimeJob(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cron", "jobs.json")
+	past := time.Now().Add(-time.Minute).UnixMilli()
+	store := CronStore{
+		Version: 1,
+		Jobs: []CronJob{{
+			ID:      "overdue",
+			Name:    "overdue",
+			Enabled: true,
+			Schedule: CronSchedule{
+				Kind: "at",
+				AtMS: &past,
+			},
+			Payload:     CronPayload{Kind: "agent_turn", Message: "run me", Channel: "cli", To: "direct"},
+			State:       CronJobState{},
+			CreatedAtMS: past,
+			UpdatedAtMS: past,
+		}},
+	}
+	data, err := json.MarshalIndent(store, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	executed := make(chan string, 1)
+	cs := NewCronService(path, func(job *CronJob) (string, error) {
+		executed <- job.ID
+		return "ok", nil
+	})
+	if err := cs.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer cs.Stop()
+
+	select {
+	case id := <-executed:
+		if id != "overdue" {
+			t.Fatalf("executed job = %q, want overdue", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("overdue one-time job was not executed after start")
+	}
+}
+
+func TestCronService_FailedOneTimeJobIsKeptDisabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cron", "jobs.json")
+	cs := NewCronService(path, func(job *CronJob) (string, error) {
+		return "", fmt.Errorf("simulated failure")
+	})
+	if err := cs.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer cs.Stop()
+
+	at := time.Now().Add(100 * time.Millisecond).UnixMilli()
+	job, err := cs.AddJob("failing", CronSchedule{Kind: "at", AtMS: &at}, "run", "cli", "direct")
+	if err != nil {
+		t.Fatalf("AddJob failed: %v", err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, ok := cs.GetJob(job.ID)
+		if ok && got.State.LastStatus == "error" {
+			if got.Enabled {
+				t.Fatal("failed one-time job should be disabled")
+			}
+			if !strings.Contains(got.State.LastError, "simulated failure") {
+				t.Fatalf("last error = %q, want simulated failure", got.State.LastError)
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("failed one-time job was not updated with an error state")
+}
+
+func TestCronService_RemoveLastJobWritesEmptyArray(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cron", "jobs.json")
+	cs := NewCronService(path, nil)
+	everyMS := int64(60_000)
+	job, err := cs.AddJob("only", CronSchedule{Kind: "every", EveryMS: &everyMS}, "msg", "cli", "direct")
+	if err != nil {
+		t.Fatalf("AddJob failed: %v", err)
+	}
+	if !cs.RemoveJob(job.ID) {
+		t.Fatal("RemoveJob failed")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"jobs": null`) {
+		t.Fatalf("store should not use null jobs: %s", data)
+	}
+	if !strings.Contains(string(data), `"jobs": []`) {
+		t.Fatalf("store should contain an empty jobs array: %s", data)
+	}
+}
+
+func TestCronService_EnableOverdueOneTimeJobSchedulesImmediately(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cron", "jobs.json")
+	cs := NewCronService(path, nil)
+	past := time.Now().Add(-time.Minute).UnixMilli()
+	job, err := cs.AddJob(
+		"retry",
+		CronSchedule{Kind: "at", AtMS: &past},
+		"retry me",
+		"cli",
+		"direct",
+	)
+	if err != nil {
+		t.Fatalf("AddJob failed: %v", err)
+	}
+
+	job.Enabled = false
+	if err := cs.UpdateJob(job); err != nil {
+		t.Fatalf("disable failed: %v", err)
+	}
+	if got, _ := cs.GetJob(job.ID); got.State.NextRunAtMS != nil {
+		t.Fatal("disabled job should have no next run")
+	}
+
+	reenabled := cs.EnableJob(job.ID, true)
+	if reenabled == nil || reenabled.State.NextRunAtMS == nil {
+		t.Fatal("overdue one-time job should be scheduled for immediate retry")
+	}
+	if *reenabled.State.NextRunAtMS > time.Now().UnixMilli() {
+		t.Fatal("retry next run should not be in the future")
+	}
 }

@@ -27,8 +27,14 @@ func cronListCmd(storePath string) {
 		} else {
 			schedule = "one-time"
 		}
+		mode := "agent"
+		if job.Payload.Command != "" {
+			mode = "command"
+		} else if job.Payload.Deliver {
+			mode = "deliver"
+		}
 
-		nextRun := "scheduled"
+		nextRun := "none"
 		if job.State.NextRunAtMS != nil {
 			nextTime := time.UnixMilli(*job.State.NextRunAtMS)
 			nextRun = nextTime.Format("2006-01-02 15:04")
@@ -40,9 +46,16 @@ func cronListCmd(storePath string) {
 		}
 
 		fmt.Printf("  %s (%s)\n", job.Name, job.ID)
-		fmt.Printf("    Schedule: %s\n", schedule)
+		fmt.Printf("    Schedule: %s (%s)\n", schedule, mode)
 		fmt.Printf("    Status: %s\n", status)
 		fmt.Printf("    Next run: %s\n", nextRun)
+		if job.State.LastRunAtMS != nil {
+			lastRun := time.UnixMilli(*job.State.LastRunAtMS).Format("2006-01-02 15:04")
+			fmt.Printf("    Last run: %s (%s)\n", lastRun, job.State.LastStatus)
+			if job.State.LastError != "" {
+				fmt.Printf("    Last error: %s\n", job.State.LastError)
+			}
+		}
 	}
 }
 

@@ -269,6 +269,75 @@ func TestCronTool_AllowCommandDoesNotBypassRemoteAllowlist(t *testing.T) {
 	}
 }
 
+func TestCronTool_AddDeliverJob(t *testing.T) {
+	tool := newTestCronTool(t)
+	ctx := WithToolContext(context.Background(), "telegram", "chat-1")
+	result := tool.Execute(ctx, map[string]any{
+		"action":     "add",
+		"message":    "direct reminder",
+		"at_seconds": float64(60),
+		"deliver":    true,
+	})
+
+	if result.IsError {
+		t.Fatalf("add deliver job failed: %s", result.ForLLM)
+	}
+	jobs := tool.cronService.ListJobs(true)
+	if len(jobs) != 1 || !jobs[0].Payload.Deliver {
+		t.Fatalf("deliver flag not persisted: %+v", jobs)
+	}
+}
+
+func TestCronTool_UpdateDeliver(t *testing.T) {
+	tool := newTestCronTool(t)
+	ctx := WithToolContext(context.Background(), "telegram", "chat-1")
+	add := tool.Execute(ctx, map[string]any{
+		"action":     "add",
+		"message":    "reminder",
+		"at_seconds": float64(60),
+	})
+	if add.IsError {
+		t.Fatalf("add failed: %s", add.ForLLM)
+	}
+	jobs := tool.cronService.ListJobs(true)
+	if len(jobs) != 1 {
+		t.Fatalf("jobs = %d, want 1", len(jobs))
+	}
+
+	update := tool.Execute(ctx, map[string]any{
+		"action":  "update",
+		"job_id":  jobs[0].ID,
+		"deliver": true,
+	})
+	if update.IsError {
+		t.Fatalf("update deliver failed: %s", update.ForLLM)
+	}
+	got, ok := tool.cronService.GetJob(jobs[0].ID)
+	if !ok || !got.Payload.Deliver {
+		t.Fatalf("deliver not updated: %+v", got)
+	}
+}
+
+func TestCronTool_CommandForcesDeliverOff(t *testing.T) {
+	tool := newTestCronTool(t)
+	ctx := WithToolContext(context.Background(), "cli", "direct")
+	result := tool.Execute(ctx, map[string]any{
+		"action":     "add",
+		"message":    "check disk",
+		"command":    "df -h",
+		"at_seconds": float64(60),
+		"deliver":    true,
+	})
+
+	if result.IsError {
+		t.Fatalf("add command job failed: %s", result.ForLLM)
+	}
+	jobs := tool.cronService.ListJobs(true)
+	if len(jobs) != 1 || jobs[0].Payload.Deliver {
+		t.Fatalf("command job should force deliver=false: %+v", jobs)
+	}
+}
+
 func TestCronTool_CommandDoesNotRequireConfirmByDefault(t *testing.T) {
 	tool := newTestCronTool(t)
 	ctx := WithToolContext(context.Background(), "cli", "direct")
@@ -1147,8 +1216,12 @@ func TestCronTool_ExecuteJobPublishesErrorWhenExecDisabled(t *testing.T) {
 	job.Payload.To = "direct"
 	job.Payload.Command = "df -h"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	got, err := tool.ExecuteJob(context.Background(), job)
+	if err == nil || !strings.Contains(err.Error(), "command execution is disabled") {
+		t.Fatalf("ExecuteJob() error = %v, want command execution disabled", err)
+	}
+	if got != "" {
+		t.Fatalf("ExecuteJob() = %q, want empty result", got)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -1175,8 +1248,8 @@ func TestCronTool_ExecuteJobPublishesAgentResponse(t *testing.T) {
 	job.Payload.To = "chat-1"
 	job.Payload.Message = "send me a poem"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
 	}
 
 	if !strings.HasPrefix(executor.lastKey, "agent:cron-job-1-") {
@@ -1208,8 +1281,8 @@ func TestCronTool_ExecuteJobSkipsEmptyAgentResponse(t *testing.T) {
 	job.Payload.To = "chat-1"
 	job.Payload.Message = "say nothing"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
 	}
 
 	if executor.publishedResp != "" {
@@ -1226,8 +1299,8 @@ func TestCronTool_ExecuteJobSkipsWhenMessageToolAlreadySent(t *testing.T) {
 	job.Payload.To = "chat-1"
 	job.Payload.Message = "send weather"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
 	}
 
 	if executor.publishedResp != "" {
@@ -1242,8 +1315,8 @@ func TestCronTool_ExecuteJobRunsCommand(t *testing.T) {
 	job.Payload.To = "direct"
 	job.Payload.Command = "echo cron-test-ok"
 
-	if got := tool.ExecuteJob(context.Background(), job); got != "ok" {
-		t.Fatalf("ExecuteJob() = %q, want ok", got)
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1272,12 +1345,62 @@ func TestCronTool_ExecuteJobReturnsErrorWithoutPublish(t *testing.T) {
 	job.Payload.To = "chat-1"
 	job.Payload.Message = "do something"
 
-	got := tool.ExecuteJob(context.Background(), job)
-	if !strings.Contains(got, "agent failure") {
-		t.Fatalf("ExecuteJob() = %q, want error message", got)
+	got, err := tool.ExecuteJob(context.Background(), job)
+	if err == nil || !strings.Contains(err.Error(), "agent failure") {
+		t.Fatalf("ExecuteJob() error = %v, want agent failure", err)
+	}
+	if got != "" {
+		t.Fatalf("ExecuteJob() = %q, want empty result", got)
 	}
 
 	if executor.publishedResp != "" {
 		t.Fatalf("unexpected publish on error path: %q", executor.publishedResp)
+	}
+}
+
+func TestCronTool_ExecuteJobDeliversDirectly(t *testing.T) {
+	executor := &stubJobExecutor{response: "agent must not run"}
+	tool := newTestCronToolWithExecutorAndConfig(t, executor, config.DefaultConfig())
+
+	job := &cron.CronJob{ID: "job-deliver"}
+	job.Payload.Channel = "telegram"
+	job.Payload.To = "chat-1"
+	job.Payload.Message = "direct reminder"
+	job.Payload.Deliver = true
+
+	if got, err := tool.ExecuteJob(context.Background(), job); err != nil || got != "ok" {
+		t.Fatalf("ExecuteJob() = %q, %v, want ok", got, err)
+	}
+	if executor.lastPrompt != "" {
+		t.Fatalf("agent should not run for deliver jobs, prompt = %q", executor.lastPrompt)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	select {
+	case msg := <-tool.msgBus.OutboundChan():
+		if msg.Content != "direct reminder" {
+			t.Fatalf("delivered content = %q, want direct reminder", msg.Content)
+		}
+		if msg.Channel != "telegram" || msg.ChatID != "chat-1" {
+			t.Fatalf("delivered target = %s/%s, want telegram/chat-1", msg.Channel, msg.ChatID)
+		}
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for direct delivery")
+	}
+}
+
+func TestCronTool_ExecuteJobRejectsMissingTarget(t *testing.T) {
+	executor := &stubJobExecutor{response: "must not run"}
+	tool := newTestCronToolWithExecutorAndConfig(t, executor, config.DefaultConfig())
+
+	job := &cron.CronJob{ID: "job-no-target"}
+	job.Payload.Message = "no target"
+
+	if _, err := tool.ExecuteJob(context.Background(), job); err == nil || !strings.Contains(err.Error(), "delivery target") {
+		t.Fatalf("ExecuteJob() error = %v, want delivery target error", err)
+	}
+	if executor.lastPrompt != "" {
+		t.Fatalf("agent should not run without a target, prompt = %q", executor.lastPrompt)
 	}
 }
