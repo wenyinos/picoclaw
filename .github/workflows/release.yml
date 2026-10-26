@@ -23,6 +23,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: true
+
 jobs:
   release:
     name: GoReleaser Release
@@ -68,6 +72,18 @@ jobs:
       - name: Install zip
         run: sudo apt-get install -y zip
 
+      - name: Verify Chinese release notes
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          notes="docs/releases/${TAG}.md"
+          if [ ! -f "$notes" ]; then
+            echo "::error::Missing Chinese release notes: $notes"
+            exit 1
+          fi
+          echo "Using release notes: $notes"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -84,14 +100,21 @@ jobs:
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
 
-      - name: Apply release flags
+      - name: Apply release flags and Chinese notes
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
-          gh release edit "${{ inputs.tag }}" \
+          notes="docs/releases/${TAG}.md"
+          if [ ! -f "$notes" ]; then
+            echo "::error::Missing Chinese release notes: $notes"
+            exit 1
+          fi
+          gh release edit "$TAG" \
             --draft=${{ inputs.draft }} \
-            --prerelease=${{ inputs.prerelease }}
+            --prerelease=${{ inputs.prerelease }} \
+            --notes-file "$notes"
 
   upload-tos:
     name: Upload to TOS
