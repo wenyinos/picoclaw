@@ -143,6 +143,10 @@ func (s *Store) BuildFixedContext(
 			parts = append(parts, b.String())
 		}
 	}
+	// Boundaries are a safety block, not an optional budget item. Keep them
+	// outside the fixed-block budget so a large profile/relationship block can
+	// never evict them. They are still filtered by audience and fictional mode.
+	var boundaryText string
 	boundaries, _ := s.List(ctx, SearchOptions{
 		Status: StatusActive, Layer: LayerBoundary, Limit: 30,
 	})
@@ -150,11 +154,27 @@ func (s *Store) BuildFixedContext(
 		var b strings.Builder
 		b.WriteString("## 边界")
 		for _, e := range boundaries {
+			if e.Realm == RealmFictional && !injectFictional {
+				continue
+			}
+			if !audienceAllowed(e.Audience, channel, privateChannels) {
+				continue
+			}
 			b.WriteString("\n- " + strings.TrimSpace(e.Text))
 		}
-		parts = append(parts, b.String())
+		if b.Len() > len("## 边界") {
+			boundaryText = b.String()
+		}
 	}
-	return trimToBudget(parts, budget, "# Memory\n\n")
+
+	base := trimToBudget(parts, budget, "# Memory\n\n")
+	if boundaryText == "" {
+		return base
+	}
+	if base == "" {
+		return "# Memory\n\n" + boundaryText
+	}
+	return base + "\n\n" + boundaryText
 }
 
 // BuildRetrievalContext renders query-relevant episodic/procedural memories.
