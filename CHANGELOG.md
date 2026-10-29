@@ -1,5 +1,26 @@
 # 变更日志
 
+## v0.4.5
+
+### 修复
+
+- `memory` 工具的 search 改为跨层检索，默认覆盖 persona / profile / relationship / episodic / procedural / boundary，并支持 `realm` / `layer` / `status` 过滤。
+- 修复工具搜索忽略 `realm/layer` 参数、只返回 active `episodic/procedural` 记录的问题；生日、画像、关系设定和 private 记忆现在可以被工具搜索到。
+- 修复提示词检索返回无关记忆的问题：query 非空时，相似度为 0 的候选不再注入；移除 SQL 预 `LIMIT`，避免较早的相关记忆被截断。
+- 保留提示词检索的 audience、私有渠道和 fictional 隔离；单字中文查询（如“海”）现在也能命中相关事件。
+- 修复 `memory search` 在任何查询下都返回同一组 work/procedural 记录的问题。
+
+### 新增
+
+- Launcher `/memory` 增加“数据库修复”：按 realm / layer / status / audience / 关键词预览匹配，批量迁移分类；执行前自动用 SQLite `VACUUM INTO` 备份。
+- 新增 `POST /api/memory/repair/preview` 和 `POST /api/memory/repair/apply`。
+
+### 升级
+
+- 无数据库 schema 或配置文件结构变更。
+- 更新 launcher / gateway 二进制并重启即可。
+- 生产数据如果仍是旧的 realm/layer 分布，可在 `/memory` 的“数据库修复”页面分批迁移；不需要手写 SQL。
+
 ## v0.4.4
 
 ### 修复

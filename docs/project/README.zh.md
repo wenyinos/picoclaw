@@ -80,7 +80,7 @@ Launcher 新增独立的 **记忆** 页面（`/memory`）：
 - **自动化** — 定时任务支持 CLI 热加载、直接投递、Shell 命令和失败状态可见；另有心跳任务、Hooks 和可选的 Agent 自进化。见[定时任务](../reference/cron.md)、[Hooks](../architecture/hooks/README.zh.md) 和 [Agent 自进化](../architecture/agent-self-evolution.md)。
 - **子代理** — 异步后台任务和长任务编排。见[派生与异步任务](../guides/spawn-tasks.md)。
 - **使用界面** — CLI（`onboard`、`agent`、`gateway`）、桌面 Launcher、Docker 和 Android/Termux。见 [Docker](../guides/docker.zh.md) 和 [Termux](../guides/android-termux.md)。
-- **记忆** — SQLite 长期记忆、关系/人设、审核队列、控制台和 CLI。见[长期记忆](../guides/memory.zh.md)。
+- **记忆** — SQLite 长期记忆、关系/人设、审核队列、跨层搜索、数据库修复、控制台和 CLI。见[长期记忆](../guides/memory.zh.md)。
 
 ---
 

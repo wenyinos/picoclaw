@@ -80,7 +80,7 @@ The 0.4 memory work sits alongside PicoClaw's original assistant features:
 - **Automation** — cron jobs with live CLI reload, direct delivery, shell commands, and visible failure state; heartbeat tasks, hooks, and optional agent self-evolution. See [Cron](docs/reference/cron.md), [Hooks](docs/architecture/hooks/README.md), and [Agent evolution](docs/architecture/agent-self-evolution.md).
 - **Sub-agents** — async background work and long-running task orchestration. See [Spawn and async tasks](docs/guides/spawn-tasks.md).
 - **Interfaces** — CLI (`onboard`, `agent`, `gateway`), desktop launcher, Docker, and Android/Termux. See [Docker](docs/guides/docker.md) and [Termux](docs/guides/android-termux.md).
-- **Memory** — SQLite long-term memory, relationship/persona state, review queue, dashboard, and CLI. See [Long-term memory](docs/guides/memory.md).
+- **Memory** — SQLite long-term memory, relationship/persona state, review queue, cross-layer search, repair dashboard, and CLI. See [Long-term memory](docs/guides/memory.md).
 
 ---
 
