@@ -1,5 +1,19 @@
 # 变更日志
 
+## v0.4.6
+
+### 修复
+
+- `boundary` 从固定块预算中独立出来，单独拼接在固定上下文末尾；大 profile / relationship 不再挤掉边界规则。
+- `boundary` 注入增加 `audience` / `private_channels` 过滤，`private` 边界只进入私有渠道。
+- `boundary` 注入增加 `inject_fictional` 过滤，未开启虚构注入时 `fictional` 边界不会进入真实对话。
+- 新增回归测试：大 profile 不会挤掉 boundary；private / fictional boundary 不会在错误渠道出现。
+
+### 升级
+
+- 无数据库 schema 或配置文件结构变更。
+- 更新 gateway / launcher 二进制并重启即可。
+
 ## v0.4.5
 
 ### 修复

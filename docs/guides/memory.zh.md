@@ -37,7 +37,7 @@ workspace/
 ```
 
 - `enabled`：为 `false` 时完全关闭长期记忆，不会回退到 Markdown。
-- `budget_tokens`：固定块与检索块的总注入预算。
+- `budget_tokens`：固定块与检索块的总注入预算；`boundary` 在固定块预算之外单独拼接，不参与裁剪，但仍受 audience / 私有渠道 / fictional 过滤。
 - `auto_extract`：每轮结束后用规则抽取候选记忆。
 - `review_required`：新抽取的未知领域记忆进入待审核队列，不进入提示词。
 - `private_channels`：`audience=private` 的记忆只在这些渠道注入。
@@ -51,7 +51,7 @@ workspace/
 | `layer` | persona / profile / relationship / episodic / procedural / boundary | 人设 / 画像 / 关系 / 事件 / 流程 / 边界 |
 | `status` | active / pending_review / superseded / archived | 生命周期 |
 
-`relationship_state` 保存称呼、关系阶段、亲密度、纪念日等当前状态；`personas` 保存版本化人设。
+`relationship_state` 保存称呼、关系阶段、亲密度、纪念日等当前状态；`personas` 保存版本化人设。`boundary` 规则不参与固定块预算裁剪：它们作为安全块单独拼接，避免被过长的 profile / relationship 挤掉。
 
 ## 自动抽取
 
@@ -69,7 +69,7 @@ workspace/
 
 ## 搜索语义
 
-`memory` 工具的 search 面向管理检索：默认查全部 layer，支持 `realm` / `layer` / `status` 过滤，并且可以看到 private 记忆。提示词注入使用更窄的检索路径：只取 active 的 episodic / procedural，按相关性过滤，并继续执行 audience / 私有渠道 / fictional 隔离。
+`memory` 工具的 search 面向管理检索：默认查全部 layer，支持 `realm` / `layer` / `status` 过滤，并且可以看到 private 记忆。提示词注入使用更窄的检索路径：只取 active 的 episodic / procedural，按相关性过滤，并继续执行 audience / 私有渠道 / fictional 隔离。固定块本体仍按预算裁剪；`boundary` 在固定块之后单独拼接，不参与该裁剪。
 
 ## 后台页面
 

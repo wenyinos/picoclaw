@@ -33,7 +33,7 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 - **Layered memory**: user profile, relationship state (names, stage, anniversaries, boundaries), episodic events, procedural knowledge, and versioned personas.
 - **Real vs. fictional isolation**: role-play and story settings are stored separately and are never mixed into the user's real profile.
 - **Human review queue**: uncertain memories wait in `pending_review` and are not injected until approved.
-- **Budgeted injection**: fixed profile/relationship blocks plus query-relevant memories, capped by a token budget.
+- **Budgeted injection**: fixed profile/relationship blocks plus query-relevant memories, capped by a token budget; boundary rules are appended outside that budget so they cannot be evicted.
 - **Private-channel filtering**: intimate memories are only injected into the channels you mark as private.
 
 ### A dashboard for the relationship

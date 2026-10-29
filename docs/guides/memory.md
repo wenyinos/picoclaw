@@ -37,7 +37,7 @@ workspace/
 ```
 
 - `enabled`: disables long-term memory entirely when `false`; there is no Markdown fallback.
-- `budget_tokens`: total injection budget for fixed and retrieved blocks.
+- `budget_tokens`: total injection budget for fixed and retrieved blocks. `boundary` rules are appended outside the fixed-block budget; they are not trimmed by it, but still obey audience, private-channel, and fictional filtering.
 - `auto_extract`: run rule-based extraction after each turn.
 - `review_required`: uncertain memories enter `pending_review` and are not injected.
 - `private_channels`: memories with `audience=private` are only injected into these channels.
@@ -51,7 +51,7 @@ workspace/
 | `layer` | persona / profile / relationship / episodic / procedural / boundary | character / profile / relationship / event / procedure / boundary |
 | `status` | active / pending_review / superseded / archived | lifecycle |
 
-`relationship_state` stores names, stage, intimacy, anniversaries, and boundaries as versioned current values. `personas` stores versioned character definitions.
+`relationship_state` stores names, stage, intimacy, anniversaries, and boundaries as versioned current values. `personas` stores versioned character definitions. `boundary` rules are not part of the fixed-block budget: they are appended as a safety block so a long profile or relationship section cannot evict them.
 
 ## Automatic extraction
 
@@ -69,7 +69,7 @@ Writes are processed in order:
 
 ## Search semantics
 
-The `memory` tool's search is an administrative search: it covers all layers by default, supports `realm` / `layer` / `status` filters, and can see private memories. Prompt injection uses a narrower retrieval path: active episodic/procedural only, relevance-filtered, with audience, private-channel, and fictional isolation still applied.
+The `memory` tool's search is an administrative search: it covers all layers by default, supports `realm` / `layer` / `status` filters, and can see private memories. Prompt injection uses a narrower retrieval path: active episodic/procedural only, relevance-filtered, with audience, private-channel, and fictional isolation still applied. The fixed block itself is still trimmed to its budget; `boundary` is appended after it and is not part of that trim.
 
 ## Dashboard
 
