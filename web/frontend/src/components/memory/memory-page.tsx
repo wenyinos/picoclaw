@@ -6,6 +6,9 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   type MemoryEntry,
   type MemoryOverview,
+  type MemoryRepairFilter,
+  type MemoryRepairPreview,
+  type MemoryRepairTarget,
   type MemorySettings,
   type Persona,
   type RelationshipValue,
@@ -18,6 +21,7 @@ const TABS = [
   "review",
   "relationship",
   "settings",
+  "repair",
 ] as const
 type Tab = (typeof TABS)[number]
 
@@ -27,6 +31,7 @@ const TAB_LABELS: Record<Tab, string> = {
   review: "审核",
   relationship: "关系与人格",
   settings: "设置",
+  repair: "数据库修复",
 }
 
 const PAGE_SIZE = 100
@@ -98,6 +103,9 @@ export function MemoryPage() {
         )}
         {tab === "settings" && (
           <SettingsTab onError={setError} onNotice={setNotice} />
+        )}
+        {tab === "repair" && (
+          <RepairTab onError={setError} onNotice={setNotice} />
         )}
       </div>
     </div>
@@ -665,6 +673,275 @@ function RelationshipTab({
             历史版本：{personas.map((p) => `v${p.version}`).join(", ")}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function RepairTab({
+  onError,
+  onNotice,
+}: {
+  onError: (v: string) => void
+  onNotice: (v: string) => void
+}) {
+  const [overview, setOverview] = useState<MemoryOverview | null>(null)
+  const [filter, setFilter] = useState<MemoryRepairFilter>({ status: "active" })
+  const [target, setTarget] = useState<MemoryRepairTarget>({
+    realm: "fictional",
+    layer: "procedural",
+  })
+  const [preview, setPreview] = useState<MemoryRepairPreview | null>(null)
+  const [result, setResult] = useState<{
+    updated: number
+    backup: string
+  } | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const loadOverview = () => {
+    memoryApi
+      .overview()
+      .then(setOverview)
+      .catch((e: Error) => onError(e.message))
+  }
+
+  useEffect(loadOverview, [])
+
+  const setFilterField = (key: keyof MemoryRepairFilter, value: string) => {
+    setFilter({ ...filter, [key]: value })
+    setPreview(null)
+    setResult(null)
+  }
+
+  const setTargetField = (key: keyof MemoryRepairTarget, value: string) => {
+    setTarget({ ...target, [key]: value })
+    setResult(null)
+  }
+
+  const previewRepair = () => {
+    setLoading(true)
+    memoryApi
+      .repairPreview(filter)
+      .then(setPreview)
+      .catch((e: Error) => onError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  const applyRepair = () => {
+    if (!preview || preview.count === 0) return
+    if (
+      !window.confirm(
+        `将迁移 ${preview.count} 条记录到 ${target.realm}/${target.layer}，执行前会自动备份数据库。继续吗？`,
+      )
+    ) {
+      return
+    }
+    setLoading(true)
+    memoryApi
+      .repairApply(filter, target)
+      .then((r) => {
+        setResult(r)
+        setPreview(null)
+        onNotice(`已迁移 ${r.updated} 条，备份：${r.backup}`)
+        loadOverview()
+      })
+      .catch((e: Error) => onError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  const stats = [
+    { label: "总条目", value: overview?.total ?? 0 },
+    { label: "生效", value: overview?.active ?? 0 },
+    { label: "待审核", value: overview?.pending ?? 0 },
+    { label: "已归档", value: overview?.archived ?? 0 },
+    {
+      label: "数据库大小",
+      value: `${Math.round((overview?.db_size ?? 0) / 1024)} KB`,
+    },
+  ]
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-lg border p-4">
+        <h2 className="text-sm font-semibold">数据库修复与批量迁移</h2>
+        <p className="text-muted-foreground mt-1 text-sm">
+          用于把历史数据批量迁移到正确的 realm / layer /
+          audience。每次执行前会用 SQLite VACUUM INTO
+          自动备份，只修改匹配记录，不删除数据。
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+          {stats.map((s) => (
+            <div key={s.label} className="rounded-md border p-3">
+              <div className="text-muted-foreground text-xs">{s.label}</div>
+              <div className="mt-1 text-lg font-semibold">{s.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="rounded-lg border p-4">
+          <h3 className="text-sm font-semibold">筛选要迁移的记录</h3>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <select
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={filter.realm || ""}
+              onChange={(e) => setFilterField("realm", e.target.value)}
+            >
+              <option value="">全部 realm</option>
+              <option value="real">real</option>
+              <option value="fictional">fictional</option>
+              <option value="work">work</option>
+              <option value="unknown">unknown</option>
+            </select>
+            <select
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={filter.layer || ""}
+              onChange={(e) => setFilterField("layer", e.target.value)}
+            >
+              <option value="">全部 layer</option>
+              <option value="persona">persona</option>
+              <option value="profile">profile</option>
+              <option value="relationship">relationship</option>
+              <option value="episodic">episodic</option>
+              <option value="procedural">procedural</option>
+              <option value="boundary">boundary</option>
+            </select>
+            <select
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={filter.status || ""}
+              onChange={(e) => setFilterField("status", e.target.value)}
+            >
+              <option value="active">active</option>
+              <option value="pending_review">pending_review</option>
+              <option value="superseded">superseded</option>
+              <option value="archived">archived</option>
+              <option value="all">全部状态</option>
+            </select>
+            <select
+              className="h-9 rounded-md border bg-transparent px-2 text-sm"
+              value={filter.audience || ""}
+              onChange={(e) => setFilterField("audience", e.target.value)}
+            >
+              <option value="">全部 audience</option>
+              <option value="all">all</option>
+              <option value="private">private</option>
+            </select>
+          </div>
+          <Input
+            className="mt-2"
+            placeholder="可选：文本关键词，例如 姐姐 / 蓝色海豚"
+            value={filter.query || ""}
+            onChange={(e) => setFilterField("query", e.target.value)}
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={previewRepair}
+              disabled={loading}
+            >
+              预览匹配
+            </Button>
+            {preview && (
+              <span className="text-muted-foreground text-sm">
+                匹配 {preview.count} 条
+              </span>
+            )}
+          </div>
+
+          {preview && preview.entries.length > 0 && (
+            <div className="mt-3 max-h-64 overflow-auto rounded-md border">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-muted sticky top-0">
+                  <tr>
+                    <th className="p-2">内容</th>
+                    <th className="p-2">分类</th>
+                    <th className="p-2">状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.entries.map((e) => (
+                    <tr key={e.id} className="border-t">
+                      <td className="max-w-[360px] truncate p-2">{e.text}</td>
+                      <td className="p-2">
+                        <div className="flex gap-1">
+                          {badge(e.realm)}
+                          {badge(e.layer)}
+                          {badge(e.audience)}
+                        </div>
+                      </td>
+                      <td className="p-2">{badge(e.status)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {preview && preview.entries.length === 0 && (
+            <p className="text-muted-foreground mt-3 text-sm">没有匹配记录。</p>
+          )}
+        </div>
+
+        <div className="rounded-lg border p-4">
+          <h3 className="text-sm font-semibold">目标分类</h3>
+          <div className="mt-3 flex flex-col gap-2">
+            <label className="text-muted-foreground text-xs">
+              realm
+              <select
+                className="text-foreground mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={target.realm}
+                onChange={(e) => setTargetField("realm", e.target.value)}
+              >
+                <option value="real">real</option>
+                <option value="fictional">fictional</option>
+                <option value="work">work</option>
+                <option value="unknown">unknown</option>
+              </select>
+            </label>
+            <label className="text-muted-foreground text-xs">
+              layer
+              <select
+                className="text-foreground mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={target.layer}
+                onChange={(e) => setTargetField("layer", e.target.value)}
+              >
+                <option value="persona">persona</option>
+                <option value="profile">profile</option>
+                <option value="relationship">relationship</option>
+                <option value="episodic">episodic</option>
+                <option value="procedural">procedural</option>
+                <option value="boundary">boundary</option>
+              </select>
+            </label>
+            <label className="text-muted-foreground text-xs">
+              audience
+              <select
+                className="text-foreground mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+                value={target.audience || ""}
+                onChange={(e) => setTargetField("audience", e.target.value)}
+              >
+                <option value="">保留原 audience</option>
+                <option value="all">all</option>
+                <option value="private">private</option>
+              </select>
+            </label>
+          </div>
+          <Button
+            className="mt-4 w-full"
+            onClick={applyRepair}
+            disabled={loading || !preview || preview.count === 0}
+          >
+            执行迁移
+          </Button>
+          {result && (
+            <p className="mt-3 text-xs break-all text-emerald-600">
+              已迁移 {result.updated} 条；备份：{result.backup}
+            </p>
+          )}
+          <p className="text-muted-foreground mt-3 text-xs">
+            建议先用关键词缩小范围，预览确认后再执行。迁移不会删除记录，可用备份回滚。
+          </p>
+        </div>
       </div>
     </div>
   )

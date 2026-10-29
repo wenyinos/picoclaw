@@ -128,3 +128,63 @@ func TestMemoryAPI_RelationshipPersonaSettings(t *testing.T) {
 		t.Fatalf("overview status = %d", rec.Code)
 	}
 }
+
+func TestMemoryAPI_RepairReclassify(t *testing.T) {
+	h, _ := newMemoryTestHandler(t)
+	mux := http.NewServeMux()
+	h.registerMemoryRoutes(mux)
+
+	for _, text := range []string{"姐姐的角色设定：蓝色海豚", "token 的不同含义"} {
+		rec := doJSON(t, mux, http.MethodPost, "/api/memory/entries", map[string]any{
+			"text": text, "realm": "work", "layer": "procedural", "importance": 0.6,
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("add status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	filter := map[string]any{"realm": "work", "layer": "procedural", "query": "蓝色海豚"}
+	rec := doJSON(t, mux, http.MethodPost, "/api/memory/repair/preview", filter)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var preview struct {
+		Count int `json:"count"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &preview)
+	if preview.Count != 1 {
+		t.Fatalf("preview count = %d, want 1: %s", preview.Count, rec.Body.String())
+	}
+
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/repair/apply", map[string]any{
+		"filter": filter,
+		"target": map[string]any{"realm": "fictional", "layer": "procedural", "audience": "private"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var applied struct {
+		Updated int    `json:"updated"`
+		Backup  string `json:"backup"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &applied)
+	if applied.Updated != 1 || applied.Backup == "" {
+		t.Fatalf("unexpected apply response: %s", rec.Body.String())
+	}
+	if _, err := os.Stat(applied.Backup); err != nil {
+		t.Fatalf("backup missing: %v", err)
+	}
+
+	rec = doJSON(t, mux, http.MethodGet, "/api/memory/entries?realm=fictional&limit=10", nil)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("蓝色海豚")) {
+		t.Fatalf("reclassified entry missing: %s", rec.Body.String())
+	}
+
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/repair/apply", map[string]any{
+		"filter": map[string]any{},
+		"target": map[string]any{"realm": "fictional", "layer": "procedural"},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty filter status = %d, want 400", rec.Code)
+	}
+}

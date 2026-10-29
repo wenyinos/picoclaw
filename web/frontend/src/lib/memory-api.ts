@@ -46,6 +46,30 @@ export interface Persona {
   created_at: number
 }
 
+export interface MemoryRepairFilter {
+  realm?: string
+  layer?: string
+  status?: string
+  audience?: string
+  query?: string
+}
+
+export interface MemoryRepairTarget {
+  realm: string
+  layer: string
+  audience?: string
+}
+
+export interface MemoryRepairPreview {
+  count: number
+  entries: MemoryEntry[]
+}
+
+export interface MemoryRepairResult {
+  updated: number
+  backup: string
+}
+
 export interface MemorySettings {
   enabled: boolean
   db_path?: string
@@ -87,9 +111,13 @@ export const memoryApi = {
       body: JSON.stringify(body),
     }),
   archiveEntry: (id: string) =>
-    request<{ status: string }>(`/api/memory/entries/${id}/archive`, { method: "POST" }),
+    request<{ status: string }>(`/api/memory/entries/${id}/archive`, {
+      method: "POST",
+    }),
   restoreEntry: (id: string) =>
-    request<{ status: string }>(`/api/memory/entries/${id}/restore`, { method: "POST" }),
+    request<{ status: string }>(`/api/memory/entries/${id}/restore`, {
+      method: "POST",
+    }),
   review: (kind = "pending") =>
     request<{ entries: MemoryEntry[] }>(`/api/memory/review?kind=${kind}`),
   resolveReview: (id: string, action: string, targetId?: string) =>
@@ -105,7 +133,9 @@ export const memoryApi = {
       body: JSON.stringify({ key, value, confidence }),
     }),
   persona: () =>
-    request<{ personas: Persona[]; active: Persona | null }>("/api/memory/persona"),
+    request<{ personas: Persona[]; active: Persona | null }>(
+      "/api/memory/persona",
+    ),
   savePersona: (name: string, content: string, activate = true) =>
     request<Persona>("/api/memory/persona", {
       method: "PUT",
@@ -117,7 +147,18 @@ export const memoryApi = {
       method: "PUT",
       body: JSON.stringify(settings),
     }),
-  compact: () => request<{ archived: number }>("/api/memory/compact", { method: "POST" }),
+  repairPreview: (filter: MemoryRepairFilter) =>
+    request<MemoryRepairPreview>("/api/memory/repair/preview", {
+      method: "POST",
+      body: JSON.stringify(filter),
+    }),
+  repairApply: (filter: MemoryRepairFilter, target: MemoryRepairTarget) =>
+    request<MemoryRepairResult>("/api/memory/repair/apply", {
+      method: "POST",
+      body: JSON.stringify({ filter, target }),
+    }),
+  compact: () =>
+    request<{ archived: number }>("/api/memory/compact", { method: "POST" }),
   importWorkspace: (workspace: string) =>
     request<Record<string, number>>("/api/memory/import", {
       method: "POST",

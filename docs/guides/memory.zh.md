@@ -67,6 +67,10 @@ workspace/
 4. 同 `realm+subject+predicate` 不同值触发 supersede，旧值保留为历史。
 5. `unknown` 默认进入待审核。
 
+## 搜索语义
+
+`memory` 工具的 search 面向管理检索：默认查全部 layer，支持 `realm` / `layer` / `status` 过滤，并且可以看到 private 记忆。提示词注入使用更窄的检索路径：只取 active 的 episodic / procedural，按相关性过滤，并继续执行 audience / 私有渠道 / fictional 隔离。
+
 ## 后台页面
 
 启动 launcher 后打开 `/memory`：
@@ -76,6 +80,7 @@ workspace/
 - 审核：确认真实记忆 / 标记虚构 / 标记工作 / 忽略。
 - 关系与人格：称呼、阶段、纪念日、边界、人设版本。
 - 设置：预算、自动抽取、私有渠道、导入旧 workspace。
+- 数据库修复：按 realm / layer / status / audience / 关键词预览并批量迁移；执行前自动用 SQLite `VACUUM INTO` 备份。
 
 ## CLI
 
@@ -118,6 +123,8 @@ PUT    /api/memory/persona
 GET    /api/memory/settings
 PUT    /api/memory/settings
 POST   /api/memory/compact
+POST   /api/memory/repair/preview
+POST   /api/memory/repair/apply
 POST   /api/memory/import
 GET    /api/memory/export
 GET    /api/memory/stats

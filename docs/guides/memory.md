@@ -67,6 +67,10 @@ Writes are processed in order:
 4. Supersede conflicting values with the same `realm+subject+predicate`.
 5. Send `unknown` entries to review.
 
+## Search semantics
+
+The `memory` tool's search is an administrative search: it covers all layers by default, supports `realm` / `layer` / `status` filters, and can see private memories. Prompt injection uses a narrower retrieval path: active episodic/procedural only, relevance-filtered, with audience, private-channel, and fictional isolation still applied.
+
 ## Dashboard
 
 Open `/memory` in the launcher:
@@ -76,6 +80,7 @@ Open `/memory` in the launcher:
 - Review: confirm real, mark fictional, mark work, ignore.
 - Relationship and persona: names, stage, anniversaries, boundaries, persona versions.
 - Settings: budget, auto-extraction, private channels, import.
+- Database repair: preview and bulk-reclassify by realm / layer / status / audience / keyword; a SQLite `VACUUM INTO` backup is created before applying.
 
 ## CLI
 
@@ -118,6 +123,8 @@ PUT    /api/memory/persona
 GET    /api/memory/settings
 PUT    /api/memory/settings
 POST   /api/memory/compact
+POST   /api/memory/repair/preview
+POST   /api/memory/repair/apply
 POST   /api/memory/import
 GET    /api/memory/export
 GET    /api/memory/stats

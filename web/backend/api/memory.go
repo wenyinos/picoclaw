@@ -30,6 +30,8 @@ func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/memory/settings", h.handleMemorySettings)
 	mux.HandleFunc("PUT /api/memory/settings", h.handleMemoryUpdateSettings)
 	mux.HandleFunc("POST /api/memory/compact", h.handleMemoryCompact)
+	mux.HandleFunc("POST /api/memory/repair/preview", h.handleMemoryRepairPreview)
+	mux.HandleFunc("POST /api/memory/repair/apply", h.handleMemoryRepairApply)
 	mux.HandleFunc("POST /api/memory/reindex", h.handleMemoryReindex)
 	mux.HandleFunc("POST /api/memory/import", h.handleMemoryImport)
 	mux.HandleFunc("GET /api/memory/export", h.handleMemoryExport)
@@ -416,4 +418,45 @@ func (h *Handler) handleMemoryStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"overview": o, "db_path": store.Path(), "db_size": o.DBSize})
+}
+
+func (h *Handler) handleMemoryRepairPreview(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	filter, err := decodeBody[memstore.RepairFilter](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid repair filter: "+err.Error())
+		return
+	}
+	preview, err := store.PreviewRepair(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (h *Handler) handleMemoryRepairApply(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	body, err := decodeBody[struct {
+		Filter memstore.RepairFilter `json:"filter"`
+		Target memstore.RepairTarget `json:"target"`
+	}](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid repair request: "+err.Error())
+		return
+	}
+	updated, backup, err := store.ApplyRepair(r.Context(), body.Filter, body.Target)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "backup": backup})
 }

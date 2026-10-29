@@ -20,7 +20,7 @@ func EstimateTokens(s string) int {
 
 // Search scores active entries for a query and filters by audience.
 func (s *Store) Search(ctx context.Context, opts SearchOptions) ([]Entry, error) {
-	where := []string{"status='active'", "layer IN ('episodic','procedural')"}
+	where := []string{"status='active'"}
 	args := []any{}
 	if opts.Realm != "" {
 		where = append(where, "realm=?")
@@ -31,15 +31,12 @@ func (s *Store) Search(ctx context.Context, opts SearchOptions) ([]Entry, error)
 	if opts.Layer != "" {
 		where = append(where, "layer=?")
 		args = append(args, opts.Layer)
+	} else {
+		where = append(where, "layer IN ('episodic','procedural')")
 	}
-	limit := opts.Limit
-	if limit <= 0 || limit > 500 {
-		limit = 300
-	}
-	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+entryColumns+` FROM entries WHERE `+strings.Join(where, " AND ")+
-			` ORDER BY updated_at DESC LIMIT ?`, args...)
+			` ORDER BY updated_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +62,11 @@ func (s *Store) Search(ctx context.Context, opts SearchOptions) ([]Entry, error)
 		}
 		score := e.Importance*0.6 + recency*0.2 + e.EmotionalWeight*0.2
 		if queryNorm != "" {
-			score = Jaccard(queryNorm, e.Normalized)*0.5 + e.Importance*0.2 + recency*0.15 + e.EmotionalWeight*0.15
+			similarity := queryRelevance(queryNorm, e.Normalized)
+			if similarity <= 0 {
+				continue
+			}
+			score = similarity*0.6 + e.Importance*0.2 + recency*0.1 + e.EmotionalWeight*0.1
 		}
 		scored = append(scored, scoredEntry{entry: e, score: score})
 	}
@@ -73,6 +74,13 @@ func (s *Store) Search(ctx context.Context, opts SearchOptions) ([]Entry, error)
 		return nil, err
 	}
 	sort.SliceStable(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
+	limit := opts.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 300
+	}
+	if len(scored) > limit {
+		scored = scored[:limit]
+	}
 	out := make([]Entry, 0, len(scored))
 	for _, s := range scored {
 		out = append(out, s.entry)

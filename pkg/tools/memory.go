@@ -24,7 +24,8 @@ func (t *MemoryTool) Name() string { return "memory" }
 
 func (t *MemoryTool) Description() string {
 	return "Save or recall long-term memory. action=add (text, optional realm/layer/importance), " +
-		"action=search (query), action=forget (id). Use it for stable user facts, preferences, " +
+		"action=search (query, optional realm/layer/status), action=forget (id). Search covers all " +
+		"memory layers and includes private memories. Use it for stable user facts, preferences, " +
 		"relationship details and important events."
 }
 
@@ -58,6 +59,11 @@ func (t *MemoryTool) Parameters() map[string]any {
 				"type":        "string",
 				"enum":        []string{"profile", "relationship", "episodic", "procedural", "boundary"},
 				"description": "Memory category",
+			},
+			"status": map[string]any{
+				"type":        "string",
+				"enum":        []string{"active", "pending_review", "superseded", "archived", "all"},
+				"description": "Status filter for action=search; defaults to active",
 			},
 			"importance": map[string]any{
 				"type":        "number",
@@ -107,7 +113,12 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 
 	case "search":
 		query, _ := args["query"].(string)
-		entries, err := store.Search(ctx, memstore.SearchOptions{Query: query, Limit: 10})
+		realm, _ := args["realm"].(string)
+		layer, _ := args["layer"].(string)
+		status, _ := args["status"].(string)
+		entries, err := store.SearchEntries(ctx, memstore.SearchOptions{
+			Query: query, Realm: realm, Layer: layer, Status: status, Limit: 20,
+		})
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory search failed: %v", err))
 		}
@@ -116,7 +127,11 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		}
 		var b strings.Builder
 		for _, e := range entries {
-			b.WriteString("- ")
+			b.WriteString("- [")
+			b.WriteString(e.Realm)
+			b.WriteString("/")
+			b.WriteString(e.Layer)
+			b.WriteString("] ")
 			b.WriteString(e.Text)
 			b.WriteString(" (id: ")
 			b.WriteString(e.ID)
