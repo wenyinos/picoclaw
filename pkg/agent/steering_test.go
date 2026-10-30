@@ -799,6 +799,16 @@ func TestAgentLoop_Run_AutoContinuesLateSteeringMessage(t *testing.T) {
 		t.Fatalf("publish late inbound: %v", err)
 	}
 
+	// Wait for the receive loop to enqueue the late message as steering before
+	// allowing the first provider call to finish.
+	deadline := time.Now().Add(2 * time.Second)
+	for al.steering.len() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if al.steering.len() == 0 {
+		t.Fatal("timeout waiting for late message to enter steering queue")
+	}
+
 	close(provider.releaseFirstCall)
 
 	subCtx, subCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -931,6 +941,17 @@ func TestAgentLoop_Run_QueuedVoiceMessageIsTranscribedBeforeSteering(t *testing.
 
 	if err := msgBus.PublishInbound(pubCtx, late); err != nil {
 		t.Fatalf("publish late voice inbound: %v", err)
+	}
+
+	// Wait until the agent has actually enqueued the late message as steering.
+	// Otherwise the first turn can finish before the receive loop drains it,
+	// making the test race on scheduler timing.
+	deadline := time.Now().Add(2 * time.Second)
+	for al.steering.len() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if al.steering.len() == 0 {
+		t.Fatal("timeout waiting for late voice message to enter steering queue")
 	}
 
 	close(provider.releaseFirstCall)

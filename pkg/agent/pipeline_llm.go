@@ -574,8 +574,11 @@ func (p *Pipeline) CallLLM(
 			al.publishPicoReasoning(turnCtx, reasoningContent, ts.chatID, ts.sessionKey, exec.llmModelName)
 		}
 	} else {
+		// Reasoning is best-effort, but it must not be dropped merely because
+		// the turn context is canceled as the turn returns. Keep values while
+		// detaching cancellation; handleReasoning applies its own 5s timeout.
 		go al.handleReasoning(
-			turnCtx,
+			context.WithoutCancel(turnCtx),
 			reasoningContent,
 			ts.channel,
 			al.targetReasoningChannelID(ts.channel),
