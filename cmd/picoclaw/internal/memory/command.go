@@ -22,6 +22,7 @@ func NewMemoryCommand() *cobra.Command {
 		Short: "Manage long-term memory (SQLite)",
 	}
 	cmd.AddCommand(
+		newMigrateCommand(),
 		newImportCommand(),
 		newAuditCommand(),
 		newStatsCommand(),
@@ -29,6 +30,33 @@ func NewMemoryCommand() *cobra.Command {
 		newExportCommand(),
 		newRenderCommand(),
 	)
+	return cmd
+}
+
+func newMigrateCommand() *cobra.Command {
+	var backup bool
+	cmd := &cobra.Command{
+		Use:   "migrate",
+		Short: "Upgrade memory.db to schema v2 and normalize empty predicates",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, _, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			if !backup {
+				return fmt.Errorf("migration always creates a VACUUM INTO backup; remove --backup=false")
+			}
+			report, err := store.ApplyV2Migration(context.Background())
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(report)
+		},
+	}
+	cmd.Flags().BoolVar(&backup, "backup", true, "create a VACUUM INTO backup before migrating")
 	return cmd
 }
 

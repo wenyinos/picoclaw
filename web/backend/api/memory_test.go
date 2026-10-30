@@ -21,11 +21,13 @@ func newMemoryTestHandler(t *testing.T) (*Handler, string) {
 			"defaults": map[string]any{"workspace": workspace},
 		},
 		"memory": map[string]any{
-			"enabled":         true,
-			"db_path":         "memory/memory.db",
-			"budget_tokens":   1200,
-			"auto_extract":    false,
-			"review_required": true,
+			"enabled":          true,
+			"db_path":          "memory/memory.db",
+			"budget_tokens":    1200,
+			"auto_extract":     false,
+			"review_required":  true,
+			"private_channels": []string{"pico"},
+			"inject_fictional": true,
 		},
 	}
 	data, _ := json.Marshal(cfg)
@@ -106,9 +108,33 @@ func TestMemoryAPI_RelationshipPersonaSettings(t *testing.T) {
 	}
 
 	rec = doJSON(t, mux, http.MethodPut, "/api/memory/persona",
-		map[string]any{"id": "default", "name": "Pico", "content": "冷静、简洁", "activate": true})
+		map[string]any{
+			"id": "default", "name": "Pico", "content": "冷静、简洁",
+			"activate": true, "realm": "fictional", "audience": "private", "scope": "user",
+		})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("persona status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"realm":"fictional"`)) {
+		t.Fatalf("persona scope missing: %s", rec.Body.String())
+	}
+
+	rec = doJSON(t, mux, http.MethodGet, "/api/memory/persona?channel=pico", nil)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"realm":"fictional"`)) {
+		t.Fatalf("private persona missing for pico: %s", rec.Body.String())
+	}
+	rec = doJSON(t, mux, http.MethodGet, "/api/memory/persona?channel=public", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public persona status = %d", rec.Code)
+	}
+	var publicPersona struct {
+		Active *struct {
+			ID string `json:"id"`
+		} `json:"active"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &publicPersona)
+	if publicPersona.Active != nil {
+		t.Fatalf("private persona leaked into public channel: %s", rec.Body.String())
 	}
 
 	rec = doJSON(t, mux, http.MethodPut, "/api/memory/settings", map[string]any{
@@ -126,6 +152,40 @@ func TestMemoryAPI_RelationshipPersonaSettings(t *testing.T) {
 	rec = doJSON(t, mux, http.MethodGet, "/api/memory/overview", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("overview status = %d", rec.Code)
+	}
+}
+
+func TestMemoryAPI_MigrationStatusAndApply(t *testing.T) {
+	h, _ := newMemoryTestHandler(t)
+	mux := http.NewServeMux()
+	h.registerMemoryRoutes(mux)
+
+	rec := doJSON(t, mux, http.MethodGet, "/api/memory/migration/status", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var status struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &status)
+	if status.SchemaVersion != 2 {
+		t.Fatalf("schema = %d, want 2: %s", status.SchemaVersion, rec.Body.String())
+	}
+
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/migration/apply", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("apply = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var report struct {
+		SchemaVersion int    `json:"schema_version"`
+		Backup        string `json:"backup"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &report)
+	if report.SchemaVersion != 2 || report.Backup == "" {
+		t.Fatalf("unexpected report: %s", rec.Body.String())
+	}
+	if _, err := os.Stat(report.Backup); err != nil {
+		t.Fatalf("backup missing: %v", err)
 	}
 }
 

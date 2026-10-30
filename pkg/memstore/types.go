@@ -73,6 +73,7 @@ type Entry struct {
 	Audience        string         `json:"audience"`
 	Subject         string         `json:"subject,omitempty"`
 	Predicate       string         `json:"predicate,omitempty"`
+	Facet           string         `json:"facet,omitempty"`
 	Value           string         `json:"value,omitempty"`
 	Text            string         `json:"text"`
 	Normalized      string         `json:"normalized,omitempty"`
@@ -114,6 +115,7 @@ type AddInput struct {
 	Audience        string
 	Subject         string
 	Predicate       string
+	Facet           string
 	Value           string
 	Importance      float64
 	EmotionalWeight float64
@@ -123,6 +125,7 @@ type AddInput struct {
 	EventAt         *int64
 	TemplateKey     string
 	ForceStatus     string
+	SupersedesID    string
 	SourceType      string
 	SourceID        string
 	SessionKey      string
@@ -141,6 +144,8 @@ type SearchOptions struct {
 	Query           string
 	Realm           string
 	Layer           string
+	Predicate       string
+	Facet           string
 	Status          string
 	Audience        string
 	Scope           string
@@ -169,6 +174,17 @@ type RelationshipState struct {
 	Value      string  `json:"value"`
 	ValidFrom  int64   `json:"valid_from"`
 	Confidence float64 `json:"confidence"`
+	ExpiresAt  *int64  `json:"expires_at,omitempty"`
+}
+
+// RelationshipHistory is one archived version of a relationship attribute.
+type RelationshipHistory struct {
+	Key        string  `json:"key"`
+	Value      string  `json:"value"`
+	ValidFrom  int64   `json:"valid_from"`
+	ValidTo    int64   `json:"valid_to"`
+	Confidence float64 `json:"confidence"`
+	UpdatedAt  int64   `json:"updated_at"`
 }
 
 // Persona is a versioned character definition.
@@ -178,6 +194,9 @@ type Persona struct {
 	Version   int    `json:"version"`
 	Content   string `json:"content"`
 	Active    bool   `json:"active"`
+	Realm     string `json:"realm"`
+	Audience  string `json:"audience"`
+	Scope     string `json:"scope"`
 	CreatedAt int64  `json:"created_at"`
 }
 

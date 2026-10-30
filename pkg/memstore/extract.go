@@ -63,14 +63,14 @@ func (s *Store) ExtractTurn(
 	if m := nicknamePat.FindStringSubmatch(text); len(m) == 2 {
 		name := strings.TrimSpace(m[1])
 		if name != "" {
-			add(AddInput{Text: "用户希望被称为「" + name + "」", Subject: "user", Predicate: "nickname", Value: name, Importance: 0.95})
+			add(AddInput{Text: "用户希望被称为「" + name + "」", Subject: "user", Predicate: "nickname", Facet: "称呼", Value: name, Importance: 0.95})
 			_ = s.SetRelationship(ctx, "user_name", name, 0.9)
 		}
 	}
 	if m := aiNicknamePat.FindStringSubmatch(text); len(m) == 2 {
 		name := strings.TrimSpace(m[1])
 		if name != "" {
-			add(AddInput{Text: "用户希望 AI 被称为「" + name + "」", Subject: "ai", Predicate: "nickname", Value: name, Importance: 0.95})
+			add(AddInput{Text: "用户希望 AI 被称为「" + name + "」", Subject: "ai", Predicate: "nickname", Facet: "称呼", Value: name, Importance: 0.95})
 			_ = s.SetRelationship(ctx, "ai_name", name, 0.9)
 		}
 	}
@@ -86,7 +86,7 @@ func (s *Store) ExtractTurn(
 		if strings.Contains(text, "纪念日") {
 			key = "anniversary"
 		}
-		add(AddInput{Text: text, Layer: LayerRelationship, Importance: 0.9})
+		add(AddInput{Text: text, Layer: LayerRelationship, Predicate: key, Facet: "日期", Importance: 0.9})
 		_ = s.SetRelationship(ctx, key, text, 0.9)
 	}
 

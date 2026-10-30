@@ -51,7 +51,7 @@ workspace/
 | `layer` | persona / profile / relationship / episodic / procedural / boundary | character / profile / relationship / event / procedure / boundary |
 | `status` | active / pending_review / superseded / archived | lifecycle |
 
-`relationship_state` stores names, stage, intimacy, anniversaries, and boundaries as versioned current values. `personas` stores versioned character definitions. `boundary` rules are not part of the fixed-block budget: they are appended as a safety block so a long profile or relationship section cannot evict them.
+`relationship_state` stores names, stage, intimacy, anniversaries, and boundaries as versioned current values. `personas` stores versioned character definitions. `predicate` uses a controlled vocabulary and `facet` distinguishes different sides of the same predicate; only scalar profile facts or an explicit `supersedes_id` automatically replace old values. `boundary` rules are not part of the fixed-block budget: they are appended as a safety block so a long profile or relationship section cannot evict them.
 
 ## Automatic extraction
 
@@ -69,22 +69,40 @@ Writes are processed in order:
 
 ## Search semantics
 
-The `memory` tool's search is an administrative search: it covers all layers by default, supports `realm` / `layer` / `status` filters, and can see private memories. Prompt injection uses a narrower retrieval path: active episodic/procedural only, relevance-filtered, with audience, private-channel, and fictional isolation still applied. The fixed block itself is still trimmed to its budget; `boundary` is appended after it and is not part of that trim.
+The `memory` tool's search is an administrative search: it covers all layers by default, supports `realm` / `layer` / `predicate` / `facet` / `status` filters, and can see private memories. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, private-channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures. The fixed block itself is still trimmed to its budget; `boundary` is appended after it and is not part of that trim.
+
+## Database migration (schema v2)
+
+New builds upgrade `memory.db` to schema v2:
+
+- `entries` gains `facet`, so multiple facets under the same `subject+predicate` can coexist;
+- `personas` supports `(id, version)` and adds `realm` / `audience` / `scope`, so a companion persona can stay private;
+- `relationship_state` gains `expires_at` and keeps old values in `relationship_state_history`;
+- empty `predicate` values become `待分类` instead of creating new empty keys;
+- the nine v13–v21 relationship entries in the reference database are mapped to `身份关系 / 权力结构 / 心理状态 / 事件·第一次` with explicit facets and stay active.
+
+The migration creates a SQLite `VACUUM INTO` backup first and never deletes entries. Run it from `/memory` → “Database migration” or:
+
+```bash
+picoclaw memory migrate
+```
 
 ## Dashboard
 
 Open `/memory` in the launcher:
 
 - Overview: counts, database size, relationship state, archival action.
+- Database migration: schema version, empty predicates, relationship count, one-click backup and migration.
 - Memory library: server-side pagination (100 per page), search, filter, edit, archive, restore.
 - Review: confirm real, mark fictional, mark work, ignore.
-- Relationship and persona: names, stage, anniversaries, boundaries, persona versions.
+- Relationship and persona: names, stage, anniversaries, boundaries, persona versions; persona realm / audience / scope.
 - Settings: budget, auto-extraction, private channels, import.
 - Database repair: preview and bulk-reclassify by realm / layer / status / audience / keyword; a SQLite `VACUUM INTO` backup is created before applying.
 
 ## CLI
 
 ```bash
+picoclaw memory migrate
 picoclaw memory import --from /path/to/old-workspace
 picoclaw memory audit
 picoclaw memory stats
@@ -125,6 +143,8 @@ PUT    /api/memory/settings
 POST   /api/memory/compact
 POST   /api/memory/repair/preview
 POST   /api/memory/repair/apply
+GET    /api/memory/migration/status
+POST   /api/memory/migration/apply
 POST   /api/memory/import
 GET    /api/memory/export
 GET    /api/memory/stats

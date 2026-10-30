@@ -150,6 +150,7 @@ The SQLite database is the only runtime memory source. PicoClaw never reads `MEM
 ### Memory CLI
 
 ```bash
+picoclaw memory migrate
 picoclaw memory import --from /path/to/old-workspace
 picoclaw memory audit
 picoclaw memory stats

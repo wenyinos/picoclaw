@@ -1,5 +1,29 @@
 # 变更日志
 
+## 未发布
+
+### 新增
+
+- 记忆库 schema v2：`entries.facet`、`personas` 的 `(id, version)` 与 `realm/audience/scope`、`relationship_state.expires_at` 和 `relationship_state_history`。
+- Launcher `/memory` 增加“数据库迁移”页，可一键备份并升级 schema v2；新增 `GET /api/memory/migration/status`、`POST /api/memory/migration/apply`。
+- CLI 新增 `picoclaw memory migrate`。
+- `memory` 工具支持 `subject`、`predicate`、`facet`、`value`、`supersedes_id`、`emotional_weight`、`valence`，以及 `update_state`。
+- relationship 条目进入提示词检索候选，单次最多 2 条；注入命中后异步批量回写 `use_count/last_used_at`。
+- 移除未使用的 `/api/memory/reindex` 空接口。
+
+### 修复
+
+- persona 注入按渠道、realm 和 audience 过滤；`fictional/private` 伴侣人设不再进入公开渠道。
+- `personas` 同 id 多版本不再撞主键。
+- supersede 只对 profile 单值事实自动生效；其他层需要显式 `supersedes_id`，避免同一 predicate 的不同侧面互相覆盖。
+- 空 predicate 统一为“待分类”，未知 predicate 不再产生新的垃圾桶键。
+- 迁移会把参考库 v13–v21 的 9 条 relationship 写入 predicate/facet，并保持 active。
+
+### 升级
+
+- 无配置文件结构变更；首次打开记忆库会创建 schema v2 备份并升级 schema。
+- 在 `/memory` → “数据库迁移”执行一次数据迁移，把空 predicate 标记为“待分类”。
+
 ## v0.4.6
 
 ### 修复

@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
   type MemoryEntry,
+  type MemoryMigrationReport,
+  type MemoryMigrationStatus,
   type MemoryOverview,
   type MemoryRepairFilter,
   type MemoryRepairPreview,
@@ -17,6 +19,7 @@ import {
 
 const TABS = [
   "overview",
+  "migration",
   "entries",
   "review",
   "relationship",
@@ -27,6 +30,7 @@ type Tab = (typeof TABS)[number]
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: "概览",
+  migration: "数据库迁移",
   entries: "记忆库",
   review: "审核",
   relationship: "关系与人格",
@@ -92,6 +96,9 @@ export function MemoryPage() {
         )}
 
         {tab === "overview" && <OverviewTab onError={setError} />}
+        {tab === "migration" && (
+          <MigrationTab onError={setError} onNotice={setNotice} />
+        )}
         {tab === "entries" && (
           <EntriesTab onError={setError} onNotice={setNotice} />
         )}
@@ -212,6 +219,8 @@ function EntriesTab({
   const [selected, setSelected] = useState<MemoryEntry | null>(null)
   const [draft, setDraft] = useState("")
   const [importance, setImportance] = useState(0.7)
+  const [predicate, setPredicate] = useState("")
+  const [facet, setFacet] = useState("")
   const listRef = useRef<HTMLDivElement>(null)
 
   const load = (
@@ -260,6 +269,8 @@ function EntriesTab({
     setSelected(e)
     setDraft(e.text)
     setImportance(e.importance)
+    setPredicate(e.predicate || "")
+    setFacet(e.facet || "")
   }
 
   return (
@@ -353,6 +364,7 @@ function EntriesTab({
                     <div className="flex gap-1">
                       {badge(e.realm)}
                       {badge(e.layer)}
+                      {e.facet ? badge(e.facet) : null}
                     </div>
                   </td>
                   <td className="p-2">{e.importance.toFixed(2)}</td>
@@ -424,11 +436,34 @@ function EntriesTab({
                 className="mt-1"
               />
             </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-sm">
+                predicate
+                <Input
+                  value={predicate}
+                  onChange={(e) => setPredicate(e.target.value)}
+                  className="mt-1"
+                />
+              </label>
+              <label className="text-sm">
+                facet
+                <Input
+                  value={facet}
+                  onChange={(e) => setFacet(e.target.value)}
+                  className="mt-1"
+                />
+              </label>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() =>
                   memoryApi
-                    .updateEntry(selected.id, { text: draft, importance })
+                    .updateEntry(selected.id, {
+                      text: draft,
+                      importance,
+                      predicate,
+                      facet,
+                    })
                     .then((e) => {
                       setSelected(e)
                       onNotice("已保存")
@@ -572,6 +607,9 @@ function RelationshipTab({
   const [active, setActive] = useState<Persona | null>(null)
   const [personaName, setPersonaName] = useState("PicoClaw")
   const [personaContent, setPersonaContent] = useState("")
+  const [personaRealm, setPersonaRealm] = useState("real")
+  const [personaAudience, setPersonaAudience] = useState("private")
+  const [personaScope, setPersonaScope] = useState("user")
 
   const load = () => {
     memoryApi
@@ -586,6 +624,9 @@ function RelationshipTab({
         if (r.active) {
           setPersonaName(r.active.name)
           setPersonaContent(r.active.content)
+          setPersonaRealm(r.active.realm || "real")
+          setPersonaAudience(r.active.audience || "private")
+          setPersonaScope(r.active.scope || "user")
         }
       })
       .catch((e: Error) => onError(e.message))
@@ -648,11 +689,51 @@ function RelationshipTab({
           className="min-h-48"
           placeholder="人设、世界观、说话风格、边界……"
         />
+        <div className="grid grid-cols-3 gap-2">
+          <label className="text-muted-foreground text-xs">
+            realm
+            <select
+              className="text-foreground mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={personaRealm}
+              onChange={(e) => setPersonaRealm(e.target.value)}
+            >
+              <option value="real">real</option>
+              <option value="fictional">fictional</option>
+              <option value="work">work</option>
+            </select>
+          </label>
+          <label className="text-muted-foreground text-xs">
+            audience
+            <select
+              className="text-foreground mt-1 h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+              value={personaAudience}
+              onChange={(e) => setPersonaAudience(e.target.value)}
+            >
+              <option value="private">private</option>
+              <option value="all">all</option>
+            </select>
+          </label>
+          <label className="text-muted-foreground text-xs">
+            scope
+            <Input
+              className="mt-1"
+              value={personaScope}
+              onChange={(e) => setPersonaScope(e.target.value)}
+            />
+          </label>
+        </div>
         <div className="flex gap-2">
           <Button
             onClick={() =>
               memoryApi
-                .savePersona(personaName, personaContent, true)
+                .savePersona(
+                  personaName,
+                  personaContent,
+                  true,
+                  personaRealm,
+                  personaAudience,
+                  personaScope,
+                )
                 .then(() => {
                   onNotice("角色设定已保存并启用")
                   load()
@@ -673,6 +754,148 @@ function RelationshipTab({
             历史版本：{personas.map((p) => `v${p.version}`).join(", ")}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function MigrationTab({
+  onError,
+  onNotice,
+}: {
+  onError: (v: string) => void
+  onNotice: (v: string) => void
+}) {
+  const [status, setStatus] = useState<MemoryMigrationStatus | null>(null)
+  const [report, setReport] = useState<MemoryMigrationReport | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const load = () => {
+    memoryApi
+      .migrationStatus()
+      .then(setStatus)
+      .catch((e: Error) => onError(e.message))
+  }
+
+  useEffect(load, [])
+
+  const applyMigration = () => {
+    if (
+      !window.confirm(
+        "将升级 memory.db 到 schema v2，并把空 predicate 标记为“待分类”。执行前会自动 VACUUM INTO 备份，不会删除条目。继续吗？",
+      )
+    ) {
+      return
+    }
+    setLoading(true)
+    memoryApi
+      .migrationApply()
+      .then((r) => {
+        setReport(r)
+        onNotice(
+          `迁移完成：schema v${r.schema_version}，处理空 predicate ${r.updated_predicates} 条，备份：${r.backup}`,
+        )
+        load()
+      })
+      .catch((e: Error) => onError(e.message))
+      .finally(() => setLoading(false))
+  }
+
+  const stats = [
+    { label: "当前 schema", value: `v${status?.schema_version ?? "-"}` },
+    { label: "目标 schema", value: `v${status?.current_version ?? "-"}` },
+    { label: "总条目", value: status?.total ?? 0 },
+    { label: "生效", value: status?.active ?? 0 },
+    { label: "空 predicate", value: status?.empty_predicate ?? 0 },
+    {
+      label: "空 relationship facet",
+      value: status?.empty_relationship_facet ?? 0,
+    },
+    { label: "relationship", value: status?.relationship ?? 0 },
+    { label: "personas", value: status?.personas ?? 0 },
+    {
+      label: "数据库大小",
+      value: `${Math.round((status?.db_size ?? 0) / 1024)} KB`,
+    },
+  ]
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="rounded-lg border p-4">
+        <h2 className="text-sm font-semibold">0.4.6 数据库一键迁移</h2>
+        <p className="text-muted-foreground mt-1 text-sm">
+          升级到 schema v2：增加 facet、persona 渠道字段、relationship
+          历史表，并把空 predicate 统一为“待分类”。打开本页时会先做一次 schema
+          检查并自动备份；下方按钮用于执行或重新执行数据迁移。只改分类，不删除记录。
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+          {stats.map((s) => (
+            <div key={s.label} className="rounded-md border p-3">
+              <div className="text-muted-foreground text-xs">{s.label}</div>
+              <div className="mt-1 text-lg font-semibold">{s.value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button onClick={applyMigration} disabled={loading}>
+            {loading ? "迁移中..." : "执行一键迁移"}
+          </Button>
+          {status && !status.needs_migration && (
+            <span className="text-sm text-emerald-600">
+              数据库已是最新；按钮会重新备份并校验。
+            </span>
+          )}
+          {status?.needs_migration && (
+            <span className="text-muted-foreground text-sm">
+              {status.needs_schema_migration
+                ? "需要 schema 升级"
+                : "需要数据迁移"}
+              {status.needs_data_migration
+                ? ` · ${status.empty_predicate} 条空 predicate`
+                : ""}
+            </span>
+          )}
+        </div>
+        <div className="text-muted-foreground mt-3 space-y-1 text-xs">
+          <div className="break-all">数据库：{status?.db_path || "-"}</div>
+          <div className="break-all">
+            最近备份：{status?.backup || "暂无记录"}
+          </div>
+          {status?.last_migration_at ? (
+            <div>最近迁移：{fmtDate(status.last_migration_at)}</div>
+          ) : null}
+        </div>
+      </div>
+
+      {report && (
+        <div className="rounded-lg border p-4">
+          <h3 className="text-sm font-semibold">迁移结果</h3>
+          <div className="text-muted-foreground mt-2 grid gap-1 text-sm">
+            <div>
+              schema：v{report.previous_schema_version} → v
+              {report.schema_version}
+            </div>
+            <div>
+              条目：{report.total}（active {report.active}）
+            </div>
+            <div>空 predicate：{report.empty_predicate}</div>
+            <div>已处理：{report.updated_predicates}</div>
+            <div>已映射 relationship：{report.mapped_relationships}</div>
+            <div className="break-all">备份：{report.backup}</div>
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg border p-4">
+        <h3 className="text-sm font-semibold">迁移后建议</h3>
+        <ul className="text-muted-foreground mt-2 list-disc space-y-1 pl-5 text-sm">
+          <li>空 predicate 会变成“待分类”，可在记忆库中逐条编辑。</li>
+          <li>relationship 条目现在会进入检索候选，但单次最多 2 条。</li>
+          <li>
+            persona 默认是 private/real；伴侣人设请显式设为 fictional/private。
+          </li>
+          <li>迁移可重复执行；每次都会先生成新的 VACUUM INTO 备份。</li>
+        </ul>
       </div>
     </div>
   )

@@ -62,4 +62,41 @@ func TestMemoryToolSearchAcrossLayers(t *testing.T) {
 			t.Fatalf("garbage query should return no matches: %s", res.ForLLM)
 		}
 	})
+
+	t.Run("structured add and state", func(t *testing.T) {
+		res := tool.Execute(ctx, map[string]any{
+			"action": "add", "text": "用户希望被称为阿泽",
+			"realm": "real", "layer": "profile",
+			"subject": "user", "predicate": "nickname", "facet": "称呼", "value": "阿泽",
+		})
+		if res.IsError {
+			t.Fatalf("structured add failed: %s", res.ForLLM)
+		}
+		res = tool.Execute(ctx, map[string]any{
+			"action": "search", "query": "阿泽", "predicate": "nickname", "facet": "称呼",
+		})
+		if res.IsError || !strings.Contains(res.ForLLM, "阿泽") {
+			t.Fatalf("structured search failed: %s", res.ForLLM)
+		}
+
+		res = tool.Execute(ctx, map[string]any{
+			"action": "update_state", "key": "stage", "value": "测试阶段",
+		})
+		if res.IsError {
+			t.Fatalf("update_state failed: %s", res.ForLLM)
+		}
+		rel, err := store.GetRelationship(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, r := range rel {
+			if r.Key == "stage" && r.Value == "测试阶段" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("stage not updated: %+v", rel)
+		}
+	})
 }

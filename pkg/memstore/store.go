@@ -18,10 +18,16 @@ import (
 
 // Store is a SQLite-backed long-term memory store.
 type Store struct {
-	db       *sql.DB
-	path     string
-	mu       sync.Mutex
-	revision atomic.Int64
+	db             *sql.DB
+	path           string
+	mu             sync.Mutex
+	revision       atomic.Int64
+	usageMu        sync.Mutex
+	usage          map[string]int
+	usageLastFlush time.Time
+	usageFlushing  bool
+	usageWG        sync.WaitGroup
+	openedSchema   int
 }
 
 var schemaStatements = []string{
@@ -37,6 +43,7 @@ var schemaStatements = []string{
 		audience TEXT NOT NULL DEFAULT 'all',
 		subject TEXT NOT NULL DEFAULT '',
 		predicate TEXT NOT NULL DEFAULT '',
+		facet TEXT NOT NULL DEFAULT '',
 		value TEXT NOT NULL DEFAULT '',
 		text TEXT NOT NULL,
 		normalized TEXT NOT NULL,
@@ -83,15 +90,29 @@ var schemaStatements = []string{
 		valid_from INTEGER NOT NULL,
 		valid_to INTEGER,
 		confidence REAL NOT NULL DEFAULT 0.8,
-		updated_at INTEGER NOT NULL
+		updated_at INTEGER NOT NULL,
+		expires_at INTEGER
+	)`,
+	`CREATE TABLE IF NOT EXISTS relationship_state_history (
+		key TEXT NOT NULL,
+		value TEXT NOT NULL,
+		valid_from INTEGER NOT NULL,
+		valid_to INTEGER NOT NULL,
+		confidence REAL NOT NULL,
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY (key, valid_from)
 	)`,
 	`CREATE TABLE IF NOT EXISTS personas (
-		id TEXT PRIMARY KEY,
+		id TEXT NOT NULL,
 		name TEXT NOT NULL,
 		version INTEGER NOT NULL,
 		content TEXT NOT NULL,
 		active INTEGER NOT NULL DEFAULT 0,
-		created_at INTEGER NOT NULL
+		realm TEXT NOT NULL DEFAULT 'real',
+		audience TEXT NOT NULL DEFAULT 'private',
+		scope TEXT NOT NULL DEFAULT 'user',
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (id, version)
 	)`,
 }
 
@@ -124,8 +145,13 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("memstore: schema: %w", err)
 		}
 	}
-	s := &Store{db: db, path: path}
+	s := &Store{db: db, path: path, usage: make(map[string]int), usageLastFlush: time.Now()}
 	if err := s.loadRevision(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	s.openedSchema = s.schemaVersionLocked(context.Background())
+	if err := s.migrateSchema(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -136,7 +162,7 @@ func (s *Store) loadRevision() error {
 	var raw string
 	err := s.db.QueryRow(`SELECT value FROM meta WHERE key='revision'`).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES('revision','0'),('schema_version','1')`); err != nil {
+		if _, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES('revision','0'),('schema_version','2')`); err != nil {
 			return fmt.Errorf("memstore: init meta: %w", err)
 		}
 		return nil
@@ -156,6 +182,8 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	s.usageWG.Wait()
+	s.flushUsage(context.Background())
 	_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	return s.db.Close()
 }
@@ -180,7 +208,7 @@ func (s *Store) bumpRevision(ctx context.Context, tx *sql.Tx) error {
 	return nil
 }
 
-var entryColumns = `id, realm, layer, scope, audience, subject, predicate, value, text,
+var entryColumns = `id, realm, layer, scope, audience, subject, predicate, facet, value, text,
 	normalized, content_hash, simhash, template_key, cluster_id, occurrences,
 	importance, emotional_weight, valence, confidence, status, event_at, expires_at,
 	created_at, updated_at, last_used_at, use_count, attributes`
@@ -195,7 +223,7 @@ func scanEntry(row scanner) (Entry, error) {
 	var eventAt, expiresAt, lastUsed sql.NullInt64
 	var attrs string
 	err := row.Scan(
-		&e.ID, &e.Realm, &e.Layer, &e.Scope, &e.Audience, &e.Subject, &e.Predicate,
+		&e.ID, &e.Realm, &e.Layer, &e.Scope, &e.Audience, &e.Subject, &e.Predicate, &e.Facet,
 		&e.Value, &e.Text, &e.Normalized, &e.ContentHash, &simhash, &e.TemplateKey,
 		&e.ClusterID, &e.Occurrences, &e.Importance, &e.EmotionalWeight, &e.Valence,
 		&e.Confidence, &e.Status, &eventAt, &expiresAt, &e.CreatedAt, &e.UpdatedAt,
@@ -229,6 +257,8 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	}
 	in.Realm = normalizeRealm(in.Realm)
 	in.Layer = normalizeLayer(in.Layer)
+	in.Predicate = NormalizePredicate(in.Predicate)
+	in.Facet = strings.TrimSpace(in.Facet)
 	if in.Scope == "" {
 		in.Scope = "user"
 	}
@@ -253,34 +283,15 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	// 1. exact duplicate, including pending/archived rows so repeated imports
-	// cannot create copies of the same memory.
+	// cannot create copies of the same memory. Explicit supersede skips the
+	// dedupe path: the caller asked for a new version even if the text is close.
 	var existingID, existingStatus string
-	err = tx.QueryRowContext(ctx,
-		`SELECT id, status FROM entries WHERE content_hash=?
+	explicitSupersede := strings.TrimSpace(in.SupersedesID) != ""
+	if !explicitSupersede {
+		err = tx.QueryRowContext(ctx,
+			`SELECT id, status FROM entries WHERE content_hash=?
 		 ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'pending_review' THEN 1 ELSE 2 END
 		 LIMIT 1`, hash).Scan(&existingID, &existingStatus)
-	if err == nil {
-		if err := mergeInto(ctx, tx, existingID, in, now); err != nil {
-			return nil, err
-		}
-		if err := s.bumpRevision(ctx, tx); err != nil {
-			return nil, err
-		}
-		if err := tx.Commit(); err != nil {
-			return nil, err
-		}
-		e, _ := s.Get(ctx, existingID)
-		return &AddResult{Action: "duplicate", Entry: e, ExistingID: existingID}, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-
-	// 2. template fold
-	if in.TemplateKey != "" {
-		err = tx.QueryRowContext(ctx,
-			`SELECT id FROM entries WHERE template_key=? AND status IN ('active','pending_review') LIMIT 1`,
-			in.TemplateKey).Scan(&existingID)
 		if err == nil {
 			if err := mergeInto(ctx, tx, existingID, in, now); err != nil {
 				return nil, err
@@ -292,70 +303,80 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 				return nil, err
 			}
 			e, _ := s.Get(ctx, existingID)
-			return &AddResult{Action: "merged", Entry: e, ExistingID: existingID}, nil
+			return &AddResult{Action: "duplicate", Entry: e, ExistingID: existingID}, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
-	}
 
-	// 3. near duplicate within the same realm/layer
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id, normalized, simhash FROM entries
+		// 2. template fold
+		if in.TemplateKey != "" {
+			err = tx.QueryRowContext(ctx,
+				`SELECT id FROM entries WHERE template_key=? AND status IN ('active','pending_review') LIMIT 1`,
+				in.TemplateKey).Scan(&existingID)
+			if err == nil {
+				if err := mergeInto(ctx, tx, existingID, in, now); err != nil {
+					return nil, err
+				}
+				if err := s.bumpRevision(ctx, tx); err != nil {
+					return nil, err
+				}
+				if err := tx.Commit(); err != nil {
+					return nil, err
+				}
+				e, _ := s.Get(ctx, existingID)
+				return &AddResult{Action: "merged", Entry: e, ExistingID: existingID}, nil
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+		}
+
+		// 3. near duplicate within the same realm/layer
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id, normalized, simhash FROM entries
 		 WHERE status IN ('active','pending_review') AND realm=? AND layer=?
 		 ORDER BY updated_at DESC LIMIT 300`,
-		in.Realm, in.Layer)
+			in.Realm, in.Layer)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, candidateNorm string
+			var candidateSim int64
+			if err := rows.Scan(&id, &candidateNorm, &candidateSim); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			// Chinese bigram Jaccard: 0.75 merges paraphrases such as
+			// "避开花生" / "请避开" without collapsing unrelated short facts.
+			if Jaccard(norm, candidateNorm) >= 0.75 || Hamming(sim, candidateSim) <= 3 {
+				_ = rows.Close()
+				if err := mergeInto(ctx, tx, id, in, now); err != nil {
+					return nil, err
+				}
+				if err := s.bumpRevision(ctx, tx); err != nil {
+					return nil, err
+				}
+				if err := tx.Commit(); err != nil {
+					return nil, err
+				}
+				e, _ := s.Get(ctx, id)
+				return &AddResult{Action: "merged", Entry: e, ExistingID: id}, nil
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
+	}
+
+	// 4. conflict: explicit supersede wins; automatic supersede is limited to
+	// scalar profile facts with an explicit facet.
+	supersededID, err := resolveSupersededID(ctx, tx, in, now)
 	if err != nil {
 		return nil, err
-	}
-	for rows.Next() {
-		var id, candidateNorm string
-		var candidateSim int64
-		if err := rows.Scan(&id, &candidateNorm, &candidateSim); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		// Chinese bigram Jaccard: 0.75 merges paraphrases such as
-		// "避开花生" / "请避开" without collapsing unrelated short facts.
-		if Jaccard(norm, candidateNorm) >= 0.75 || Hamming(sim, candidateSim) <= 3 {
-			_ = rows.Close()
-			if err := mergeInto(ctx, tx, id, in, now); err != nil {
-				return nil, err
-			}
-			if err := s.bumpRevision(ctx, tx); err != nil {
-				return nil, err
-			}
-			if err := tx.Commit(); err != nil {
-				return nil, err
-			}
-			e, _ := s.Get(ctx, id)
-			return &AddResult{Action: "merged", Entry: e, ExistingID: id}, nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	_ = rows.Close()
-
-	// 4. conflict: same subject+predicate, different value
-	var supersededID string
-	if strings.TrimSpace(in.Subject) != "" && strings.TrimSpace(in.Predicate) != "" {
-		var oldID, oldValue string
-		err = tx.QueryRowContext(ctx,
-			`SELECT id, value FROM entries
-			 WHERE status='active' AND realm=? AND subject=? AND predicate=?
-			 ORDER BY updated_at DESC LIMIT 1`,
-			in.Realm, in.Subject, in.Predicate).Scan(&oldID, &oldValue)
-		if err == nil && Normalize(oldValue) != Normalize(in.Value) {
-			supersededID = oldID
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE entries SET status='superseded', updated_at=? WHERE id=?`, now, oldID); err != nil {
-				return nil, err
-			}
-		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
 	}
 
 	status := strings.TrimSpace(in.ForceStatus)
@@ -374,6 +395,7 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		Audience:        in.Audience,
 		Subject:         strings.TrimSpace(in.Subject),
 		Predicate:       strings.TrimSpace(in.Predicate),
+		Facet:           strings.TrimSpace(in.Facet),
 		Value:           strings.TrimSpace(in.Value),
 		Text:            strings.TrimSpace(in.Text),
 		Normalized:      norm,
@@ -400,8 +422,8 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		attrs = []byte("{}")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO entries (`+entryColumns+`)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		e.ID, e.Realm, e.Layer, e.Scope, e.Audience, e.Subject, e.Predicate, e.Value,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		e.ID, e.Realm, e.Layer, e.Scope, e.Audience, e.Subject, e.Predicate, e.Facet, e.Value,
 		e.Text, e.Normalized, e.ContentHash, e.Simhash, e.TemplateKey, e.ClusterID,
 		e.Occurrences, e.Importance, e.EmotionalWeight, e.Valence, e.Confidence,
 		e.Status, e.EventAt, e.ExpiresAt, e.CreatedAt, e.UpdatedAt, e.LastUsedAt,
@@ -429,6 +451,53 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		action = "superseded"
 	}
 	return &AddResult{Action: action, Entry: &e, ExistingID: supersededID}, nil
+}
+
+func resolveSupersededID(ctx context.Context, tx *sql.Tx, in AddInput, now int64) (string, error) {
+	if id := strings.TrimSpace(in.SupersedesID); id != "" {
+		var status string
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM entries WHERE id=?`, id).Scan(&status); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return "", fmt.Errorf("memstore: supersedes target %q not found", id)
+			}
+			return "", err
+		}
+		if status != StatusActive {
+			return "", fmt.Errorf("memstore: supersedes target %q is not active", id)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entries SET status='superseded', updated_at=? WHERE id=?`, now, id); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+
+	if in.Layer != LayerProfile || strings.TrimSpace(in.Facet) == "" ||
+		strings.TrimSpace(in.Value) == "" || strings.TrimSpace(in.Subject) == "" ||
+		!isScalarPredicate(in.Predicate) {
+		return "", nil
+	}
+
+	var oldID, oldValue string
+	err := tx.QueryRowContext(ctx,
+		`SELECT id, value FROM entries
+		 WHERE status='active' AND realm=? AND subject=? AND predicate=? AND facet=?
+		 ORDER BY updated_at DESC LIMIT 1`,
+		in.Realm, in.Subject, in.Predicate, in.Facet).Scan(&oldID, &oldValue)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if Normalize(oldValue) == Normalize(in.Value) {
+		return "", nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE entries SET status='superseded', updated_at=? WHERE id=?`, now, oldID); err != nil {
+		return "", err
+	}
+	return oldID, nil
 }
 
 func mergeInto(ctx context.Context, tx *sql.Tx, id string, in AddInput, now int64) error {
@@ -497,10 +566,18 @@ func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
 		where = append(where, "audience=?")
 		args = append(args, opts.Audience)
 	}
+	if opts.Predicate != "" {
+		where = append(where, "predicate=?")
+		args = append(args, opts.Predicate)
+	}
+	if opts.Facet != "" {
+		where = append(where, "facet=?")
+		args = append(args, opts.Facet)
+	}
 	if q := strings.TrimSpace(opts.Query); q != "" {
-		where = append(where, "(text LIKE ? OR value LIKE ? OR subject LIKE ?)")
+		where = append(where, "(text LIKE ? OR value LIKE ? OR subject LIKE ? OR predicate LIKE ? OR facet LIKE ?)")
 		like := "%" + q + "%"
-		args = append(args, like, like, like)
+		args = append(args, like, like, like, like, like)
 	}
 	limit := opts.Limit
 	if limit <= 0 || limit > 500 {
@@ -568,7 +645,11 @@ func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, err
 	}
 	if in.Predicate != "" {
 		sets = append(sets, "predicate=?")
-		args = append(args, strings.TrimSpace(in.Predicate))
+		args = append(args, NormalizePredicate(in.Predicate))
+	}
+	if in.Facet != "" {
+		sets = append(sets, "facet=?")
+		args = append(args, strings.TrimSpace(in.Facet))
 	}
 	if in.Value != "" {
 		sets = append(sets, "value=?")

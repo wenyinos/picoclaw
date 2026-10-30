@@ -32,7 +32,15 @@ func (s *Store) Search(ctx context.Context, opts SearchOptions) ([]Entry, error)
 		where = append(where, "layer=?")
 		args = append(args, opts.Layer)
 	} else {
-		where = append(where, "layer IN ('episodic','procedural')")
+		where = append(where, "layer IN ('relationship','episodic','procedural')")
+	}
+	if opts.Predicate != "" {
+		where = append(where, "predicate=?")
+		args = append(args, opts.Predicate)
+	}
+	if opts.Facet != "" {
+		where = append(where, "facet=?")
+		args = append(args, opts.Facet)
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+entryColumns+` FROM entries WHERE `+strings.Join(where, " AND ")+
@@ -110,7 +118,7 @@ func (s *Store) BuildFixedContext(
 		budget = 600
 	}
 	var parts []string
-	if persona, err := s.GetActivePersona(ctx); err == nil && persona != nil {
+	if persona, err := s.GetActivePersonaForChannel(ctx, channel, privateChannels, injectFictional); err == nil && persona != nil {
 		parts = append(parts, "## 角色设定\n"+strings.TrimSpace(persona.Content))
 	}
 	includeRelationship := channel == "" || containsChannel(privateChannels, channel)
@@ -177,7 +185,9 @@ func (s *Store) BuildFixedContext(
 	return base + "\n\n" + boundaryText
 }
 
-// BuildRetrievalContext renders query-relevant episodic/procedural memories.
+// BuildRetrievalContext renders query-relevant relationship, episodic and
+// procedural memories. Relationship entries are capped so they cannot crowd
+// out event/procedure memories.
 func (s *Store) BuildRetrievalContext(
 	ctx context.Context,
 	query, channel string,
@@ -199,6 +209,9 @@ func (s *Store) BuildRetrievalContext(
 		return ""
 	}
 	var lines []string
+	var usedIDs []string
+	relationshipCount := 0
+	otherCount := 0
 	for _, e := range entries {
 		if e.Realm == RealmFictional && !injectFictional {
 			continue
@@ -206,16 +219,45 @@ func (s *Store) BuildRetrievalContext(
 		if e.Realm == RealmUnknown {
 			continue
 		}
-		line := fmt.Sprintf("- [%s/%s] %s", e.Layer, e.Realm, strings.TrimSpace(e.Text))
+		switch e.Layer {
+		case LayerRelationship:
+			if relationshipCount >= 2 {
+				continue
+			}
+			relationshipCount++
+		default:
+			if otherCount >= 6 {
+				continue
+			}
+			otherCount++
+		}
+		text := strings.TrimSpace(e.Text)
+		if e.Layer == LayerRelationship && utf8.RuneCountInString(text) > 600 {
+			text = truncateRunes(text, 600)
+		}
+		line := fmt.Sprintf("- [%s/%s] %s", e.Layer, e.Realm, text)
 		if len(lines) > 0 && EstimateTokens(strings.Join(lines, "\n"))+EstimateTokens(line) > budget {
 			break
 		}
 		lines = append(lines, line)
+		usedIDs = append(usedIDs, e.ID)
 	}
 	if len(lines) == 0 {
 		return ""
 	}
+	s.RecordUsage(usedIDs)
 	return trimToBudget([]string{"## 相关记忆\n" + strings.Join(lines, "\n")}, budget, "# Memory\n\n")
+}
+
+func truncateRunes(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 1 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 func trimToBudget(parts []string, budget int, header string) string {

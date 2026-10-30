@@ -6,6 +6,7 @@ export interface MemoryEntry {
   audience: string
   subject?: string
   predicate?: string
+  facet?: string
   value?: string
   text: string
   importance: number
@@ -43,7 +44,39 @@ export interface Persona {
   version: number
   content: string
   active: boolean
+  realm: string
+  audience: string
+  scope: string
   created_at: number
+}
+
+export interface MemoryMigrationStatus {
+  schema_version: number
+  current_version: number
+  needs_migration: boolean
+  needs_schema_migration: boolean
+  needs_data_migration: boolean
+  empty_predicate: number
+  empty_relationship_facet: number
+  relationship: number
+  personas: number
+  total: number
+  active: number
+  db_path: string
+  db_size: number
+  backup?: string
+  last_migration_at?: number
+}
+
+export interface MemoryMigrationReport {
+  previous_schema_version: number
+  schema_version: number
+  total: number
+  active: number
+  empty_predicate: number
+  updated_predicates: number
+  mapped_relationships: number
+  backup: string
 }
 
 export interface MemoryRepairFilter {
@@ -136,10 +169,25 @@ export const memoryApi = {
     request<{ personas: Persona[]; active: Persona | null }>(
       "/api/memory/persona",
     ),
-  savePersona: (name: string, content: string, activate = true) =>
+  savePersona: (
+    name: string,
+    content: string,
+    activate = true,
+    realm = "real",
+    audience = "private",
+    scope = "user",
+  ) =>
     request<Persona>("/api/memory/persona", {
       method: "PUT",
-      body: JSON.stringify({ id: "default", name, content, activate }),
+      body: JSON.stringify({
+        id: "default",
+        name,
+        content,
+        activate,
+        realm,
+        audience,
+        scope,
+      }),
     }),
   settings: () => request<MemorySettings>("/api/memory/settings"),
   saveSettings: (settings: MemorySettings) =>
@@ -156,6 +204,12 @@ export const memoryApi = {
     request<MemoryRepairResult>("/api/memory/repair/apply", {
       method: "POST",
       body: JSON.stringify({ filter, target }),
+    }),
+  migrationStatus: () =>
+    request<MemoryMigrationStatus>("/api/memory/migration/status"),
+  migrationApply: () =>
+    request<MemoryMigrationReport>("/api/memory/migration/apply", {
+      method: "POST",
     }),
   compact: () =>
     request<{ archived: number }>("/api/memory/compact", { method: "POST" }),

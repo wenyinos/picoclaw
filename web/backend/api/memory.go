@@ -32,7 +32,8 @@ func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/memory/compact", h.handleMemoryCompact)
 	mux.HandleFunc("POST /api/memory/repair/preview", h.handleMemoryRepairPreview)
 	mux.HandleFunc("POST /api/memory/repair/apply", h.handleMemoryRepairApply)
-	mux.HandleFunc("POST /api/memory/reindex", h.handleMemoryReindex)
+	mux.HandleFunc("GET /api/memory/migration/status", h.handleMemoryMigrationStatus)
+	mux.HandleFunc("POST /api/memory/migration/apply", h.handleMemoryMigrationApply)
 	mux.HandleFunc("POST /api/memory/import", h.handleMemoryImport)
 	mux.HandleFunc("GET /api/memory/export", h.handleMemoryExport)
 	mux.HandleFunc("GET /api/memory/stats", h.handleMemoryStats)
@@ -260,7 +261,7 @@ func (h *Handler) handleMemoryUpdateRelationship(w http.ResponseWriter, r *http.
 }
 
 func (h *Handler) handleMemoryPersona(w http.ResponseWriter, r *http.Request) {
-	store, _, err := h.memoryStore()
+	store, cfg, err := h.memoryStore()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -271,6 +272,11 @@ func (h *Handler) handleMemoryPersona(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	active, _ := store.GetActivePersona(r.Context())
+	if channel := strings.TrimSpace(r.URL.Query().Get("channel")); channel != "" {
+		active, _ = store.GetActivePersonaForChannel(
+			r.Context(), channel, cfg.Memory.PrivateChannels, cfg.Memory.InjectFictional,
+		)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"personas": list, "active": active})
 }
 
@@ -285,6 +291,9 @@ func (h *Handler) handleMemoryUpdatePersona(w http.ResponseWriter, r *http.Reque
 		Name     string `json:"name"`
 		Content  string `json:"content"`
 		Activate bool   `json:"activate"`
+		Realm    string `json:"realm"`
+		Audience string `json:"audience"`
+		Scope    string `json:"scope"`
 	}](r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -293,7 +302,10 @@ func (h *Handler) handleMemoryUpdatePersona(w http.ResponseWriter, r *http.Reque
 	if body.ID == "" {
 		body.ID = "default"
 	}
-	p, err := store.UpsertPersona(r.Context(), body.ID, body.Name, body.Content, body.Activate)
+	p, err := store.UpsertPersonaScoped(
+		r.Context(), body.ID, body.Name, body.Content, body.Activate,
+		body.Realm, body.Audience, body.Scope,
+	)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -349,8 +361,32 @@ func (h *Handler) handleMemoryCompact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"archived": n})
 }
 
-func (h *Handler) handleMemoryReindex(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+func (h *Handler) handleMemoryMigrationStatus(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status, err := store.MigrationStatus(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (h *Handler) handleMemoryMigrationApply(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	report, err := store.ApplyV2Migration(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (h *Handler) handleMemoryImport(w http.ResponseWriter, r *http.Request) {

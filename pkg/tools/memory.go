@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/memstore"
 )
@@ -15,6 +16,12 @@ type MemoryTool struct {
 	reviewRequired bool
 }
 
+var allowedRelationshipKeys = map[string]bool{
+	"ai_name": true, "user_name": true, "stage": true, "relationship": true,
+	"intimacy": true, "current_mood": true, "tension_mode": true, "rituals": true,
+	"anniversary": true, "unresolved": true, "boundary": true,
+}
+
 // NewMemoryTool creates a memory tool bound to a workspace.
 func NewMemoryTool(workspace, dbPath string, reviewRequired bool) *MemoryTool {
 	return &MemoryTool{workspace: workspace, dbPath: dbPath, reviewRequired: reviewRequired}
@@ -23,10 +30,9 @@ func NewMemoryTool(workspace, dbPath string, reviewRequired bool) *MemoryTool {
 func (t *MemoryTool) Name() string { return "memory" }
 
 func (t *MemoryTool) Description() string {
-	return "Save or recall long-term memory. action=add (text, optional realm/layer/importance), " +
-		"action=search (query, optional realm/layer/status), action=forget (id). Search covers all " +
-		"memory layers and includes private memories. Use it for stable user facts, preferences, " +
-		"relationship details and important events."
+	return "Save or recall long-term memory. action=add (text, optional realm/layer/subject/predicate/facet/value/importance), " +
+		"action=search (query, optional realm/layer/predicate/facet/status), action=update_state (key/value/ttl_seconds), " +
+		"action=forget (id). Search covers all memory layers and includes private memories."
 }
 
 func (t *MemoryTool) Parameters() map[string]any {
@@ -35,7 +41,7 @@ func (t *MemoryTool) Parameters() map[string]any {
 		"properties": map[string]any{
 			"action": map[string]any{
 				"type":        "string",
-				"enum":        []string{"add", "search", "forget"},
+				"enum":        []string{"add", "search", "update_state", "forget"},
 				"description": "Operation to perform",
 			},
 			"text": map[string]any{
@@ -64,6 +70,42 @@ func (t *MemoryTool) Parameters() map[string]any {
 				"type":        "string",
 				"enum":        []string{"active", "pending_review", "superseded", "archived", "all"},
 				"description": "Status filter for action=search; defaults to active",
+			},
+			"subject": map[string]any{
+				"type":        "string",
+				"description": "Structured subject, e.g. user / ai / 姐弟故事",
+			},
+			"predicate": map[string]any{
+				"type":        "string",
+				"description": "Structured predicate from the controlled vocabulary",
+			},
+			"facet": map[string]any{
+				"type":        "string",
+				"description": "Optional facet within a predicate, e.g. 称呼 / 家庭压力",
+			},
+			"value": map[string]any{
+				"type":        "string",
+				"description": "Short scalar value for structured facts, or value for update_state",
+			},
+			"key": map[string]any{
+				"type":        "string",
+				"description": "Relationship state key for action=update_state",
+			},
+			"supersedes_id": map[string]any{
+				"type":        "string",
+				"description": "Explicitly supersede this active memory id",
+			},
+			"emotional_weight": map[string]any{
+				"type":        "number",
+				"description": "0..1 emotional weight",
+			},
+			"valence": map[string]any{
+				"type":        "number",
+				"description": "-1..1 emotional valence",
+			},
+			"ttl_seconds": map[string]any{
+				"type":        "number",
+				"description": "Optional TTL for action=update_state",
 			},
 			"importance": map[string]any{
 				"type":        "number",
@@ -99,8 +141,17 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 			layer = memstore.LayerProfile
 		}
 		importance, _ := args["importance"].(float64)
+		subject, _ := args["subject"].(string)
+		predicate, _ := args["predicate"].(string)
+		facet, _ := args["facet"].(string)
+		value, _ := args["value"].(string)
+		supersedesID, _ := args["supersedes_id"].(string)
+		emotionalWeight, _ := args["emotional_weight"].(float64)
+		valence, _ := args["valence"].(float64)
 		res, err := store.Add(ctx, memstore.AddInput{
 			Text: text, Realm: realm, Layer: layer, Importance: importance,
+			Subject: subject, Predicate: predicate, Facet: facet, Value: value,
+			SupersedesID: supersedesID, EmotionalWeight: emotionalWeight, Valence: valence,
 			Audience: "private", SourceType: "user_statement",
 		})
 		if err != nil {
@@ -115,9 +166,12 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		query, _ := args["query"].(string)
 		realm, _ := args["realm"].(string)
 		layer, _ := args["layer"].(string)
+		predicate, _ := args["predicate"].(string)
+		facet, _ := args["facet"].(string)
 		status, _ := args["status"].(string)
 		entries, err := store.SearchEntries(ctx, memstore.SearchOptions{
-			Query: query, Realm: realm, Layer: layer, Status: status, Limit: 20,
+			Query: query, Realm: realm, Layer: layer, Predicate: predicate,
+			Facet: facet, Status: status, Limit: 20,
 		})
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory search failed: %v", err))
@@ -138,6 +192,26 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 			b.WriteString(")\n")
 		}
 		return SilentResult(b.String())
+
+	case "update_state":
+		key, _ := args["key"].(string)
+		value, _ := args["value"].(string)
+		key = strings.TrimSpace(key)
+		if key == "" || strings.TrimSpace(value) == "" {
+			return ErrorResult("key and value are required for action=update_state")
+		}
+		if !allowedRelationshipKeys[key] {
+			return ErrorResult("unsupported relationship state key: " + key)
+		}
+		var expires *int64
+		if ttl, ok := args["ttl_seconds"].(float64); ok && ttl > 0 {
+			v := time.Now().Add(time.Duration(ttl * float64(time.Second))).UnixMilli()
+			expires = &v
+		}
+		if err := store.SetRelationshipWithTTL(ctx, key, value, 0.9, expires); err != nil {
+			return ErrorResult(fmt.Sprintf("memory update_state failed: %v", err))
+		}
+		return SilentResult("relationship state updated: " + key)
 
 	case "forget":
 		id, _ := args["id"].(string)

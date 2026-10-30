@@ -36,11 +36,11 @@ func TestAdd_DedupeAndConflict(t *testing.T) {
 		t.Fatalf("near duplicate = %+v, %v", near, err)
 	}
 
-	old, err := s.Add(ctx, AddInput{Text: "用户希望被称为小明", Subject: "user", Predicate: "nickname", Value: "小明"})
+	old, err := s.Add(ctx, AddInput{Text: "用户希望被称为小明", Layer: LayerProfile, Subject: "user", Predicate: "nickname", Facet: "称呼", Value: "小明"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	newer, err := s.Add(ctx, AddInput{Text: "用户希望被称为阿明", Subject: "user", Predicate: "nickname", Value: "阿明"})
+	newer, err := s.Add(ctx, AddInput{Text: "用户希望被称为阿明", Layer: LayerProfile, Subject: "user", Predicate: "nickname", Facet: "称呼", Value: "阿明"})
 	if err != nil || newer.Action != "superseded" {
 		t.Fatalf("conflict = %+v, %v", newer, err)
 	}

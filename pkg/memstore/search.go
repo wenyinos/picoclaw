@@ -51,6 +51,14 @@ func (s *Store) SearchEntries(ctx context.Context, opts SearchOptions) ([]Entry,
 		where = append(where, "scope=?")
 		args = append(args, opts.Scope)
 	}
+	if opts.Predicate != "" {
+		where = append(where, "predicate=?")
+		args = append(args, opts.Predicate)
+	}
+	if opts.Facet != "" {
+		where = append(where, "facet=?")
+		args = append(args, opts.Facet)
+	}
 
 	limit := opts.Limit
 	if limit <= 0 {
@@ -94,6 +102,9 @@ func (s *Store) SearchEntries(ctx context.Context, opts SearchOptions) ([]Entry,
 		}
 
 		similarity := queryRelevance(queryNorm, e.Normalized)
+		if similarity <= 0 {
+			similarity = queryRelevance(queryNorm, Normalize(e.Predicate+" "+e.Facet))
+		}
 		if similarity <= 0 {
 			continue
 		}
@@ -179,9 +190,9 @@ func repairWhere(filter RepairFilter) (string, []any) {
 		args = append(args, filter.Audience)
 	}
 	if q := strings.TrimSpace(filter.Query); q != "" {
-		where = append(where, "(text LIKE ? OR value LIKE ? OR subject LIKE ?)")
+		where = append(where, "(text LIKE ? OR value LIKE ? OR subject LIKE ? OR predicate LIKE ? OR facet LIKE ?)")
 		like := "%" + q + "%"
-		args = append(args, like, like, like)
+		args = append(args, like, like, like, like, like)
 	}
 	return strings.Join(where, " AND "), args
 }
