@@ -93,7 +93,7 @@ Open `/memory` in the launcher:
 
 - Overview: counts, database size, relationship state, archival action.
 - Database migration: schema version, empty predicates, relationship count, one-click backup and migration.
-- Memory library: server-side pagination (100 per page), search, filter, edit, archive, restore.
+- Memory library: server-side pagination (100 per page), search, filter, edit, archive, restore; fixed table columns and an independently scrollable detail panel.
 - Review: confirm real, mark fictional, mark work, ignore.
 - Relationship and persona: names, stage, anniversaries, boundaries, persona versions; persona realm / audience / scope.
 - Settings: budget, auto-extraction, private channels, import.

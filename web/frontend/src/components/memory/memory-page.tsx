@@ -47,7 +47,7 @@ function fmtDate(ms?: number) {
 
 function badge(value: string) {
   return (
-    <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-[11px]">
+    <span className="bg-muted text-muted-foreground inline-block max-w-full truncate rounded-full px-2 py-0.5 align-bottom text-[11px] whitespace-nowrap">
       {value}
     </span>
   )
@@ -343,7 +343,13 @@ function EntriesTab({
         </div>
 
         <div ref={listRef} className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-left text-sm">
+          <table className="w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-[44%]" />
+              <col className="w-[30%]" />
+              <col className="w-[10%]" />
+              <col className="w-[16%]" />
+            </colgroup>
             <thead className="bg-muted sticky top-0 z-10">
               <tr>
                 <th className="p-2">内容</th>
@@ -359,16 +365,23 @@ function EntriesTab({
                   className="hover:bg-muted/40 cursor-pointer border-t"
                   onClick={() => select(e)}
                 >
-                  <td className="max-w-[420px] truncate p-2">{e.text}</td>
-                  <td className="p-2">
-                    <div className="flex gap-1">
+                  <td className="min-w-0 truncate p-2" title={e.text}>
+                    {e.text}
+                  </td>
+                  <td className="min-w-0 p-2">
+                    <div className="flex min-w-0 flex-wrap gap-1">
                       {badge(e.realm)}
                       {badge(e.layer)}
+                      {e.predicate && e.predicate !== "待分类"
+                        ? badge(e.predicate)
+                        : null}
                       {e.facet ? badge(e.facet) : null}
                     </div>
                   </td>
-                  <td className="p-2">{e.importance.toFixed(2)}</td>
-                  <td className="p-2">{badge(e.status)}</td>
+                  <td className="p-2 whitespace-nowrap">
+                    {e.importance.toFixed(2)}
+                  </td>
+                  <td className="p-2 whitespace-nowrap">{badge(e.status)}</td>
                 </tr>
               ))}
               {entries.length === 0 && (
@@ -411,7 +424,7 @@ function EntriesTab({
         </div>
       </div>
 
-      <div className="self-start rounded-lg border p-4 lg:sticky lg:top-4">
+      <div className="min-w-0 self-start rounded-lg border p-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:overscroll-contain">
         {!selected ? (
           <p className="text-muted-foreground text-sm">
             选择左侧条目进行编辑。
