@@ -25,7 +25,7 @@
 
 PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home server, or a $10 board. It connects to the chat apps and model providers you already use, executes tools, and keeps a workspace you own.
 
-**0.4 is built around long-term memory and continuity.** Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation. The result is an assistant that can maintain a relationship over months without turning its prompt into an ever-growing transcript.
+**0.5 is built around long-term memory and continuity.** Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation. The result is an assistant that can maintain a relationship over months without turning its prompt into an ever-growing transcript.
 
 ### Memory that lasts
 
@@ -34,6 +34,8 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 - **Real vs. fictional isolation**: role-play and story settings are stored separately and are never mixed into the user's real profile.
 - **Human review queue**: uncertain memories wait in `pending_review` and are not injected until approved.
 - **Budgeted injection**: fixed profile/relationship blocks plus query-relevant memories, capped by a token budget; boundary rules are appended outside that budget so they cannot be evicted.
+- **Schema v2 migration**: one-click upgrade from `/memory` with a `VACUUM INTO` backup; facets keep different sides of the same predicate from overwriting each other.
+- **Relationship retrieval**: relationship notes can be retrieved alongside events and procedures, capped per turn so they do not crowd out other memories.
 - **Private-channel filtering**: intimate memories are only injected into the channels you mark as private.
 
 ### A dashboard for the relationship
@@ -41,6 +43,7 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 The launcher includes a dedicated **Memory** page at `/memory`:
 
 - Overview of entry counts, database size, relationship state, and pending reviews.
+- Database migration: schema version, empty predicates, relationship count, one-click backup and upgrade.
 - Search and edit memories by realm, layer, and status.
 - Review queue to confirm real facts, mark fiction, or archive noise.
 - Relationship and persona editor with version history.
@@ -56,12 +59,12 @@ The launcher includes a dedicated **Memory** page at `/memory`:
 
 ### Faster, quieter responses
 
-0.4 also tightens the streaming path: intermediate Pico frames are throttled, the final frame is published before session persistence and compaction, WebSocket writes have deadlines, provider connections are pooled, and session appends are batched. On a local Pico WebSocket test the first visible frame arrives in under a millisecond; model time dominates.
+0.5 also tightens the streaming path: intermediate Pico frames are throttled, the final frame is published before session persistence and compaction, WebSocket writes have deadlines, provider connections are pooled, and session appends are batched. On a local Pico WebSocket test the first visible frame arrives in under a millisecond; model time dominates.
 
 ### Runs almost anywhere
 
 - x86_64, ARM64, ARMv7, RISC-V, LoongArch.
-- Linux/mipsle is not published in 0.4: the pure-Go SQLite driver does not support MIPS32.
+- Linux/mipsle is not published in 0.5: the pure-Go SQLite driver does not support MIPS32.
 - Linux, macOS, Windows, Android/Termux, Docker.
 - OpenAI-compatible APIs, Anthropic, Gemini, Bedrock, Azure, local models, and more.
 - Telegram, Discord, Slack, Feishu, WeCom, QQ, Matrix, IRC, MQTT, and a native Pico WebSocket UI.
@@ -70,7 +73,7 @@ The launcher includes a dedicated **Memory** page at `/memory`:
 
 ## Core capabilities
 
-The 0.4 memory work sits alongside PicoClaw's original assistant features:
+The 0.5 memory work sits alongside PicoClaw's original assistant features:
 
 - **Chat channels** — Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, DingTalk, LINE, Matrix, IRC, MQTT, VK, and the native Pico WebSocket UI. See [Chat apps](docs/guides/chat-apps.md).
 - **Model providers** — OpenAI-compatible APIs, Anthropic, Gemini, Bedrock, Azure, OAuth providers, and local runtimes; fallback chains and a light model for side questions. See [Providers](docs/guides/providers.md).
@@ -163,9 +166,9 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 ---
 
-## Migrating from 0.3.x to 0.4.0
+## Migrating from 0.3.x / 0.4.x to 0.5.x
 
-0.4.0 has **no automatic schema migration**. It treats `workspace/memory/memory.db` as the source of truth and no longer reads the old `MEMORY.md` at runtime. Follow these steps once per workspace:
+0.5 keeps `workspace/memory/memory.db` as the source of truth and adds schema v2. Existing 0.4.x databases are upgraded in place; there is no manual SQL step. On first open, 0.5.x creates a `VACUUM INTO` backup and upgrades the schema. The data migration runs from `/memory` → “Database migration”, or with `picoclaw memory migrate`.
 
 1. **Stop the services**
 
@@ -173,60 +176,45 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
    systemctl --user stop picoclaw picoclaw-launcher
    ```
 
-2. **Back up the old workspace**
+2. **Back up the workspace**
 
    ```bash
    cp -a ~/.picoclaw/workspace ~/.picoclaw/workspace.backup-$(date +%F)
    ```
 
-3. **Choose how to bring memory over**
-
-   - Keep the existing workspace and import its history:
-
-     ```bash
-     picoclaw memory import --from ~/.picoclaw/workspace
-     ```
-
-   - Or replace the workspace with a prepared 0.4 workspace (for example the portable archive produced by a previous migration):
-
-     ```bash
-     rm -rf ~/.picoclaw/workspace
-     tar -xzf picoclaw-workspace-0.4-portable.tar.gz -C ~/.picoclaw
-     chown -R <service-user>:<service-group> ~/.picoclaw/workspace
-     ```
-
-4. **Optionally generate a readable export and check the result**
-
-   ```bash
-   picoclaw memory render   # optional Markdown export, never read back
-   picoclaw memory audit
-   ```
-
-   `memory import` converts old `MEMORY.md` bullets into `pending_review` profile candidates and folds repetitive legacy task records.
-
-5. **Use a portable workspace path**
-
-   ```json
-   "agents": { "defaults": { "workspace": "workspace" } }
-   ```
-
-   A relative value is resolved against `PICOCLAW_HOME`; absolute paths still work.
-
-6. **Start and review**
+3. **Start 0.5.x and open the migration page**
 
    ```bash
    systemctl --user start picoclaw picoclaw-launcher
    ```
 
-   Open `http://localhost:18800/memory` and process the review queue. Confirm real facts, mark role-play as fictional, and archive expired events.
+   Open `http://localhost:18800/memory` → “Database migration” and run the migration. The CLI equivalent is:
+
+   ```bash
+   picoclaw memory migrate
+   ```
+
+   The migration is idempotent. It upgrades the schema, turns empty predicates into `待分类`, maps the reference v13–v21 relationship entries to predicate/facet, and writes a new `memory.db.backup-*` file each time.
+
+4. **Verify**
+
+   ```bash
+   sqlite3 ~/.picoclaw/workspace/memory/memory.db "PRAGMA integrity_check;"
+   ```
+
+   Also check the entry counts and that a public channel cannot see a `fictional/private` persona.
+
+5. **0.3.x workspaces only**
+
+   Run `picoclaw memory import --from ~/.picoclaw/workspace` once before or after the upgrade. The old `MEMORY.md` is never read at runtime.
 
 Notes:
 
-- The old `MEMORY.md` is never read at runtime, even when memory is disabled. Import it before deleting the old workspace if you want to keep its facts.
-- Raw session history remains in `workspace/sessions/*.jsonl` and is unchanged.
+- The v0.4.6 tag remains available; install 0.5.x to get schema v2 and the Launcher migration page.
+- Historical 0.3.x → 0.4.0 guide: [migration/0.4.0.md](docs/migration/0.4.0.md).
+- The old `MEMORY.md` is only an import source; raw session history stays in `workspace/sessions/*.jsonl`.
 - `memory.db` is WAL-mode SQLite; stop the process before copying the workspace, or run `picoclaw memory audit` once to checkpoint an idle store.
 
----
 
 ## Providers and channels
 
@@ -245,7 +233,7 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 - [Online documentation](https://wenyinos.github.io/picoclaw/)
 - [Project poster](docs/assets/picoclaw-poster.png)
 - [Long-term memory](docs/guides/memory.md) · [中文](docs/guides/memory.zh.md)
-- [Migrating from 0.3.x to 0.4.0](docs/migration/0.4.0.md)
+- [Migrating from 0.3.x / 0.4.x to 0.5.x](docs/migration/0.5.0.md)
 - [Changelog](CHANGELOG.md)
 - [Configuration](docs/guides/configuration.md)
 - [Routing and sessions](docs/guides/routing-guide.md)
@@ -257,7 +245,7 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 
 ## About this repository
 
-This repository maintains PicoClaw 0.4 with the SQLite memory system, QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
+This repository maintains PicoClaw 0.5.1 with the SQLite memory system, QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
 
 ## License
 

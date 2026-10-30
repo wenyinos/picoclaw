@@ -25,7 +25,7 @@
 
 PicoClaw 是一个可以运行在笔记本、家庭服务器或十美元开发板上的自托管 AI 助手。它接入你现有的聊天应用和模型服务，能执行工具，并把数据保存在你自己的 workspace 里。
 
-**0.4 围绕长期记忆与关系连续性设计。** 不再让模型反复改写一个 Markdown 文件，而是把记忆以结构化条目存进 SQLite，自动去重、处理冲突、区分真实事实与角色扮演，并且只把当前对话相关的部分注入提示词。这样助手可以维持数月的关系与上下文，而不会让提示词变成越来越长的流水账。
+**0.5 围绕长期记忆与关系连续性设计。** 不再让模型反复改写一个 Markdown 文件，而是把记忆以结构化条目存进 SQLite，自动去重、处理冲突、区分真实事实与角色扮演，并且只把当前对话相关的部分注入提示词。这样助手可以维持数月的关系与上下文，而不会让提示词变成越来越长的流水账。
 
 ### 能长期保存的记忆
 
@@ -34,6 +34,8 @@ PicoClaw 是一个可以运行在笔记本、家庭服务器或十美元开发�
 - **真实与虚构隔离**：角色扮演和故事设定单独保存，不会混入真实用户画像。
 - **人工审核队列**：不确定的记忆进入 `pending_review`，审核通过前不注入提示词。
 - **预算注入**：固定注入画像/关系/边界，再按当前消息检索相关记忆，总量受 token 预算限制。
+- **Schema v2 迁移**：在 `/memory` 一键升级，先 `VACUUM INTO` 备份；facet 让同一 predicate 的不同侧面不再互相覆盖。
+- **关系检索**：relationship 条目可以和事件、流程一起被检索，但单次有配额，避免挤掉其他记忆。
 - **私密渠道过滤**：亲密记忆只注入到你标记为私密的渠道。
 
 ### 面向关系的控制台
@@ -41,6 +43,7 @@ PicoClaw 是一个可以运行在笔记本、家庭服务器或十美元开发�
 Launcher 新增独立的 **记忆** 页面（`/memory`）：
 
 - 概览：条目数量、数据库大小、关系状态、待审核数量。
+- 数据库迁移：schema 版本、空 predicate、relationship 数量，一键备份升级。
 - 按领域、类型、状态搜索和编辑记忆。
 - 审核队列：确认真实事实、标记虚构、归档噪声。
 - 关系与人格编辑：称呼、阶段、纪念日、边界、人设版本。
@@ -56,12 +59,12 @@ Launcher 新增独立的 **记忆** 页面（`/memory`）：
 
 ### 更快、更安静的回答
 
-0.4 同时收紧了流式链路：Pico 中间帧限流，最终帧在会话保存和压缩之前发布，WebSocket 写操作有超时，模型连接池复用，会话追加批量落盘。本机 Pico WebSocket 测试中首个可见帧在 1ms 内到达，主要延迟来自模型本身。
+0.5 同时收紧了流式链路：Pico 中间帧限流，最终帧在会话保存和压缩之前发布，WebSocket 写操作有超时，模型连接池复用，会话追加批量落盘。本机 Pico WebSocket 测试中首个可见帧在 1ms 内到达，主要延迟来自模型本身。
 
 ### 几乎随处可跑
 
 - x86_64、ARM64、ARMv7、RISC-V、LoongArch。
-- 0.4 不再发布 Linux/mipsle：纯 Go SQLite 驱动不支持 MIPS32。
+- 0.5 不再发布 Linux/mipsle：纯 Go SQLite 驱动不支持 MIPS32。
 - Linux、macOS、Windows、Android/Termux、Docker。
 - OpenAI 兼容接口、Anthropic、Gemini、Bedrock、Azure、本地模型等。
 - Telegram、Discord、Slack、飞书、企业微信、QQ、Matrix、IRC、MQTT，以及原生 Pico WebSocket 界面。
@@ -70,7 +73,7 @@ Launcher 新增独立的 **记忆** 页面（`/memory`）：
 
 ## 核心能力
 
-0.4 的记忆能力建立在 PicoClaw 原有功能之上：
+0.5 的记忆能力建立在 PicoClaw 原有功能之上：
 
 - **聊天渠道** — Telegram、Discord、Slack、飞书/Lark、企业微信、微信、QQ、钉钉、LINE、Matrix、IRC、MQTT、VK，以及原生 Pico WebSocket 界面。见[聊天应用](../guides/chat-apps.zh.md)。
 - **模型服务** — OpenAI 兼容接口、Anthropic、Gemini、Bedrock、Azure、OAuth 服务和本地模型；支持 fallback 链和侧问题轻量模型。见[模型配置](../guides/providers.zh.md)。
@@ -162,9 +165,9 @@ picoclaw memory render
 
 ---
 
-## 从 0.3.x 迁移到 0.4.0
+## 从 0.3.x / 0.4.x 迁移到 0.5.x
 
-0.4.0 **没有自动 schema 迁移**。它只把 `workspace/memory/memory.db` 作为事实源，运行时不再读取旧的 `MEMORY.md`。每个 workspace 执行一次以下步骤：
+0.5 仍以 `workspace/memory/memory.db` 为唯一事实源，并升级到 schema v2。已有 0.4.x 数据库会原地升级，不需要手写 SQL。首次打开时，0.5.x 会先做 `VACUUM INTO` 备份，再升级表结构；数据迁移在 `/memory` → “数据库迁移”执行，或运行 `picoclaw memory migrate`。
 
 1. **停止服务**
 
@@ -172,60 +175,45 @@ picoclaw memory render
    systemctl --user stop picoclaw picoclaw-launcher
    ```
 
-2. **备份旧 workspace**
+2. **备份 workspace**
 
    ```bash
    cp -a ~/.picoclaw/workspace ~/.picoclaw/workspace.backup-$(date +%F)
    ```
 
-3. **选择迁移方式**
-
-   - 保留现有 workspace，导入历史数据：
-
-     ```bash
-     picoclaw memory import --from ~/.picoclaw/workspace
-     ```
-
-   - 或直接替换为准备好的 0.4 workspace（例如之前生成的便携归档）：
-
-     ```bash
-     rm -rf ~/.picoclaw/workspace
-     tar -xzf picoclaw-workspace-0.4-portable.tar.gz -C ~/.picoclaw
-     chown -R <service-user>:<service-group> ~/.picoclaw/workspace
-     ```
-
-4. **可选：生成可读导出并检查**
-
-   ```bash
-   picoclaw memory render   # 可选 Markdown 导出，不会被运行时读回
-   picoclaw memory audit
-   ```
-
-   `memory import` 会把旧 `MEMORY.md` 的条目转成 `pending_review` 用户画像候选，并折叠重复的历史任务记录。
-
-5. **使用可迁移的 workspace 路径**
-
-   ```json
-   "agents": { "defaults": { "workspace": "workspace" } }
-   ```
-
-   相对路径按 `PICOCLAW_HOME` 解析；绝对路径仍然可用。
-
-6. **启动并审核**
+3. **启动 0.5.x 并打开迁移页**
 
    ```bash
    systemctl --user start picoclaw picoclaw-launcher
    ```
 
-   打开 `http://localhost:18800/memory`，处理审核队列：确认真实事实、把角色扮演标记为虚构、归档过期事件。
+   打开 `http://localhost:18800/memory` → “数据库迁移”，执行迁移。命令行等价操作：
 
-注意：
+   ```bash
+   picoclaw memory migrate
+   ```
 
-- 运行时永远不会读取旧 `MEMORY.md`，即使记忆功能关闭也不会回退。如果希望保留其中的事实，请在删除旧 workspace 前执行导入。
-- 原始会话历史仍在 `workspace/sessions/*.jsonl`，格式不变。
-- `memory.db` 使用 WAL 模式；复制 workspace 前请停止进程，或先执行一次 `picoclaw memory audit` 让空闲库完成 checkpoint。
+   迁移是幂等的：升级 schema、把空 predicate 统一为“待分类”、把参考库 v13–v21 的 relationship 写入 predicate/facet，并且每次都会生成新的 `memory.db.backup-*` 备份。
 
----
+4. **验证**
+
+   ```bash
+   sqlite3 ~/.picoclaw/workspace/memory/memory.db "PRAGMA integrity_check;"
+   ```
+
+   同时检查条目数，以及公开渠道是否看不到 `fictional/private` 伴侣人设。
+
+5. **仅 0.3.x workspace**
+
+   在升级前后运行一次 `picoclaw memory import --from ~/.picoclaw/workspace`。旧 `MEMORY.md` 运行时永远不会被读取。
+
+说明：
+
+- v0.4.6 tag 仍然保留；安装 0.5.x 才能获得 schema v2 和 Launcher 迁移页。
+- 历史 0.3.x → 0.4.0 迁移文档：[migration/0.4.0.zh.md](../migration/0.4.0.zh.md)。
+- 旧 `MEMORY.md` 只作为导入源；原始会话历史仍在 `workspace/sessions/*.jsonl`。
+- `memory.db` 是 WAL 模式 SQLite；复制 workspace 前先停进程，或运行一次 `picoclaw memory audit` checkpoint。
+
 
 ## 模型与渠道
 
@@ -244,7 +232,7 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 - [在线文档](https://wenyinos.github.io/picoclaw/)
 - [项目海报](../assets/picoclaw-poster.png)
 - [长期记忆](../guides/memory.zh.md) · [English](../guides/memory.md)
-- [从 0.3.x 迁移到 0.4.0](../migration/0.4.0.zh.md)
+- [从 0.3.x / 0.4.x 迁移到 0.5.x](../migration/0.5.0.zh.md)
 - [变更日志](https://github.com/wenyinos/picoclaw/blob/main/CHANGELOG.md)
 - [配置指南](../guides/configuration.zh.md)
 - [路由与会话](../guides/routing-guide.md)
@@ -256,7 +244,7 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 
 ## 关于本仓库
 
-本仓库维护 PicoClaw 0.4，包含 SQLite 记忆系统、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
+本仓库维护 PicoClaw 0.5.1，包含 SQLite 记忆系统、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
 
 ## 许可证
 

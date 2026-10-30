@@ -113,14 +113,14 @@ picoclaw memory render   # 可选 Markdown 导出，不会被运行时读回
 
 `memory import` 是唯一会读取旧 `MEMORY.md` 的命令；运行时不读取。
 
-## 从 0.3.x 迁移
+## 从 0.3.x / 0.4.x 迁移
 
-0.3.x → 0.4.x 不做运行时迁移。新版本只读取 `memory.db`：
+0.3.x → 0.4.x 用一次 `memory import` 把旧 `MEMORY.md` 导入 SQLite。0.4.x → 0.5.x 不需要手写 SQL：首次打开记忆库会先备份并升级 schema v2，数据迁移在 `/memory` → “数据库迁移”执行，或运行 `picoclaw memory migrate`。
 
 1. 停止 gateway 与 launcher。
 2. 备份旧 `workspace/memory`。
-3. 使用新 workspace，并运行一次 `memory import` 导入旧任务记录和摘要；也可以在替换前导入。
-4. 启动后在 `/memory` 审核待确认条目。
+3. 启动 0.5.x，打开 `/memory` → “数据库迁移”执行迁移；0.3.x 旧 workspace 先运行一次 `memory import`。
+4. 用 `PRAGMA integrity_check` 和条目数验证；检查公开渠道看不到 `fictional/private` 伴侣人设。
 
 ## API
 

@@ -113,14 +113,14 @@ picoclaw memory render   # optional Markdown export, never read back
 
 `memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does.
 
-## Migrating from 0.3.x
+## Migrating from 0.3.x / 0.4.x
 
-There is no runtime schema migration. New versions only read `memory.db`:
+0.3.x → 0.4.x used a one-time `memory import` to move the old `MEMORY.md` into SQLite. 0.4.x → 0.5.x needs no manual SQL: the first open backs up the database and upgrades it to schema v2. Run the data migration from `/memory` → “Database migration”, or with `picoclaw memory migrate`.
 
 1. Stop the gateway and launcher.
 2. Back up the old `workspace/memory`.
-3. Use the new workspace and run `memory import` once, or import before replacing.
-4. Start the service and review pending entries at `/memory`.
+3. Start 0.5.x and run the migration from `/memory` → “Database migration”; for a 0.3.x workspace, run `memory import` once first.
+4. Verify with `PRAGMA integrity_check` and entry counts; check that a public channel cannot see a `fictional/private` persona.
 
 ## API
 
