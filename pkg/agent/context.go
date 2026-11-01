@@ -923,15 +923,18 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 
 		// Fixed memory blocks plus query-relevant memories. Both are filtered
 		// by audience/channel here, where the current channel is known.
+		fixedUsage := memstore.FixedUsage{}
 		if cb.longTerm != nil && cb.longTermCfg.Enabled {
 			fixedBudget := cb.longTermCfg.BudgetTokens * 45 / 100
 			if fixedBudget <= 0 {
 				fixedBudget = 600
 			}
-			if fixed := cb.longTerm.BuildFixedContext(
+			fixed, usage := cb.longTerm.BuildFixedContext(
 				context.Background(), fixedBudget, cb.longTermCfg.InjectFictional,
 				req.Channel, cb.longTermCfg.PrivateChannels,
-			); fixed != "" {
+			)
+			fixedUsage = usage
+			if fixed != "" {
 				fixedPart := PromptPart{
 					ID:      "context.memory.fixed",
 					Layer:   PromptLayerContext,
@@ -948,9 +951,9 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 		}
 
 		if cb.longTerm != nil && cb.longTermCfg.Enabled && strings.TrimSpace(req.CurrentMessage) != "" {
-			budget := cb.longTermCfg.BudgetTokens * 55 / 100
-			if budget <= 0 {
-				budget = 600
+			budget := cb.longTermCfg.BudgetTokens - fixedUsage.TotalTokens
+			if budget < 200 {
+				budget = 200
 			}
 			if retrieval := cb.longTerm.BuildRetrievalContext(
 				context.Background(), req.CurrentMessage, req.Channel, budget,

@@ -154,7 +154,8 @@ func NewAgentInstance(
 		toolsRegistry.Register(tools.NewListDirTool(workspace, readRestrict, allowReadPaths))
 	}
 	if cfg.Memory.Enabled {
-		toolsRegistry.Register(tools.NewMemoryTool(workspace, cfg.Memory.DBPath, cfg.Memory.ReviewRequired))
+		toolsRegistry.Register(tools.NewMemoryTool(workspace, cfg.Memory.DBPath, cfg.Memory.ReviewRequired).
+			WithChannels(cfg.Memory.PrivateChannels, cfg.Memory.InjectFictional))
 	}
 	if cfg.Tools.IsToolEnabled("exec") {
 		execTool, err := tools.NewExecToolWithConfig(workspace, restrict, cfg, allowReadPaths)

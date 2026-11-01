@@ -27,6 +27,13 @@ var allowedPredicates = map[string]bool{
 	"birthday": true, "anniversary": true, "timezone": true,
 	"language": true, "occupation": true, "city": true,
 	"称呼": true, "阶段": true, "日期": true,
+
+	// Already used by the reference database. Without these, any Update would
+	// silently downgrade them to 待分类.
+	"助手人设": true, "系统架构": true, "备份规范": true, "场景": true, "世界观": true,
+
+	// Introduced with schema v3.
+	"日常层": true, "道具": true, "记忆加载机制": true,
 }
 
 var scalarPredicates = map[string]bool{
@@ -54,4 +61,22 @@ func NormalizePredicate(v string) string {
 
 func isScalarPredicate(v string) bool {
 	return scalarPredicates[strings.TrimSpace(v)]
+}
+
+// normalizePredicateTraced normalizes a predicate and keeps the original value
+// in attributes when it was unknown. Losing the original text made later
+// reclassification guesswork.
+func normalizePredicateTraced(v string, attrs *map[string]any) string {
+	orig := strings.TrimSpace(v)
+	normalized := NormalizePredicate(orig)
+	if normalized != "待分类" || orig == "" || orig == "待分类" {
+		return normalized
+	}
+	if *attrs == nil {
+		*attrs = map[string]any{}
+	}
+	if _, ok := (*attrs)["original_predicate"]; !ok {
+		(*attrs)["original_predicate"] = orig
+	}
+	return normalized
 }

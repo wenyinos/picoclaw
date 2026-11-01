@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
@@ -88,7 +89,8 @@ func (p *Pipeline) Finalize(
 
 	// Extract durable memories after the response path; failures never affect
 	// the turn result.
-	p.al.extractMemoryAsync(ts.agent.Workspace, p.Cfg.Memory, ts.userMessage, finalContent, ts.sessionKey)
+	p.al.extractMemoryAsync(ts.agent.Workspace, p.Cfg.Memory, ts.userMessage, finalContent,
+		ts.sessionKey, time.Now())
 
 	// If streaming never became visible, keep the legacy Pico interim publish path
 	// so the final answer is still delivered outside normal SendResponse.

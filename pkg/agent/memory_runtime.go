@@ -30,9 +30,13 @@ func (al *AgentLoop) extractMemoryAsync(
 	workspace string,
 	cfg config.MemoryConfig,
 	userText, assistantText, sessionKey string,
+	turnAt time.Time,
 ) {
 	if !cfg.Enabled || !cfg.AutoExtract || strings.TrimSpace(userText) == "" {
 		return
+	}
+	if turnAt.IsZero() {
+		turnAt = time.Now()
 	}
 	store, err := memstore.OpenForWorkspace(workspace, memstoreConfigFrom(cfg))
 	if err != nil {
@@ -45,7 +49,7 @@ func (al *AgentLoop) extractMemoryAsync(
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		results, err := store.ExtractTurn(ctx, userText, assistantText, sessionKey, cfg.ReviewRequired)
+		results, err := store.ExtractTurnAt(ctx, userText, assistantText, sessionKey, turnAt, cfg.ReviewRequired)
 		if err != nil {
 			logger.DebugCF("memory", "extraction failed", map[string]any{"error": err.Error()})
 			return

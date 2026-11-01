@@ -3,8 +3,6 @@ package memstore
 import (
 	"context"
 	"fmt"
-	"os"
-	"sort"
 	"strings"
 	"time"
 )
@@ -24,42 +22,10 @@ func queryRelevance(queryNorm, textNorm string) float64 {
 // filtering unless the caller explicitly asks for an audience. This lets the
 // memory tool find profile, relationship, boundary, and private memories.
 func (s *Store) SearchEntries(ctx context.Context, opts SearchOptions) ([]Entry, error) {
-	where := []string{"1=1"}
-	args := []any{}
-
-	if opts.Realm != "" {
-		where = append(where, "realm=?")
-		args = append(args, opts.Realm)
+	scored, err := s.retrieveCandidates(ctx, opts, true)
+	if err != nil {
+		return nil, err
 	}
-	if opts.Layer != "" {
-		where = append(where, "layer=?")
-		args = append(args, opts.Layer)
-	}
-	status := strings.TrimSpace(opts.Status)
-	if status == "" {
-		status = StatusActive
-	}
-	if !strings.EqualFold(status, "all") {
-		where = append(where, "status=?")
-		args = append(args, status)
-	}
-	if opts.Audience != "" {
-		where = append(where, "audience=?")
-		args = append(args, opts.Audience)
-	}
-	if opts.Scope != "" {
-		where = append(where, "scope=?")
-		args = append(args, opts.Scope)
-	}
-	if opts.Predicate != "" {
-		where = append(where, "predicate=?")
-		args = append(args, opts.Predicate)
-	}
-	if opts.Facet != "" {
-		where = append(where, "facet=?")
-		args = append(args, opts.Facet)
-	}
-
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 50
@@ -71,63 +37,13 @@ func (s *Store) SearchEntries(ctx context.Context, opts SearchOptions) ([]Entry,
 	if offset < 0 {
 		offset = 0
 	}
-
-	queryNorm := Normalize(opts.Query)
-	sql := `SELECT ` + entryColumns + ` FROM entries WHERE ` + strings.Join(where, " AND ")
-	if queryNorm == "" {
-		sql += ` ORDER BY importance DESC, updated_at DESC LIMIT ? OFFSET ?`
-		args = append(args, limit, offset)
+	if offset >= len(scored) {
+		return []Entry{}, nil
 	}
-
-	rows, err := s.db.QueryContext(ctx, sql, args...)
-	if err != nil {
-		return nil, err
+	scored = scored[offset:]
+	if len(scored) > limit {
+		scored = scored[:limit]
 	}
-	defer rows.Close()
-
-	now := time.Now().UnixMilli()
-	scored := make([]scoredEntry, 0)
-	for rows.Next() {
-		e, err := scanEntry(rows)
-		if err != nil {
-			return nil, err
-		}
-		recency := recencyScore(e.UpdatedAt, now)
-		if queryNorm == "" {
-			scored = append(scored, scoredEntry{
-				entry: e,
-				score: e.Importance*0.6 + recency*0.2 + e.EmotionalWeight*0.2,
-			})
-			continue
-		}
-
-		similarity := queryRelevance(queryNorm, e.Normalized)
-		if similarity <= 0 {
-			similarity = queryRelevance(queryNorm, Normalize(e.Predicate+" "+e.Facet))
-		}
-		if similarity <= 0 {
-			continue
-		}
-		scored = append(scored, scoredEntry{
-			entry: e,
-			score: similarity*0.6 + e.Importance*0.2 + recency*0.1 + e.EmotionalWeight*0.1,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	if queryNorm != "" {
-		sort.SliceStable(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
-		if offset >= len(scored) {
-			return []Entry{}, nil
-		}
-		scored = scored[offset:]
-		if len(scored) > limit {
-			scored = scored[:limit]
-		}
-	}
-
 	out := make([]Entry, 0, len(scored))
 	for _, item := range scored {
 		out = append(out, item.entry)
@@ -255,11 +171,10 @@ func (s *Store) ApplyRepair(ctx context.Context, filter RepairFilter, target Rep
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	backupPath := s.path + ".backup-" + time.Now().Format("20060102-150405")
-	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, backupPath); err != nil {
-		return 0, "", fmt.Errorf("backup before repair: %w", err)
+	backupPath, err := s.backupWithRotation(ctx, "repair")
+	if err != nil {
+		return 0, "", err
 	}
-	_ = os.Chmod(backupPath, 0o600)
 
 	set := "realm=?, layer=?, updated_at=?"
 	updateArgs := []any{target.Realm, target.Layer, time.Now().UnixMilli()}

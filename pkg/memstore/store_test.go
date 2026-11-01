@@ -69,7 +69,7 @@ func TestContextAndAudience(t *testing.T) {
 		}
 	}
 
-	fixed := s.BuildFixedContext(ctx, 800, false, "pico", []string{"pico"})
+	fixed := mustFixed(s.BuildFixedContext(ctx, 800, false, "pico", []string{"pico"}))
 	for _, want := range []string{"角色设定", "关系状态", "小P", "乌龙茶", "不要在工作群"} {
 		if !strings.Contains(fixed, want) {
 			t.Fatalf("fixed context missing %q: %s", want, fixed)
@@ -180,5 +180,26 @@ func TestExtractTurn(t *testing.T) {
 	pending, _ := s.List(ctx, SearchOptions{Realm: RealmFictional, Status: StatusPending, Limit: 10})
 	if len(pending) != 0 {
 		t.Fatalf("roleplay keywords should not create pending memories: %+v", pending)
+	}
+}
+
+func TestEntryColumnsAndPlaceholdersMatch(t *testing.T) {
+	cols := strings.Split(entryColumns, ",")
+	if len(cols) != strings.Count(entryPlaceholders, "?") {
+		t.Fatalf("columns = %d, placeholders = %d", len(cols), strings.Count(entryPlaceholders, "?"))
+	}
+	// A round trip proves scanEntry has exactly one target per column.
+	s := newTestStore(t)
+	ctx := context.Background()
+	added, err := s.Add(ctx, AddInput{Text: "列数与占位符一致性", Layer: LayerProcedural})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, added.Entry.ID)
+	if err != nil {
+		t.Fatalf("Get after Add: %v", err)
+	}
+	if got.Text != "列数与占位符一致性" {
+		t.Fatalf("round trip text = %q", got.Text)
 	}
 }

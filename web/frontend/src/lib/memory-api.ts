@@ -60,6 +60,10 @@ export interface MemoryMigrationStatus {
   empty_relationship_facet: number
   relationship: number
   personas: number
+  pinned_core: number
+  relations: number
+  fts_rows: number
+  fts_tokenizer?: string
   total: number
   active: number
   db_path: string
@@ -76,6 +80,14 @@ export interface MemoryMigrationReport {
   empty_predicate: number
   updated_predicates: number
   mapped_relationships: number
+  mapped_predicates: number
+  reclassified: number
+  restored: number
+  backfilled_sources: number
+  dropped_orphan_sources: number
+  dropped_orphan_supersedes: number
+  fts_rows: number
+  fts_tokenizer: string
   backup: string
 }
 

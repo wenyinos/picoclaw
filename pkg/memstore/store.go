@@ -162,7 +162,8 @@ func (s *Store) loadRevision() error {
 	var raw string
 	err := s.db.QueryRow(`SELECT value FROM meta WHERE key='revision'`).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		if _, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES('revision','0'),('schema_version','2')`); err != nil {
+		if _, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES('revision','0'),('schema_version',?)`,
+			fmt.Sprintf("%d", CurrentSchemaVersion)); err != nil {
 			return fmt.Errorf("memstore: init meta: %w", err)
 		}
 		return nil
@@ -211,7 +212,15 @@ func (s *Store) bumpRevision(ctx context.Context, tx *sql.Tx) error {
 var entryColumns = `id, realm, layer, scope, audience, subject, predicate, facet, value, text,
 	normalized, content_hash, simhash, template_key, cluster_id, occurrences,
 	importance, emotional_weight, valence, confidence, status, event_at, expires_at,
-	created_at, updated_at, last_used_at, use_count, attributes`
+	created_at, updated_at, last_used_at, use_count, attributes,
+	event_time_precision, event_timezone, event_time_source, valid_from, valid_to, pinned_core`
+
+// entryPlaceholders is derived from entryColumns so the INSERT can never drift
+// out of sync with the SELECT list (the old hardcoded 28 "?" bug).
+var entryPlaceholders = func() string {
+	n := strings.Count(entryColumns, ",") + 1
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}()
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -220,7 +229,8 @@ type scanner interface {
 func scanEntry(row scanner) (Entry, error) {
 	var e Entry
 	var simhash int64
-	var eventAt, expiresAt, lastUsed sql.NullInt64
+	var eventAt, expiresAt, lastUsed, validFrom, validTo sql.NullInt64
+	var pinned int
 	var attrs string
 	err := row.Scan(
 		&e.ID, &e.Realm, &e.Layer, &e.Scope, &e.Audience, &e.Subject, &e.Predicate, &e.Facet,
@@ -228,6 +238,8 @@ func scanEntry(row scanner) (Entry, error) {
 		&e.ClusterID, &e.Occurrences, &e.Importance, &e.EmotionalWeight, &e.Valence,
 		&e.Confidence, &e.Status, &eventAt, &expiresAt, &e.CreatedAt, &e.UpdatedAt,
 		&lastUsed, &e.UseCount, &attrs,
+		&e.EventTimePrecision, &e.EventTimezone, &e.EventTimeSource,
+		&validFrom, &validTo, &pinned,
 	)
 	if err != nil {
 		return Entry{}, err
@@ -245,6 +257,15 @@ func scanEntry(row scanner) (Entry, error) {
 		v := lastUsed.Int64
 		e.LastUsedAt = &v
 	}
+	if validFrom.Valid {
+		v := validFrom.Int64
+		e.ValidFrom = &v
+	}
+	if validTo.Valid {
+		v := validTo.Int64
+		e.ValidTo = &v
+	}
+	e.PinnedCore = pinned == 1
 	e.Attributes = map[string]any{}
 	_ = json.Unmarshal([]byte(attrs), &e.Attributes)
 	return e, nil
@@ -257,7 +278,7 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	}
 	in.Realm = normalizeRealm(in.Realm)
 	in.Layer = normalizeLayer(in.Layer)
-	in.Predicate = NormalizePredicate(in.Predicate)
+	in.Predicate = normalizePredicateTraced(in.Predicate, &in.Attributes)
 	in.Facet = strings.TrimSpace(in.Facet)
 	if in.Scope == "" {
 		in.Scope = "user"
@@ -267,6 +288,16 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	}
 	if in.Confidence <= 0 {
 		in.Confidence = 0.7
+	}
+	if in.EventTimePrecision == "" {
+		in.EventTimePrecision = PrecisionUnknown
+	}
+	if in.EventTimeSource == "" {
+		if in.SourceType == SourceInferred {
+			in.EventTimeSource = "model_inferred"
+		} else {
+			in.EventTimeSource = "user_stated"
+		}
 	}
 	now := time.Now().UnixMilli()
 	norm := Normalize(in.Text)
@@ -281,6 +312,20 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// 0. forget tombstone: a forgotten sentence must not come back just because
+	// the next turn extracts the same words again.
+	if !in.BypassForgetTombstone {
+		var forgotten int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM memory_operations WHERE operation='forget' AND content_hash=?`,
+			hash).Scan(&forgotten); err != nil {
+			return nil, err
+		}
+		if forgotten > 0 {
+			return &AddResult{Action: "blocked_forget"}, nil
+		}
+	}
 
 	// 1. exact duplicate, including pending/archived rows so repeated imports
 	// cannot create copies of the same memory. Explicit supersede skips the
@@ -373,17 +418,21 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	}
 
 	// 4. conflict: explicit supersede wins; automatic supersede is limited to
-	// scalar profile facts with an explicit facet.
-	supersededID, err := resolveSupersededID(ctx, tx, in, now)
+	// scalar profile facts with an explicit facet. A pinned core entry is never
+	// replaced automatically: the new value waits for review instead.
+	supersededID, pinnedBlockID, err := resolveSupersededID(ctx, tx, in, now)
 	if err != nil {
 		return nil, err
 	}
 
 	status := strings.TrimSpace(in.ForceStatus)
 	if status == "" {
-		if in.Realm == RealmUnknown {
+		switch {
+		case pinnedBlockID != "":
 			status = StatusPending
-		} else {
+		case in.Realm == RealmUnknown:
+			status = StatusPending
+		default:
 			status = StatusActive
 		}
 	}
@@ -413,6 +462,13 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		CreatedAt:       now,
 		UpdatedAt:       now,
 		Attributes:      in.Attributes,
+
+		EventTimePrecision: in.EventTimePrecision,
+		EventTimezone:      in.EventTimezone,
+		EventTimeSource:    in.EventTimeSource,
+		ValidFrom:          in.ValidFrom,
+		ValidTo:            in.ValidTo,
+		PinnedCore:         in.PinnedCore,
 	}
 	if e.Importance == 0 {
 		e.Importance = 0.5
@@ -422,18 +478,34 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		attrs = []byte("{}")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO entries (`+entryColumns+`)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (`+entryPlaceholders+`)`,
 		e.ID, e.Realm, e.Layer, e.Scope, e.Audience, e.Subject, e.Predicate, e.Facet, e.Value,
 		e.Text, e.Normalized, e.ContentHash, e.Simhash, e.TemplateKey, e.ClusterID,
 		e.Occurrences, e.Importance, e.EmotionalWeight, e.Valence, e.Confidence,
 		e.Status, e.EventAt, e.ExpiresAt, e.CreatedAt, e.UpdatedAt, e.LastUsedAt,
-		e.UseCount, string(attrs)); err != nil {
+		e.UseCount, string(attrs),
+		e.EventTimePrecision, e.EventTimezone, e.EventTimeSource,
+		e.ValidFrom, e.ValidTo, boolInt(e.PinnedCore)); err != nil {
 		return nil, err
 	}
 	if supersededID != "" {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO supersedes(entry_id,superseded_id,created_at) VALUES(?,?,?)`,
 			e.ID, supersededID, now); err != nil {
+			return nil, err
+		}
+		if err := insertRelation(ctx, tx, Relation{
+			SourceID: e.ID, TargetID: supersededID, RelationType: RelSupersedes,
+			Confidence: 1, SourceType: SourceExplicit, CreatedAt: now,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if pinnedBlockID != "" {
+		if err := insertRelation(ctx, tx, Relation{
+			SourceID: e.ID, TargetID: pinnedBlockID, RelationType: RelContradicts,
+			Confidence: 0.8, SourceType: SourceInferred, CreatedAt: now,
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -450,54 +522,69 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	if supersededID != "" {
 		action = "superseded"
 	}
+	if pinnedBlockID != "" {
+		action = "pending_review"
+	}
 	return &AddResult{Action: action, Entry: &e, ExistingID: supersededID}, nil
 }
 
-func resolveSupersededID(ctx context.Context, tx *sql.Tx, in AddInput, now int64) (string, error) {
+// resolveSupersededID returns the entry that the new write replaces and, when
+// an automatic conflict hit a pinned core entry, the pinned entry that blocked
+// the replacement. Pinned entries can only be replaced through Correct.
+func resolveSupersededID(ctx context.Context, tx *sql.Tx, in AddInput, now int64) (string, string, error) {
 	if id := strings.TrimSpace(in.SupersedesID); id != "" {
 		var status string
-		if err := tx.QueryRowContext(ctx, `SELECT status FROM entries WHERE id=?`, id).Scan(&status); err != nil {
+		var pinned int
+		if err := tx.QueryRowContext(ctx, `SELECT status, pinned_core FROM entries WHERE id=?`, id).
+			Scan(&status, &pinned); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return "", fmt.Errorf("memstore: supersedes target %q not found", id)
+				return "", "", fmt.Errorf("memstore: supersedes target %q not found", id)
 			}
-			return "", err
+			return "", "", err
 		}
 		if status != StatusActive {
-			return "", fmt.Errorf("memstore: supersedes target %q is not active", id)
+			return "", "", fmt.Errorf("memstore: supersedes target %q is not active", id)
+		}
+		if pinned == 1 && !in.Force {
+			return "", "", fmt.Errorf("memstore: entry %q is pinned_core, use memory.correct with force", id)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE entries SET status='superseded', updated_at=? WHERE id=?`, now, id); err != nil {
-			return "", err
+			`UPDATE entries SET status='superseded', valid_to=?, updated_at=? WHERE id=?`, now, now, id); err != nil {
+			return "", "", err
 		}
-		return id, nil
+		return id, "", nil
 	}
 
 	if in.Layer != LayerProfile || strings.TrimSpace(in.Facet) == "" ||
 		strings.TrimSpace(in.Value) == "" || strings.TrimSpace(in.Subject) == "" ||
 		!isScalarPredicate(in.Predicate) {
-		return "", nil
+		return "", "", nil
 	}
 
 	var oldID, oldValue string
+	var oldPinned int
 	err := tx.QueryRowContext(ctx,
-		`SELECT id, value FROM entries
+		`SELECT id, value, pinned_core FROM entries
 		 WHERE status='active' AND realm=? AND subject=? AND predicate=? AND facet=?
 		 ORDER BY updated_at DESC LIMIT 1`,
-		in.Realm, in.Subject, in.Predicate, in.Facet).Scan(&oldID, &oldValue)
+		in.Realm, in.Subject, in.Predicate, in.Facet).Scan(&oldID, &oldValue, &oldPinned)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return "", "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if Normalize(oldValue) == Normalize(in.Value) {
-		return "", nil
+		return "", "", nil
+	}
+	if oldPinned == 1 {
+		return "", oldID, nil
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE entries SET status='superseded', updated_at=? WHERE id=?`, now, oldID); err != nil {
-		return "", err
+		`UPDATE entries SET status='superseded', valid_to=?, updated_at=? WHERE id=?`, now, now, oldID); err != nil {
+		return "", "", err
 	}
-	return oldID, nil
+	return oldID, "", nil
 }
 
 func mergeInto(ctx context.Context, tx *sql.Tx, id string, in AddInput, now int64) error {
@@ -513,11 +600,36 @@ func mergeInto(ctx context.Context, tx *sql.Tx, id string, in AddInput, now int6
 func insertSource(ctx context.Context, tx *sql.Tx, entryID string, in AddInput, now int64) error {
 	sourceType := in.SourceType
 	if sourceType == "" {
-		sourceType = "manual"
+		sourceType = SourceManual
+	}
+	confidence := in.Confidence
+	if confidence <= 0 {
+		confidence = 0.8
 	}
 	_, err := tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO sources(entry_id,source_type,source_id,session_key,created_at)
-		 VALUES(?,?,?,?,?)`, entryID, sourceType, in.SourceID, in.SessionKey, now)
+		`INSERT OR IGNORE INTO sources(entry_id,conversation_id,session_key,message_id,
+			source_id,source_type,evidence_text,extraction_model,prompt_version,
+			confidence,user_confirmed,created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		entryID, in.ConversationID, in.SessionKey, in.MessageID,
+		in.SourceID, sourceType, truncateRunes(strings.TrimSpace(in.EvidenceText), 120),
+		in.ModelID, in.PromptVersion, confidence, boolInt(in.SourceConfirmed), now)
+	return err
+}
+
+// insertRelation stores a typed edge, ignoring duplicates.
+func insertRelation(ctx context.Context, tx *sql.Tx, r Relation) error {
+	if r.Confidence <= 0 {
+		r.Confidence = 1
+	}
+	if r.SourceType == "" {
+		r.SourceType = SourceInferred
+	}
+	_, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO memory_relations
+			(source_id,target_id,relation_type,confidence,source_type,created_at)
+		 VALUES(?,?,?,?,?,?)`,
+		r.SourceID, r.TargetID, r.RelationType, r.Confidence, r.SourceType, r.CreatedAt)
 	return err
 }
 
@@ -529,12 +641,25 @@ func (s *Store) Get(ctx context.Context, id string) (*Entry, error) {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT entry_id,source_type,source_id,session_key,created_at FROM sources WHERE entry_id=? ORDER BY created_at`, id)
+		`SELECT id,entry_id,conversation_id,session_key,message_id,source_id,source_type,
+		        evidence_text,extraction_model,prompt_version,confidence,user_confirmed,created_at
+		 FROM sources WHERE entry_id=? ORDER BY created_at`, id)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var src Source
-			if err := rows.Scan(&src.EntryID, &src.SourceType, &src.SourceID, &src.SessionKey, &src.CreatedAt); err == nil {
+			var messageID sql.NullInt64
+			var confirmed int
+			if err := rows.Scan(
+				&src.ID, &src.EntryID, &src.ConversationID, &src.SessionKey, &messageID,
+				&src.SourceID, &src.SourceType, &src.EvidenceText, &src.ExtractionModel,
+				&src.PromptVersion, &src.Confidence, &confirmed, &src.CreatedAt,
+			); err == nil {
+				if messageID.Valid {
+					v := messageID.Int64
+					src.MessageID = &v
+				}
+				src.UserConfirmed = confirmed == 1
 				e.Sources = append(e.Sources, src)
 			}
 		}
@@ -644,8 +769,39 @@ func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, err
 		args = append(args, strings.TrimSpace(in.Subject))
 	}
 	if in.Predicate != "" {
+		orig := strings.TrimSpace(in.Predicate)
+		normalized := NormalizePredicate(orig)
 		sets = append(sets, "predicate=?")
-		args = append(args, NormalizePredicate(in.Predicate))
+		args = append(args, normalized)
+		if normalized == "待分类" && orig != "" && orig != "待分类" {
+			attrs := map[string]any{}
+			var existing string
+			_ = tx.QueryRowContext(ctx, `SELECT attributes FROM entries WHERE id=?`, id).Scan(&existing)
+			_ = json.Unmarshal([]byte(existing), &attrs)
+			if _, ok := attrs["original_predicate"]; !ok {
+				attrs["original_predicate"] = orig
+			}
+			raw, _ := json.Marshal(attrs)
+			sets = append(sets, "attributes=?")
+			args = append(args, string(raw))
+		}
+	}
+	if in.Attributes != nil {
+		raw, _ := json.Marshal(in.Attributes)
+		sets = append(sets, "attributes=?")
+		args = append(args, string(raw))
+	}
+	if in.PinnedCore {
+		sets = append(sets, "pinned_core=?")
+		args = append(args, boolInt(true))
+	}
+	if in.ValidFrom != nil {
+		sets = append(sets, "valid_from=?")
+		args = append(args, *in.ValidFrom)
+	}
+	if in.ValidTo != nil {
+		sets = append(sets, "valid_to=?")
+		args = append(args, *in.ValidTo)
 	}
 	if in.Facet != "" {
 		sets = append(sets, "facet=?")

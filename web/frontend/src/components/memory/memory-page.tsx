@@ -795,7 +795,7 @@ function MigrationTab({
   const applyMigration = () => {
     if (
       !window.confirm(
-        "将升级 memory.db 到 schema v2，并把空 predicate 标记为“待分类”。执行前会自动 VACUUM INTO 备份，不会删除条目。继续吗？",
+        "将把 memory.db 从 v1/v2 升级到 schema v3：增加时间语义、证据链、关系网、治理日志和 FTS 索引，并执行存量数据修复。执行前会自动 VACUUM INTO 备份，只改分类和新增结构，不删除条目。继续吗？",
       )
     ) {
       return
@@ -806,7 +806,7 @@ function MigrationTab({
       .then((r) => {
         setReport(r)
         onNotice(
-          `迁移完成：schema v${r.schema_version}，处理空 predicate ${r.updated_predicates} 条，备份：${r.backup}`,
+          `迁移完成：schema v${r.schema_version}，归位 predicate ${r.updated_predicates} 条，改判 ${r.reclassified} 条，恢复 ${r.restored} 条，FTS ${r.fts_rows} 行，备份：${r.backup}`,
         )
         load()
       })
@@ -826,6 +826,12 @@ function MigrationTab({
     },
     { label: "relationship", value: status?.relationship ?? 0 },
     { label: "personas", value: status?.personas ?? 0 },
+    { label: "pinned 核心", value: status?.pinned_core ?? 0 },
+    { label: "关系边", value: status?.relations ?? 0 },
+    {
+      label: "FTS 行数",
+      value: `${status?.fts_rows ?? 0}${status?.fts_tokenizer ? ` (${status.fts_tokenizer})` : ""}`,
+    },
     {
       label: "数据库大小",
       value: `${Math.round((status?.db_size ?? 0) / 1024)} KB`,
@@ -835,11 +841,13 @@ function MigrationTab({
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-lg border p-4">
-        <h2 className="text-sm font-semibold">0.4.6 数据库一键迁移</h2>
+        <h2 className="text-sm font-semibold">数据库一键迁移（v1 / v2 → v3）</h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          升级到 schema v2：增加 facet、persona 渠道字段、relationship
-          历史表，并把空 predicate 统一为“待分类”。打开本页时会先做一次 schema
-          检查并自动备份；下方按钮用于执行或重新执行数据迁移。只改分类，不删除记录。
+          schema v3 增加时间语义（event_time_precision / valid_from / valid_to）、证据链
+          sources、关系网 memory_relations、治理日志 memory_operations、场景胶囊和 FTS
+          索引；v1 数据库会在同一个事务里先补齐 v2 再升级 v3。打开本页时会先做一次
+          schema 检查并自动备份；下方按钮用于执行或重新执行迁移与存量修复。只改分类、
+          新增结构，不删除记录。
         </p>
         <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
           {stats.map((s) => (

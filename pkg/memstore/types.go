@@ -37,6 +37,41 @@ const (
 	StatusPending    = "pending_review"
 )
 
+// Time precision describes how exact an event timestamp is.
+const (
+	PrecisionExact       = "exact"
+	PrecisionDate        = "date"
+	PrecisionApproximate = "approximate"
+	PrecisionRange       = "range"
+	PrecisionNarrative   = "narrative"
+	PrecisionPlanned     = "planned"
+	PrecisionUnknown     = "unknown"
+)
+
+// Source types grade how a memory was obtained.
+const (
+	SourceExplicit     = "explicit"
+	SourceInferred     = "inferred"
+	SourceConfirmed    = "confirmed"
+	SourceManual       = "manual"
+	SourceTaskRecord   = "task_record"
+	SourceImported     = "imported"
+	SourceReclassified = "reclassified"
+)
+
+// Relation types describe edges between memories.
+const (
+	RelSupersedes   = "supersedes"
+	RelContradicts  = "contradicts"
+	RelRelatedTo    = "related_to"
+	RelCausedBy     = "caused_by"
+	RelInfluencedBy = "influenced_by"
+	RelPartOf       = "part_of"
+	RelFulfilledBy  = "fulfilled_by"
+	RelRevisitedBy  = "revisited_by"
+	RelNextScene    = "next_scene"
+)
+
 // Config controls the memory subsystem. It is copied from config.MemoryConfig.
 type Config struct {
 	Enabled               bool
@@ -95,15 +130,114 @@ type Entry struct {
 	UseCount        int            `json:"use_count"`
 	Attributes      map[string]any `json:"attributes,omitempty"`
 	Sources         []Source       `json:"sources,omitempty"`
+
+	EventTimePrecision string `json:"event_time_precision,omitempty"`
+	EventTimezone      string `json:"event_timezone,omitempty"`
+	EventTimeSource    string `json:"event_time_source,omitempty"`
+	ValidFrom          *int64 `json:"valid_from,omitempty"`
+	ValidTo            *int64 `json:"valid_to,omitempty"`
+	PinnedCore         bool   `json:"pinned_core,omitempty"`
 }
 
-// Source records where a memory came from.
+// Source records where a memory came from. It is an evidence record, not just
+// a pointer: evidence_text keeps the sentence the memory was extracted from.
 type Source struct {
-	EntryID    string `json:"entry_id"`
-	SourceType string `json:"source_type"`
-	SourceID   string `json:"source_id,omitempty"`
-	SessionKey string `json:"session_key,omitempty"`
-	CreatedAt  int64  `json:"created_at"`
+	ID              int64   `json:"id,omitempty"`
+	EntryID         string  `json:"entry_id"`
+	ConversationID  string  `json:"conversation_id,omitempty"`
+	SessionKey      string  `json:"session_key,omitempty"`
+	MessageID       *int64  `json:"message_id,omitempty"`
+	SourceID        string  `json:"source_id,omitempty"`
+	SourceType      string  `json:"source_type"`
+	EvidenceText    string  `json:"evidence_text,omitempty"`
+	ExtractionModel string  `json:"extraction_model,omitempty"`
+	PromptVersion   string  `json:"prompt_version,omitempty"`
+	Confidence      float64 `json:"confidence"`
+	UserConfirmed   bool    `json:"user_confirmed"`
+	CreatedAt       int64   `json:"created_at"`
+}
+
+// Relation is a typed edge between two memories.
+type Relation struct {
+	ID           int64   `json:"id,omitempty"`
+	SourceID     string  `json:"source_id"`
+	TargetID     string  `json:"target_id"`
+	RelationType string  `json:"relation_type"`
+	Confidence   float64 `json:"confidence"`
+	SourceType   string  `json:"source_type"`
+	CreatedAt    int64   `json:"created_at"`
+}
+
+// Cluster groups memories into a scene capsule.
+type Cluster struct {
+	ID        string `json:"id"`
+	Realm     string `json:"realm"`
+	Title     string `json:"title"`
+	Topic     string `json:"topic"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+// CapsuleItem is one memory rendered inside a scene capsule.
+type CapsuleItem struct {
+	EntryID string `json:"entry_id"`
+	Ordinal int    `json:"ordinal"`
+	Layer   string `json:"layer"`
+	Realm   string `json:"realm"`
+	Text    string `json:"text"`
+	Tokens  int    `json:"tokens"`
+}
+
+// CapsuleResult is the rendered scene capsule.
+type CapsuleResult struct {
+	ID          string        `json:"id"`
+	Title       string        `json:"title"`
+	Items       []CapsuleItem `json:"items"`
+	TotalTokens int           `json:"total_tokens"`
+	Truncated   bool          `json:"truncated"`
+}
+
+// OperationLog is one governance action. It never stores memory text.
+type OperationLog struct {
+	ID                 int64  `json:"id,omitempty"`
+	Operation          string `json:"operation"`
+	TargetEntryID      string `json:"target_entry_id,omitempty"`
+	ReplacementEntryID string `json:"replacement_entry_id,omitempty"`
+	ContentHash        string `json:"content_hash,omitempty"`
+	Reason             string `json:"reason,omitempty"`
+	AffectedCount      int    `json:"affected_count"`
+	CreatedAt          int64  `json:"created_at"`
+}
+
+// InspectResult is the evidence chain for one memory.
+type InspectResult struct {
+	Entry      Entry          `json:"entry"`
+	Sources    []Source       `json:"sources"`
+	Supersedes []Relation     `json:"supersedes"`
+	Relations  []Relation     `json:"relations"`
+	Operations []OperationLog `json:"operations"`
+	Clusters   []string       `json:"clusters"`
+}
+
+// ForgetPreview reports what a hard delete would remove.
+type ForgetPreview struct {
+	EntryID     string   `json:"entry_id"`
+	ContentHash string   `json:"content_hash"`
+	Sources     int      `json:"sources"`
+	Relations   int      `json:"relations"`
+	ClusterIDs  []string `json:"cluster_ids"`
+	Summaries   int      `json:"summaries"`
+	AlreadyGone bool     `json:"already_gone"`
+}
+
+// FixedUsage accounts for the fixed prompt block and the boundary block.
+type FixedUsage struct {
+	BaseTokens     int `json:"base_tokens"`
+	BoundaryTokens int `json:"boundary_tokens"`
+	TotalTokens    int `json:"total_tokens"`
+	BoundaryBudget int `json:"boundary_budget"`
+	BoundaryCut    int `json:"boundary_cut"`
 }
 
 // AddInput is the input to Store.Add.
@@ -130,6 +264,23 @@ type AddInput struct {
 	SourceID        string
 	SessionKey      string
 	Attributes      map[string]any
+
+	EventTimePrecision    string
+	EventTimezone         string
+	EventTimeSource       string
+	ValidFrom             *int64
+	ValidTo               *int64
+	PinnedCore            bool
+	EvidenceText          string
+	ModelID               string
+	PromptVersion         string
+	ConversationID        string
+	MessageID             *int64
+	SourceConfirmed       bool
+	BypassForgetTombstone bool
+	// Force allows Correct to replace a pinned_core entry. Automatic
+	// extraction never sets it.
+	Force bool
 }
 
 // AddResult reports how a write was resolved.

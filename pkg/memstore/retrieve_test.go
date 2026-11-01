@@ -22,7 +22,7 @@ func TestBuildFixedContext_BoundaryAlwaysIncluded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := s.BuildFixedContext(ctx, 20, false, "pico", []string{"pico"})
+	got := mustFixed(s.BuildFixedContext(ctx, 20, false, "pico", []string{"pico"}))
 	if !strings.Contains(got, "BOUNDARY_SENTINEL") {
 		t.Fatalf("boundary was evicted by the fixed-block budget: %s", got)
 	}
@@ -41,7 +41,7 @@ func TestBuildFixedContext_BoundaryAudienceAndFictionalFilter(t *testing.T) {
 		}
 	}
 
-	public := s.BuildFixedContext(ctx, 600, false, "", nil)
+	public := mustFixed(s.BuildFixedContext(ctx, 600, false, "", nil))
 	if !strings.Contains(public, "BOUNDARY_PUBLIC") {
 		t.Fatalf("public boundary missing: %s", public)
 	}
@@ -49,7 +49,7 @@ func TestBuildFixedContext_BoundaryAudienceAndFictionalFilter(t *testing.T) {
 		t.Fatalf("private/fictional boundary leaked into public context: %s", public)
 	}
 
-	private := s.BuildFixedContext(ctx, 600, false, "pico", []string{"pico"})
+	private := mustFixed(s.BuildFixedContext(ctx, 600, false, "pico", []string{"pico"}))
 	if !strings.Contains(private, "BOUNDARY_PRIVATE") {
 		t.Fatalf("private boundary missing in private channel: %s", private)
 	}
@@ -57,8 +57,10 @@ func TestBuildFixedContext_BoundaryAudienceAndFictionalFilter(t *testing.T) {
 		t.Fatalf("fictional boundary injected without inject_fictional: %s", private)
 	}
 
-	fictional := s.BuildFixedContext(ctx, 600, true, "pico", []string{"pico"})
+	fictional := mustFixed(s.BuildFixedContext(ctx, 600, true, "pico", []string{"pico"}))
 	if !strings.Contains(fictional, "BOUNDARY_FICTIONAL") {
 		t.Fatalf("fictional boundary missing when enabled: %s", fictional)
 	}
 }
+
+func mustFixed(s string, _ FixedUsage) string { return s }

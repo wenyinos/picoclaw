@@ -34,6 +34,8 @@ func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/memory/repair/apply", h.handleMemoryRepairApply)
 	mux.HandleFunc("GET /api/memory/migration/status", h.handleMemoryMigrationStatus)
 	mux.HandleFunc("POST /api/memory/migration/apply", h.handleMemoryMigrationApply)
+	mux.HandleFunc("GET /api/memory/ops", h.handleMemoryOps)
+	mux.HandleFunc("GET /api/memory/capsule/{id}", h.handleMemoryCapsule)
 	mux.HandleFunc("POST /api/memory/import", h.handleMemoryImport)
 	mux.HandleFunc("GET /api/memory/export", h.handleMemoryExport)
 	mux.HandleFunc("GET /api/memory/stats", h.handleMemoryStats)
@@ -381,12 +383,57 @@ func (h *Handler) handleMemoryMigrationApply(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	report, err := store.ApplyV2Migration(r.Context())
+	report, err := store.ApplyMigration(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+func (h *Handler) handleMemoryOps(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			limit = n
+		}
+	}
+	ops, err := store.ListOperations(r.Context(), limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"operations": ops})
+}
+
+func (h *Handler) handleMemoryCapsule(w http.ResponseWriter, r *http.Request) {
+	store, cfg, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "capsule id is required")
+		return
+	}
+	channel := strings.TrimSpace(r.URL.Query().Get("channel"))
+	inject := cfg.Memory.InjectFictional
+	if raw := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("inject_fictional"))); raw == "1" || raw == "true" {
+		inject = true
+	}
+	capsule, err := store.LoadCapsule(r.Context(), id, channel,
+		cfg.Memory.PrivateChannels, inject, cfg.Memory.BudgetTokens)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, capsule)
 }
 
 func (h *Handler) handleMemoryImport(w http.ResponseWriter, r *http.Request) {
