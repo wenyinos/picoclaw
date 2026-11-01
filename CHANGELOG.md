@@ -1,5 +1,33 @@
 # 变更日志
 
+## v0.5.10
+
+### 新增
+
+- 记忆 schema v3：`entries` 增加时间语义列与 `pinned_core`；`sources` 升级为证据记录；新增 `memory_relations`、`memory_clusters`、`memory_cluster_members`、`memory_summary_versions`、`memory_operations` 和 FTS5 索引。
+- 一键迁移支持 v1 → v2 → v3：DDL 与版本号同一事务，逐列守卫，重复执行安全；备份收敛到 `memory/backups/` 并保留最新 2 份。
+- 治理动作：`inspect / confirm / correct / archive / restore / forget`；`forget` 级联清理并按内容指纹阻止复活。
+- 时间语义：今天/昨天/上周/上个月/去年夏天等短语解析为 `exact / date / approximate / range / planned`，近似时间不伪造单日。
+- 混合检索：Anchor、FTS、LIKE、时间通道、1-Hop 关系扩展；`pinned_core` 命中锚点无条件置顶。
+- 场景胶囊：`load_capsule` 支持 `t0` / `t0_compact`，公开渠道整体返回空。
+- 三层预算记账：固定块、边界块、检索块分别计数，`memory audit` 输出实测 token。
+- CLI：`memory repair`、`memory inspect`、`memory rebuild-fts`、`memory forget`、`memory replay-forget`、`memory capsule`。
+- API：`GET /api/memory/ops`、`GET /api/memory/capsule/{id}`。
+
+### 修复
+
+- 台词/设定稿不再写入 `real/profile`；`记住` 只在句首触发，引号与【】内容按比例跳过，称呼提取忽略引号内和疑问句。
+- 未知 predicate 保留 `attributes.original_predicate`；白名单补齐 `助手人设 / 系统架构 / 备份规范 / 场景 / 世界观`。
+- `pinned_core` 条目不会被自动 supersede，冲突进入待审核，只能 `correct --force` 显式替换。
+- 两字中文查询走 LIKE，修复 FTS5 trigram 对「生日」「同意」等短词 100% 失配。
+- `use_count` 回写不再触发 FTS 重建。
+- 固定注入预算不再被边界块静默突破，边界块有独立上限并计入总账。
+
+### 升级
+
+- 首次打开会先备份并升级 schema；在 `/memory` → “数据库迁移”执行数据迁移，或运行 `picoclaw memory migrate`。
+- 迁移幂等，不删除条目；参考库的 9 条 relationship 与 14 条 `待分类` 会归位。
+
 ## v0.5.1
 
 ### 修复

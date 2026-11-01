@@ -25,17 +25,20 @@
 
 PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home server, or a $10 board. It connects to the chat apps and model providers you already use, executes tools, and keeps a workspace you own.
 
-**0.5 is built around long-term memory and continuity.** Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation. The result is an assistant that can maintain a relationship over months without turning its prompt into an ever-growing transcript.
+**0.5 is built around long-term memory and continuity; 0.5.10 adds memory V3.** Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation. The result is an assistant that can maintain a relationship over months without turning its prompt into an ever-growing transcript.
 
 ### Memory that lasts
 
-- **SQLite memory store** at `workspace/memory/memory.db`, with exact and near-duplicate detection, conflict superseding, and source tracking.
+- **SQLite memory store** at `workspace/memory/memory.db`, with exact and near-duplicate detection, conflict superseding, and an evidence chain for every write.
 - **Layered memory**: user profile, relationship state (names, stage, anniversaries, boundaries), episodic events, procedural knowledge, and versioned personas.
-- **Real vs. fictional isolation**: role-play and story settings are stored separately and are never mixed into the user's real profile.
+- **Real vs. fictional isolation**: role-play and story settings are stored separately and are never mixed into the user's real profile. A write firewall keeps dialogue and setting documents out of `real/profile`.
 - **Human review queue**: uncertain memories wait in `pending_review` and are not injected until approved.
-- **Budgeted injection**: fixed profile/relationship blocks plus query-relevant memories, capped by a token budget; boundary rules are appended outside that budget so they cannot be evicted.
-- **Schema v2 migration**: one-click upgrade from `/memory` with a `VACUUM INTO` backup; facets keep different sides of the same predicate from overwriting each other.
-- **Relationship retrieval**: relationship notes can be retrieved alongside events and procedures, capped per turn so they do not crowd out other memories.
+- **Governance loop**: `inspect / confirm / correct / archive / restore / forget`. Forget cascades through sources, relations and capsule members, and a content hash blocks the same sentence from being re-extracted.
+- **Time semantics**: today/yesterday/last week/last summer are parsed deterministically into `date / range / approximate / planned`; approximate phrases never get a fabricated day.
+- **Hybrid retrieval**: anchor (facet/predicate/title), FTS5, LIKE, temporal overlap, and one-hop relation expansion. Two-character Chinese queries fall back to LIKE instead of silently missing.
+- **Scene capsules**: `load_capsule` returns the T0 writing rules in one call (full or compact); fictional capsules return empty for public channels.
+- **Real budget accounting**: fixed, boundary and retrieval blocks are counted separately, and `memory audit` prints the measured tokens.
+- **Schema v3 migration**: one-click upgrade from `/memory` with a `VACUUM INTO` backup. v1 databases go through v2 to v3 in the same transaction; re-running is safe.
 - **Private-channel filtering**: intimate memories are only injected into the channels you mark as private.
 
 ### A dashboard for the relationship
@@ -43,7 +46,7 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 The launcher includes a dedicated **Memory** page at `/memory`:
 
 - Overview of entry counts, database size, relationship state, and pending reviews.
-- Database migration: schema version, empty predicates, relationship count, one-click backup and upgrade.
+- Database migration: schema version, empty predicates, relationship count, FTS rows and tokenizer, one-click backup and upgrade.
 - Search and edit memories by realm, layer, and status.
 - Review queue to confirm real facts, mark fiction, or archive noise.
 - Relationship and persona editor with version history.
@@ -154,6 +157,12 @@ The SQLite database is the only runtime memory source. PicoClaw never reads `MEM
 
 ```bash
 picoclaw memory migrate
+picoclaw memory repair --dry-run
+picoclaw memory inspect <id>
+picoclaw memory rebuild-fts
+picoclaw memory forget <id> --yes
+picoclaw memory replay-forget
+picoclaw memory capsule --preset t0_compact
 picoclaw memory import --from /path/to/old-workspace
 picoclaw memory audit
 picoclaw memory stats
@@ -168,7 +177,7 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 ## Migrating from 0.3.x / 0.4.x to 0.5.x
 
-0.5 keeps `workspace/memory/memory.db` as the source of truth and adds schema v2. Existing 0.4.x databases are upgraded in place; there is no manual SQL step. On first open, 0.5.x creates a `VACUUM INTO` backup and upgrades the schema. The data migration runs from `/memory` → “Database migration”, or with `picoclaw memory migrate`.
+0.5 keeps `workspace/memory/memory.db` as the source of truth and adds schema v3. Existing v1 and v2 databases are upgraded in place; there is no manual SQL step. On first open, 0.5.10 creates a `VACUUM INTO` backup and upgrades the schema. The data migration runs from `/memory` → “Database migration”, or with `picoclaw memory migrate`. The one-click path still handles v1 → v2 → v3, so a 0.4.x database never needs an intermediate release.
 
 1. **Stop the services**
 
@@ -194,7 +203,7 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
    picoclaw memory migrate
    ```
 
-   The migration is idempotent. It upgrades the schema, turns empty predicates into `待分类`, maps the reference v13–v21 relationship entries to predicate/facet, and writes a new `memory.db.backup-*` file each time.
+   The migration is idempotent. It upgrades v1 → v2 → v3, turns empty predicates into `待分类`, reclassifies the reference database's miscategorized entries, restores the archived birthday entry, backfills missing sources, and writes a rotated `memory/backups/memory.db.bak-*` file (the newest two are kept).
 
 4. **Verify**
 
@@ -210,10 +219,11 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 Notes:
 
-- The v0.4.6 tag remains available; install 0.5.x to get schema v2 and the Launcher migration page.
+- The v0.4.6 tag remains available; install 0.5.10 to get schema v3 and the Launcher migration page.
 - Historical 0.3.x → 0.4.0 guide: [migration/0.4.0.md](docs/migration/0.4.0.md).
 - The old `MEMORY.md` is only an import source; raw session history stays in `workspace/sessions/*.jsonl`.
 - `memory.db` is WAL-mode SQLite; stop the process before copying the workspace, or run `picoclaw memory audit` once to checkpoint an idle store.
+- `memory forget` is a hard delete. Run it without `--yes` first to see the cascade preview; `memory replay-forget` re-applies tombstones after restoring a backup.
 
 
 ## Providers and channels
@@ -233,7 +243,7 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 - [Online documentation](https://wenyinos.github.io/picoclaw/)
 - [Project poster](docs/assets/picoclaw-poster.png)
 - [Long-term memory](docs/guides/memory.md) · [中文](docs/guides/memory.zh.md)
-- [Migrating from 0.3.x / 0.4.x to 0.5.x](docs/migration/0.5.0.md)
+- [Migrating from 0.3.x / 0.4.x to 0.5.x](docs/migration/0.5.10.md)
 - [Changelog](CHANGELOG.md)
 - [Configuration](docs/guides/configuration.md)
 - [Routing and sessions](docs/guides/routing-guide.md)
@@ -245,7 +255,7 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 
 ## About this repository
 
-This repository maintains PicoClaw 0.5.1 with the SQLite memory system, QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
+This repository maintains PicoClaw 0.5.10 with the SQLite memory V3 system (evidence chain, governance, hybrid retrieval, scene capsules), QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
 
 ## License
 

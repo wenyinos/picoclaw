@@ -53,9 +53,28 @@ workspace/
 
 `relationship_state` stores names, stage, intimacy, anniversaries, and boundaries as versioned current values. `personas` stores versioned character definitions. `predicate` uses a controlled vocabulary and `facet` distinguishes different sides of the same predicate; only scalar profile facts or an explicit `supersedes_id` automatically replace old values. `boundary` rules are not part of the fixed-block budget: they are appended as a safety block so a long profile or relationship section cannot evict them.
 
+Schema v3 adds:
+
+| Field | Meaning |
+|---|---|
+| `event_time_precision` | exact / date / approximate / range / narrative / planned / unknown |
+| `event_timezone` / `event_time_source` | IANA zone; user_stated / model_inferred / imported / corrected |
+| `valid_from` / `valid_to` | validity interval, so corrected facts keep their history |
+| `pinned_core` | protected rules that automatic writes cannot supersede |
+| `sources.evidence_text` | the sentence a memory was extracted from |
+| `memory_relations` | typed edges (supersedes / contradicts / related_to / caused_by / influenced_by / fulfilled_by / next_scene / part_of) |
+| `memory_operations` | governance log; forget entries store a content hash, never text |
+
 ## Automatic extraction
 
-After a turn, only explicit user statements are considered: `记住/记一下/别忘了`, preferred names, preferences/allergies, birthdays/anniversaries, and dated events. Ordinary chat, role-play keywords (`设定/扮演/剧情/人设/世界观/虚构/故事线`), and assistant replies are never auto-saved.
+After a turn, only explicit user statements are considered: `记住/记一下/别忘了` at the start of a sentence, preferred names, preferences/allergies, birthdays/anniversaries, and dated events. Ordinary chat, role-play keywords (`设定/扮演/剧情/人设/世界观/虚构/故事线`), and assistant replies are never auto-saved.
+
+The write firewall runs before those branches:
+
+- A sentence that looks like dialogue or a setting document (quotes or `【...】` covering a meaningful share of the text) is skipped entirely.
+- `记住` only counts at the beginning of a sentence, so “记住，我所有的反抗…” inside role-play does not become a profile fact.
+- Name extraction ignores matches inside quotes and interrogatives such as 「你叫我什么？」.
+- Emotional one-liners (`今天好累`, `抱抱`, `想你了`) only update `current_mood` with a 24-hour TTL; they do not create entries.
 
 ## Deduplication and conflicts
 
@@ -69,19 +88,37 @@ Writes are processed in order:
 
 ## Search semantics
 
-The `memory` tool's search is an administrative search: it covers all layers by default, supports `realm` / `layer` / `predicate` / `facet` / `status` filters, and can see private memories. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, private-channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures. The fixed block itself is still trimmed to its budget; `boundary` is appended after it and is not part of that trim.
+The `memory` tool's search is an administrative search: it covers all layers by default, supports `realm` / `layer` / `predicate` / `facet` / `status` filters, and can see private memories. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, private-channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures.
 
-## Database migration (schema v2)
+Both paths share the hybrid candidate set:
 
-New builds upgrade `memory.db` to schema v2:
+1. **Anchor** — exact/contains match on `facet`, `predicate`, `subject`, or a first-line `【...】` title. A pinned entry that hits an anchor is sorted first unconditionally.
+2. **FTS5** — phrase match for queries of three or more runes. A build without the trigram tokenizer falls back to `unicode61`.
+3. **LIKE** — one- and two-character Chinese queries, and a recall fallback when FTS returns fewer than five hits.
+4. **Temporal** — relative-time phrases become an interval that overlaps `event_at` or `valid_from/valid_to`.
+5. **1-Hop** — related/caused/fulfilled/next-scene edges from the top seeds; targets are re-checked for status, realm, scope and audience.
 
-- `entries` gains `facet`, so multiple facets under the same `subject+predicate` can coexist;
-- `personas` supports `(id, version)` and adds `realm` / `audience` / `scope`, so a companion persona can stay private;
-- `relationship_state` gains `expires_at` and keeps old values in `relationship_state_history`;
-- empty `predicate` values become `待分类` instead of creating new empty keys;
-- the nine v13–v21 relationship entries in the reference database are mapped to `身份关系 / 权力结构 / 心理状态 / 事件·第一次` with explicit facets and stay active.
+Fixed, boundary, and retrieval blocks are accounted separately. The boundary block has its own cap (`max(200, fixed_budget*30%)`), always keeps at least one rule, and is included in the total instead of silently doubling it.
 
-The migration creates a SQLite `VACUUM INTO` backup first and never deletes entries. Run it from `/memory` → “Database migration” or:
+## Database migration (schema v3)
+
+New builds upgrade `memory.db` through v2 to v3. v2 added `facet`, versioned personas, `relationship_state.expires_at` and history; v3 adds time semantics, the evidence chain, relations, governance log, capsules and FTS.
+
+The migration is two-segment:
+
+1. `migrateToV2Locked` fills in any missing v2 object (guarded per column/table).
+2. `migrateToV3Locked` adds the six `entries` columns with a precomputed existence plan, then runs only idempotent DDL (`CREATE TABLE IF NOT EXISTS`, `INSERT OR IGNORE`, `SELECT ... WHERE EXISTS`).
+3. The `schema_version=3` write happens only after both segments succeed, in the same transaction.
+
+Other guarantees:
+
+- A `VACUUM INTO` backup is written to `memory/backups/`; the newest two are kept.
+- `sources` is rebuilt with the v2 unique key preserved, so `INSERT OR IGNORE` still dedupes; orphan rows are counted in `meta.v3_dropped_orphan_sources`.
+- Broken `supersedes` edges are counted in `meta.v3_dropped_orphan_supersedes` (the reference database has 9 and 129).
+- FTS5 is probed before the transaction; without trigram the build records `fts_tokenizer=unicode61`, and without FTS5 it records `none` instead of failing to open.
+- The data repair maps the reference database's nine relationship entries and fourteen `待分类` entries, reclassifies the dialogue entry that was stored as a real profile fact, restores the archived birthday entry (the date is derived from the text), and backfills missing sources. It never deletes entries.
+
+Run it from `/memory` → “Database migration” or:
 
 ```bash
 picoclaw memory migrate
@@ -92,7 +129,7 @@ picoclaw memory migrate
 Open `/memory` in the launcher:
 
 - Overview: counts, database size, relationship state, archival action.
-- Database migration: schema version, empty predicates, relationship count, one-click backup and migration.
+- Database migration: schema version, empty predicates, relationship count, pinned core, relation edges, FTS rows and tokenizer, one-click backup and migration. The same button handles v1 / v2 → v3.
 - Memory library: server-side pagination (100 per page), search, filter, edit, archive, restore; fixed table columns and an independently scrollable detail panel.
 - Review: confirm real, mark fictional, mark work, ignore.
 - Relationship and persona: names, stage, anniversaries, boundaries, persona versions; persona realm / audience / scope.
@@ -103,6 +140,12 @@ Open `/memory` in the launcher:
 
 ```bash
 picoclaw memory migrate
+picoclaw memory repair --dry-run
+picoclaw memory inspect <id>
+picoclaw memory rebuild-fts
+picoclaw memory forget <id> [--yes]
+picoclaw memory replay-forget
+picoclaw memory capsule --preset t0_compact
 picoclaw memory import --from /path/to/old-workspace
 picoclaw memory audit
 picoclaw memory stats
@@ -111,16 +154,16 @@ picoclaw memory export --out memories.jsonl
 picoclaw memory render   # optional Markdown export, never read back
 ```
 
-`memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does.
+`memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does. `memory forget` without `--yes` is a dry run. `memory replay-forget` re-applies forget tombstones after restoring an older backup.
 
 ## Migrating from 0.3.x / 0.4.x
 
-0.3.x → 0.4.x used a one-time `memory import` to move the old `MEMORY.md` into SQLite. 0.4.x → 0.5.x needs no manual SQL: the first open backs up the database and upgrades it to schema v2. Run the data migration from `/memory` → “Database migration”, or with `picoclaw memory migrate`.
+0.3.x → 0.4.x used a one-time `memory import` to move the old `MEMORY.md` into SQLite. 0.4.x → 0.5.x needs no manual SQL: the first open backs up the database and upgrades it to schema v3; a v1 database goes v1 → v2 → v3 in one transaction. Run the data migration from `/memory` → “Database migration”, or with `picoclaw memory migrate`.
 
 1. Stop the gateway and launcher.
 2. Back up the old `workspace/memory`.
-3. Start 0.5.x and run the migration from `/memory` → “Database migration”; for a 0.3.x workspace, run `memory import` once first.
-4. Verify with `PRAGMA integrity_check` and entry counts; check that a public channel cannot see a `fictional/private` persona.
+3. Start 0.5.10 and run the migration from `/memory` → “Database migration”; for a 0.3.x workspace, run `memory import` once first.
+4. Verify with `PRAGMA integrity_check`, `picoclaw memory audit`, and entry counts; check that a public channel cannot see a `fictional/private` persona.
 
 ## API
 
@@ -145,6 +188,8 @@ POST   /api/memory/repair/preview
 POST   /api/memory/repair/apply
 GET    /api/memory/migration/status
 POST   /api/memory/migration/apply
+GET    /api/memory/ops
+GET    /api/memory/capsule/{id}
 POST   /api/memory/import
 GET    /api/memory/export
 GET    /api/memory/stats
