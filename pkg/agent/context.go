@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/instructions"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/memstore"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -30,6 +31,10 @@ type ContextBuilder struct {
 	splitOnMarker  bool
 	agentDiscovery func(agentID string) []AgentDescriptor
 	promptRegistry *PromptRegistry
+	// instructionsPath points at the operator system-prompt overlay. It is
+	// resolved once at construction so that every cache-invalidation check and
+	// prompt rebuild reads the same path.
+	instructionsPath string
 
 	// Cache for system prompt to avoid rebuilding on every call.
 	// This fixes issue #607: repeated reprocessing of the entire context.
@@ -125,10 +130,20 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")
 
 	return &ContextBuilder{
-		workspace:      workspace,
-		skillsLoader:   skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
-		promptRegistry: NewPromptRegistry(),
+		workspace:        workspace,
+		skillsLoader:     skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
+		promptRegistry:   NewPromptRegistry(),
+		instructionsPath: instructions.Path(),
 	}
+}
+
+// WithInstructionsPath overrides where the operator instructions file is read
+// from. Tests use it to isolate themselves from the real home directory;
+// production callers rely on the default resolved in NewContextBuilder.
+func (cb *ContextBuilder) WithInstructionsPath(path string) *ContextBuilder {
+	cb.instructionsPath = path
+	cb.InvalidateCache()
+	return cb
 }
 
 func (cb *ContextBuilder) RegisterPromptSource(desc PromptSourceDescriptor) error {
@@ -528,9 +543,15 @@ func (cb *ContextBuilder) InvalidateCache() {
 // sourcePaths returns non-skill workspace source files tracked for cache
 // invalidation (bootstrap files). Skill roots are handled separately because
 // they require both directory-level and recursive file-level checks.
+//
+// The operator instructions file is included even though it lives outside the
+// workspace: it contributes a section to the same prompt part, so a WebUI edit
+// must invalidate the cache exactly like an edited AGENT.md would.
 func (cb *ContextBuilder) sourcePaths() []string {
 	agentDefinition := cb.LoadAgentDefinition()
-	return uniquePaths(agentDefinition.trackedPaths(cb.workspace))
+	paths := agentDefinition.trackedPaths(cb.workspace)
+	paths = append(paths, cb.instructionsPath)
+	return uniquePaths(paths)
 }
 
 // skillRoots returns all skill root directories that can affect
@@ -763,7 +784,42 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 		}
 	}
 
+	// Operator instructions render inside this same part rather than as a
+	// separate prompt part: two instruction parts would make conflict
+	// resolution undefined and would change the stable part sequence that the
+	// prompt cache relies on.
+	if custom := cb.loadCustomInstructions(); custom != "" {
+		fmt.Fprintf(
+			&sb,
+			"## Custom Instructions\n\nConfigured by the operator through the WebUI. "+
+				"Follow these in addition to the instructions above; when they conflict "+
+				"with the workspace conventions, prefer these.\n\n%s\n\n",
+			custom,
+		)
+	}
+
 	return sb.String()
+}
+
+// loadCustomInstructions returns the operator-configured instruction text, or ""
+// when the feature is disabled or the file is missing.
+//
+// A corrupt or unreadable file degrades to "not set" instead of failing: prompt
+// construction must never break because of a hand-edited config file.
+func (cb *ContextBuilder) loadCustomInstructions() string {
+	if strings.TrimSpace(cb.instructionsPath) == "" {
+		return ""
+	}
+
+	file, err := instructions.LoadFrom(cb.instructionsPath)
+	if err != nil {
+		logger.WarnCF("agent", "Failed to load custom instructions; ignoring", map[string]any{
+			"path":  cb.instructionsPath,
+			"error": err.Error(),
+		})
+		return ""
+	}
+	return file.ActivePrompt()
 }
 
 // buildDynamicContext returns a short dynamic context string with per-request info.

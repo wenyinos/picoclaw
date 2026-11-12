@@ -1,5 +1,25 @@
 # 变更日志
 
+## v0.6.0
+
+### 新增
+
+- 全局系统提示词：Launcher 新增「系统提示词」页面，可维护多套预设并随时切换当前生效项。
+- 一处切换、全渠道生效：微信 / QQ / WebSocket / pico 等所有渠道从下一个对话轮次起统一使用新指令，无需重启 gateway。
+- 配置独立存于 `~/.picoclaw/instructions.json`（权限 0600），与 `config.json` 解耦。改动通过既有 mtime 缓存失效机制传播，未引入新的热重载通道。
+- 自定义指令合并进 `instruction.workspace` 同一个 PromptPart，既有提示词分层与缓存序列保持不变。
+- API：`GET /api/instructions`、`PUT /api/instructions`，沿用 dashboard 会话鉴权。
+
+### 修复
+
+- `web/backend/api` 的 `TestMemoryAPI_MigrationStatusAndApply` 原先硬编码 schema 版本 2，改为引用 `memstore.CurrentSchemaVersion`，不再随 schema 升级失效。
+
+### 升级
+
+- 不新增、不修改 `config.json` 字段，无配置迁移；未配置该功能时系统提示词与 0.5.x 逐字节一致。
+- `instructions.json` 不会自动创建，首次在页面保存时才写入。文件缺失或损坏时静默降级为不注入，并记录一条 warn 日志。
+- 容器部署注意：`docker/docker-compose.full.yml` 仅挂载 `config.json` 与 `workspace`，需额外持久化 `instructions.json` 所在目录，否则重建容器会丢失配置。
+
 ## v0.5.10
 
 ### 新增

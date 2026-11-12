@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/memstore"
 )
 
 func newMemoryTestHandler(t *testing.T) (*Handler, string) {
@@ -168,8 +170,13 @@ func TestMemoryAPI_MigrationStatusAndApply(t *testing.T) {
 		SchemaVersion int `json:"schema_version"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &status)
-	if status.SchemaVersion != 2 {
-		t.Fatalf("schema = %d, want 2: %s", status.SchemaVersion, rec.Body.String())
+	if status.SchemaVersion != memstore.CurrentSchemaVersion {
+		t.Fatalf(
+			"schema = %d, want %d: %s",
+			status.SchemaVersion,
+			memstore.CurrentSchemaVersion,
+			rec.Body.String(),
+		)
 	}
 
 	rec = doJSON(t, mux, http.MethodPost, "/api/memory/migration/apply", nil)
@@ -181,7 +188,7 @@ func TestMemoryAPI_MigrationStatusAndApply(t *testing.T) {
 		Backup        string `json:"backup"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &report)
-	if report.SchemaVersion != 2 || report.Backup == "" {
+	if report.SchemaVersion != memstore.CurrentSchemaVersion || report.Backup == "" {
 		t.Fatalf("unexpected report: %s", rec.Body.String())
 	}
 	if _, err := os.Stat(report.Backup); err != nil {

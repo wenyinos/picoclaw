@@ -12,6 +12,7 @@
     "channels_group": "Channels",
     "show_more_channels": "More",
     "show_less_channels": "Less",
+    "instructions": "System prompt",
     "memory": "Memory",
     "config": "Config",
     "logs": "Logs"
@@ -968,6 +969,37 @@
       "log_level_error": "Failed to update log level.",
       "clear": "Clear logs",
       "empty": "Waiting for logs..."
+    },
+    "instructions": {
+      "title": "System prompt",
+      "description": "Instructions appended to every channel (WeChat, QQ, WebSocket, ...). Changes apply from the next conversation turn onward.",
+      "loading": "Loading…",
+      "section_general": "Master switch",
+      "section_general_hint": "When off, no custom instructions are injected and behavior is identical to an unconfigured setup.",
+      "enabled": "Enable custom instructions",
+      "enabled_hint": "When on, the selected preset is appended to the end of the system prompt.",
+      "active": "Active preset",
+      "active_hint": "Every channel uses this single preset.",
+      "active_placeholder": "Not selected",
+      "presets": "Presets",
+      "presets_hint": "Up to {{max}} presets.",
+      "add_preset": "Add preset",
+      "new_preset": "New preset",
+      "empty": "No presets yet. Add one to enable this feature.",
+      "preset_name": "Name",
+      "preset_prompt": "Prompt",
+      "preset_prompt_hint": "{{used}} / {{limit}} characters",
+      "remove_preset": "Remove preset",
+      "saved": "Saved. Every channel will use the new instructions from the next turn onward.",
+      "storage": "Stored at: {{path}}",
+      "effect_hint": "Note: custom instructions cannot override code-level safeguards such as restrict_to_workspace or exec command allowlists, and cannot change a conversation already in progress.",
+      "errors": {
+        "max_presets": "Too many presets (limit {{max}}).",
+        "name_required": "Every preset needs a name.",
+        "prompt_required": "Every preset needs prompt content.",
+        "prompt_too_long": "Prompt exceeds the length limit ({{limit}} characters).",
+        "active_required": "Select an active preset when enabled."
+      }
     }
   },
   "tour": {

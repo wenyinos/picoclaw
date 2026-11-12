@@ -14,6 +14,7 @@ import { Route as MemoryRouteImport } from './routes/memory'
 import { Route as LogsRouteImport } from './routes/logs'
 import { Route as LauncherSetupRouteImport } from './routes/launcher-setup'
 import { Route as LauncherLoginRouteImport } from './routes/launcher-login'
+import { Route as InstructionsRouteImport } from './routes/instructions'
 import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as ConfigRouteImport } from './routes/config'
 import { Route as AgentRouteImport } from './routes/agent'
@@ -48,6 +49,11 @@ const LauncherSetupRoute = LauncherSetupRouteImport.update({
 const LauncherLoginRoute = LauncherLoginRouteImport.update({
   id: '/launcher-login',
   path: '/launcher-login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InstructionsRoute = InstructionsRouteImport.update({
+  id: '/instructions',
+  path: '/instructions',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CredentialsRoute = CredentialsRouteImport.update({
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/agent': typeof AgentRouteWithChildren
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
+  '/instructions': typeof InstructionsRoute
   '/launcher-login': typeof LauncherLoginRoute
   '/launcher-setup': typeof LauncherSetupRoute
   '/logs': typeof LogsRoute
@@ -124,6 +131,7 @@ export interface FileRoutesByTo {
   '/agent': typeof AgentRouteWithChildren
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
+  '/instructions': typeof InstructionsRoute
   '/launcher-login': typeof LauncherLoginRoute
   '/launcher-setup': typeof LauncherSetupRoute
   '/logs': typeof LogsRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/agent': typeof AgentRouteWithChildren
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
+  '/instructions': typeof InstructionsRoute
   '/launcher-login': typeof LauncherLoginRoute
   '/launcher-setup': typeof LauncherSetupRoute
   '/logs': typeof LogsRoute
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/agent'
     | '/config'
     | '/credentials'
+    | '/instructions'
     | '/launcher-login'
     | '/launcher-setup'
     | '/logs'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/agent'
     | '/config'
     | '/credentials'
+    | '/instructions'
     | '/launcher-login'
     | '/launcher-setup'
     | '/logs'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/agent'
     | '/config'
     | '/credentials'
+    | '/instructions'
     | '/launcher-login'
     | '/launcher-setup'
     | '/logs'
@@ -213,6 +225,7 @@ export interface RootRouteChildren {
   AgentRoute: typeof AgentRouteWithChildren
   ConfigRoute: typeof ConfigRouteWithChildren
   CredentialsRoute: typeof CredentialsRoute
+  InstructionsRoute: typeof InstructionsRoute
   LauncherLoginRoute: typeof LauncherLoginRoute
   LauncherSetupRoute: typeof LauncherSetupRoute
   LogsRoute: typeof LogsRoute
@@ -255,6 +268,13 @@ declare module '@tanstack/react-router' {
       path: '/launcher-login'
       fullPath: '/launcher-login'
       preLoaderRoute: typeof LauncherLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/instructions': {
+      id: '/instructions'
+      path: '/instructions'
+      fullPath: '/instructions'
+      preLoaderRoute: typeof InstructionsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/credentials': {
@@ -373,6 +393,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentRoute: AgentRouteWithChildren,
   ConfigRoute: ConfigRouteWithChildren,
   CredentialsRoute: CredentialsRoute,
+  InstructionsRoute: InstructionsRoute,
   LauncherLoginRoute: LauncherLoginRoute,
   LauncherSetupRoute: LauncherSetupRoute,
   LogsRoute: LogsRoute,

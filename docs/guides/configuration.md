@@ -158,6 +158,34 @@ Example clean web policy:
 - **Brute-force**: **`POST /api/auth/login`** is **rate-limited per client IP per minute** (HTTP 429 when exceeded).
 - **Session lifetime**: The HttpOnly session cookie lasts about **31 days** by default, but sessions are invalidated when the launcher process restarts.
 
+### Global System Prompt
+
+The launcher's **System prompt** page appends operator instructions to the end of the system prompt for **every channel**.
+
+- **Storage**: `~/.picoclaw/instructions.json` (mode `0600`), separate from `config.json`. A missing file means "not configured".
+- **Scope**: all channels — WeChat, QQ, WebSocket, pico. Changes apply from the next conversation turn; a turn already in progress is unaffected and no gateway restart is required.
+- **Presets**: up to 10, each capped at 8000 characters. One preset must be active while the feature is enabled.
+- **Rendering**: merged into the same `instruction.workspace` PromptPart, placed after `AGENT.md` / `SOUL.md` / `USER.md`. When the two conflict, the custom instructions win.
+- **Degradation**: a corrupt file never breaks a conversation — it logs one warning and skips injection.
+
+File format:
+
+```json
+{
+  "enabled": true,
+  "active": "work",
+  "presets": [
+    { "id": "work", "name": "Work mode", "prompt": "Be concise. Lead with the conclusion." }
+  ]
+}
+```
+
+`id` must match `^[a-z0-9][a-z0-9_-]{0,31}$` (lowercase letter or digit first, no spaces or uppercase); `active` refers to an `id`, not a `name`. Hand-written files are not validated on load, so a mistake shows up as "configured but ineffective" — check the log for `Failed to load custom instructions`.
+
+> **Limits**: custom instructions only shape model behaviour. They cannot override code-level safeguards such as `restrict_to_workspace`, the `tools.exec` command deny/allow lists, or tool allowlists. Change those in `config.json`.
+
+> **Containers**: `docker/docker-compose.full.yml` only mounts `config.json` and `workspace`. Persist the directory holding `instructions.json` separately, otherwise rebuilding the container discards the configuration.
+
 ### Skill Sources
 
 By default, skills are loaded from:

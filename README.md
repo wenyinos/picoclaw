@@ -87,6 +87,7 @@ The 0.5 memory work sits alongside PicoClaw's original assistant features:
 - **Sub-agents** — async background work and long-running task orchestration. See [Spawn and async tasks](docs/guides/spawn-tasks.md).
 - **Interfaces** — CLI (`onboard`, `agent`, `gateway`), desktop launcher, Docker, and Android/Termux. See [Docker](docs/guides/docker.md) and [Termux](docs/guides/android-termux.md).
 - **Memory** — SQLite long-term memory, relationship/persona state, review queue, cross-layer search, repair dashboard, and CLI. See [Long-term memory](docs/guides/memory.md).
+- **System prompt** — a global operator instruction layer managed from the launcher and applied to every channel without a restart. See [Configuration](docs/guides/configuration.md).
 
 ---
 

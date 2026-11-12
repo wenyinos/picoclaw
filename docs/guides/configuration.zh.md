@@ -156,6 +156,34 @@ PicoClaw 将数据存储在您配置的工作区中（默认：`~/.picoclaw/work
 - **暴力尝试**：`POST /api/auth/login` 对同一远程地址有 **每分钟尝试次数上限**（超限返回 HTTP 429）。
 - **会话时长**：登录后的 HttpOnly 会话 Cookie 默认约 **31 天**有效，但 launcher 进程重启后已有会话会失效。
 
+### 全局系统提示词
+
+Launcher 的「系统提示词」页面可以把一段操作者指令追加到系统提示词末尾，对**所有渠道**统一生效。
+
+- **存储位置**：`~/.picoclaw/instructions.json`（权限 `0600`），与 `config.json` 分离。文件不存在时视为未配置。
+- **生效范围**：微信 / QQ / WebSocket / pico 等全部渠道。保存后从下一个对话轮次起生效，进行中的对话不受影响，无需重启 gateway。
+- **预设**：最多 10 套，单条指令上限 8000 字符。启用时必须指定一套为当前生效项。
+- **渲染位置**：合并进 `instruction.workspace` 同一个 PromptPart，排在 `AGENT.md` / `SOUL.md` / `USER.md` 之后；两者冲突时以自定义指令为准。
+- **降级行为**：文件损坏或 JSON 非法时不会中断对话，只记录一条 warn 日志并跳过注入。
+
+文件格式：
+
+```json
+{
+  "enabled": true,
+  "active": "work",
+  "presets": [
+    { "id": "work", "name": "工作模式", "prompt": "回答简洁，先给结论。" }
+  ]
+}
+```
+
+`id` 需匹配 `^[a-z0-9][a-z0-9_-]{0,31}$`（小写字母或数字开头，不含空格与大写）；`active` 指向某个 `id` 而非 `name`。手写文件时 `Load` 不做校验，写错的表现是「配了但不生效」，可检查日志中是否出现 `Failed to load custom instructions`。
+
+> **边界**：自定义指令只影响模型行为，无法改变代码层强制约束，例如 `restrict_to_workspace`、`tools.exec` 的命令黑白名单、工具白名单。调整这些需要改 `config.json`。
+
+> **容器部署**：`docker/docker-compose.full.yml` 只挂载 `config.json` 与 `workspace`，需额外持久化 `instructions.json` 所在目录，否则重建容器会丢失。
+
 ### 技能来源 (Skill Sources)
 
 默认情况下，技能会按以下顺序加载：

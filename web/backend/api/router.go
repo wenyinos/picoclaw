@@ -79,6 +79,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Config CRUD
 	h.registerConfigRoutes(mux)
 
+	// Operator system-prompt overlay (global, applies to every channel)
+	h.registerInstructionRoutes(mux)
+
 	// Pico Channel (WebSocket chat)
 	h.registerPicoRoutes(mux)
 

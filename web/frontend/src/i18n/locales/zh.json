@@ -12,6 +12,7 @@
     "channels_group": "频道",
     "show_more_channels": "更多",
     "show_less_channels": "收起",
+    "instructions": "系统提示词",
     "memory": "记忆",
     "config": "配置",
     "logs": "日志"
@@ -968,6 +969,37 @@
       "log_level_error": "更新日志等级失败。",
       "clear": "清空日志",
       "empty": "等待日志中..."
+    },
+    "instructions": {
+      "title": "系统提示词",
+      "description": "为所有渠道（微信、QQ、WebSocket 等）统一追加的指令，保存后从下一个对话轮次起生效。",
+      "loading": "加载中…",
+      "section_general": "总开关",
+      "section_general_hint": "关闭后不注入任何自定义指令，行为与未配置时完全一致。",
+      "enabled": "启用自定义指令",
+      "enabled_hint": "开启后，当前选中的预设会追加到系统提示词末尾。",
+      "active": "当前生效预设",
+      "active_hint": "所有渠道的会话统一使用这一个预设。",
+      "active_placeholder": "尚未选择",
+      "presets": "预设",
+      "presets_hint": "最多 {{max}} 个预设。",
+      "add_preset": "添加预设",
+      "new_preset": "新预设",
+      "empty": "还没有预设。添加一个后即可启用。",
+      "preset_name": "名称",
+      "preset_prompt": "提示词",
+      "preset_prompt_hint": "{{used}} / {{limit}} 字符",
+      "remove_preset": "删除预设",
+      "saved": "已保存。从下一个对话轮次起，所有渠道都会使用新的指令。",
+      "storage": "存储位置：{{path}}",
+      "effect_hint": "注意：自定义指令无法突破代码层的安全约束（如 restrict_to_workspace、exec 命令白名单），也无法改变已经进行中的对话。",
+      "errors": {
+        "max_presets": "预设数量超过上限（{{max}}）。",
+        "name_required": "每个预设都需要名称。",
+        "prompt_required": "每个预设都需要提示词内容。",
+        "prompt_too_long": "提示词超过长度上限（{{limit}} 字符）。",
+        "active_required": "启用时必须选择一个生效预设。"
+      }
     }
   },
   "tour": {
