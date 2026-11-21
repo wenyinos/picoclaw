@@ -143,6 +143,13 @@ pnpm run format
 - 数据目录 0700、敏感文件（`memory.db`、`forget-ledger.db`、配置）0600。
 - FTS 触发器只监听内容列，避免 `use_count` 更新导致索引重建。
 
+**配置兼容硬约束（0.7.3 事故教训）**
+
+- 配置加载是严格未知字段校验（`pkg/config/diagnostics.go` 的 `collectUnknownJSONFields`）。**禁止删除任何已发布的 JSON 字段**：旧 `config.json` 会因 unknown field 直接加载失败，gateway 无法启动、systemd 反复重启。
+- 废弃字段的正确做法：**保留字段定义并标注 Deprecated**；加载时清空值并记录一次性告警；语义切换通过新字段表达（如 `private_channels` → `private_channel_exclusions`）。
+- 每次涉及配置字段的变更，必须补一条“上一版本写入的 config.json 仍可加载”的回归测试（参考 `TestLoadConfig_LegacyPrivateChannelsStillLoads`）。
+- 发布说明中“忽略/兼容”的表述必须与实测行为一致：写“被忽略”前先验证旧配置真的能加载。
+
 ---
 
 ## 4. 记忆系统契约（必须遵守）
@@ -269,6 +276,7 @@ Release workflow 是构建/发布流程，不替代测试门禁。普通 main pu
 | 迁移事务内查询死锁 | `SetMaxOpenConns(1)`；事务内禁止 `s.db` 查询，先算 pre-plan |
 | 第二次迁移非零变更 | 违反幂等；所有 DDL/数据转换必须带存在性守卫 |
 | 重启后库“自己变成 v4” | 0.7.2 前的缺陷；现在必须显式迁移，见第 4.2 节 |
+| 启动报 `unknown field(s)` 并反复重启 | 删除了已发布的配置字段（0.7.3 事故）；恢复 Deprecated 定义并加兼容测试，见第 3 节配置兼容硬约束 |
 | 前端迁移页显示旧文案 | 同步 `memory-page.tsx` 的标题、确认框、结果与建议 |
 | 前端构建失败 | `cd web/frontend && pnpm run build`；类型错误先修 `memory-api.ts` |
 | race 测试失败 | 需要 `CGO_ENABLED=1`，且不是默认 Makefile 配置 |
