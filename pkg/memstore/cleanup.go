@@ -87,6 +87,10 @@ func enqueueCleanupJobTx(ctx context.Context, tx *sql.Tx, requestID, manifest st
 // backend cleaner. It is safe to call on every gateway start or from the
 // `memory cleanup` CLI command.
 func (s *Store) RunCleanupJobs(ctx context.Context, cleaner MessageCleaner, maxJobs int) (CleanupOutcome, error) {
+	if err := s.checkReady(); err != nil {
+		return CleanupOutcome{}, err
+	}
+
 	total := CleanupOutcome{}
 	if cleaner == nil {
 		return total, fmt.Errorf("memstore: cleanup needs a backend cleaner")

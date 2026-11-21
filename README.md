@@ -179,9 +179,9 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 ---
 
-## Migrating to 0.7.0
+## Migrating to 0.7.x
 
-0.7 keeps `workspace/memory/memory.db` as the source of truth and upgrades it from schema v3 to v4 in one segment. Databases older than v3 are rejected: open them once with a 0.6.x build to reach v3, then upgrade to 0.7.0. The upgrade runs automatically on first open (with a `VACUUM INTO` backup), from `/memory` → “Database migration”, or with `picoclaw memory migrate`. See [Memory schema v4](docs/reference/memory-schema-v4.md) for the full matrix.
+0.7 keeps `workspace/memory/memory.db` as the source of truth and upgrades it from schema v3 to v4 in one segment. **0.7.2 and later never migrate on startup**: an existing v3 database opens in fail-closed mode (`schema migration required` on reads/writes) until you run `picoclaw memory migrate` or use `/memory` → “Database migration”. Databases older than v3 are rejected: open them once with a 0.6.x build to reach v3 first. See [Memory schema v4](docs/reference/memory-schema-v4.md) for the full matrix.
 
 1. **Stop the services**
 
@@ -195,7 +195,9 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
    cp -a ~/.picoclaw/workspace ~/.picoclaw/workspace.backup-$(date +%F)
    ```
 
-3. **Start 0.7.0 and open the migration page**
+3. **Start 0.7.x and open the migration page**
+
+   Memory reads and writes stay disabled until the explicit migration runs. Open `http://localhost:18800/memory` → “Database migration” and run it.
 
    ```bash
    systemctl --user start picoclaw picoclaw-launcher

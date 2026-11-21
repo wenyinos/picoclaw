@@ -3,6 +3,7 @@ package memstore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -149,6 +150,29 @@ func TestSchemaV4FromV3(t *testing.T) {
 	}
 	defer s.Close()
 	ctx := context.Background()
+
+	// Opening a v3 database must not migrate it: the memory service fails
+	// closed until the owner runs the explicit migration.
+	if !s.PendingMigration() {
+		t.Fatal("v3 database must open in fail-closed mode")
+	}
+	if _, err := s.Get(ctx, "e1"); !errors.Is(err, ErrMigrationRequired) {
+		t.Fatalf("read before migration = %v, want ErrMigrationRequired", err)
+	}
+	if _, err := s.Add(ctx, AddInput{Text: "写入应被拒绝"}); !errors.Is(err, ErrMigrationRequired) {
+		t.Fatalf("write before migration = %v, want ErrMigrationRequired", err)
+	}
+
+	report, err := s.ApplyMigration(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.PreviousSchemaVersion != 3 || report.SchemaVersion != 4 {
+		t.Fatalf("migration report = %+v", report)
+	}
+	if s.PendingMigration() {
+		t.Fatal("store still pending after explicit migration")
+	}
 
 	status, err := s.MigrationStatus(ctx)
 	if err != nil {
@@ -299,12 +323,18 @@ func TestSchemaV4SelfHeal(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	if !s.PendingMigration() {
+		t.Fatal("v3 database must open in fail-closed mode")
+	}
+	if _, err := s.ApplyMigration(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	// Drop a derived table and an index: the next open must heal both without
-	// touching entry/source data.
+	// Drop a derived table and an index: the next open must stay unusable
+	// until an explicit migration heals it, without touching entry/source data.
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -322,6 +352,15 @@ func TestSchemaV4SelfHeal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s2.Close()
+	if !s2.PendingMigration() {
+		t.Fatal("a v4 database missing objects must open in fail-closed mode")
+	}
+	if _, err := s2.Get(ctx, "e1"); !errors.Is(err, ErrMigrationRequired) {
+		t.Fatalf("read on incomplete schema = %v, want ErrMigrationRequired", err)
+	}
+	if _, err := s2.ApplyMigration(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if !s2.tableExistsLocked(ctx, "memory_jobs") {
 		t.Fatal("memory_jobs not healed")
 	}
@@ -376,6 +415,9 @@ func TestApplyMigrationReportsBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	if !s.PendingMigration() {
+		t.Fatal("v3 database must open in fail-closed mode")
+	}
 	report, err := s.ApplyMigration(context.Background())
 	if err != nil {
 		t.Fatal(err)

@@ -52,6 +52,10 @@ func (s *Store) PublishSummary(
 	claims []SummaryClaim,
 	model, promptVersion string,
 ) (*SummaryVersion, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	if strings.TrimSpace(summary) == "" {
 		return nil, fmt.Errorf("memstore: empty summary")
 	}
@@ -279,6 +283,10 @@ func (s *Store) ExpandSummaryEvidence(ctx context.Context, summaryVersionID int6
 // publishes them. A nil summarizer returns the deterministic rule-based draft
 // so the feature works without any external model (G5 default).
 func (s *Store) GenerateSummary(ctx context.Context, clusterID string, summarizer Summarizer) (*SummaryVersion, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	s.mu.Lock()
 	var domainID string
 	var generation int
@@ -363,6 +371,10 @@ func (s *Store) ListClusters(ctx context.Context) ([]Cluster, error) {
 // CreateCluster creates a manual topic/stage capsule. Automatic clustering is
 // deliberately not enabled: the first version is user-organized.
 func (s *Store) CreateCluster(ctx context.Context, c Cluster) (*Cluster, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	if strings.TrimSpace(c.Title) == "" {
 		return nil, fmt.Errorf("memstore: cluster title is required")
 	}
@@ -396,6 +408,10 @@ func (s *Store) CreateCluster(ctx context.Context, c Cluster) (*Cluster, error) 
 // AddClusterMembers appends entries to a cluster. Cross-domain membership is
 // rejected: a summary must never mix permission partitions.
 func (s *Store) AddClusterMembers(ctx context.Context, clusterID string, entryIDs []string) error {
+	if err := s.checkReady(); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var domainID string

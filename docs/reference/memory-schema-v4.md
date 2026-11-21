@@ -28,17 +28,21 @@ run a 0.6.x build once, verify `schema_version` is 3, then upgrade PicoClaw.
 
 ## How to migrate
 
-Automatic, on first open:
+**PicoClaw 0.7.2 and later never migrate during startup.** An existing v3
+database — or a v4 database missing objects — opens in fail-closed mode: the
+memory dashboard and the CLI still open it so the migration can run, but every
+ordinary memory read/write returns `schema migration required`. A brand-new
+database is bootstrapped directly at v4.
 
-```sh
-picoclaw gateway   # or any command that opens the memory store
-```
-
-Explicit, with a report:
+Run the explicit migration once:
 
 ```sh
 picoclaw memory migrate
 ```
+
+or use `/memory` → “Database migration” in the dashboard. The page shows the
+current schema, the pending state, the backup path and the post-migration
+counts before you confirm.
 
 The migration:
 

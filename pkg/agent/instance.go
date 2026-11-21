@@ -193,6 +193,12 @@ func NewAgentInstance(
 		if memStore, err := memstore.OpenForWorkspace(workspace, memCfg); err != nil {
 			logger.WarnCF("agent", "Long-term memory unavailable; continuing without it",
 				map[string]any{"workspace": workspace, "error": err.Error()})
+		} else if memStore.PendingMigration() {
+			// Fail closed: injection and extraction would only return
+			// ErrMigrationRequired. Say so once instead of degrading silently.
+			logger.WarnCF("agent",
+				"Long-term memory disabled until schema migration: run `picoclaw memory migrate`",
+				map[string]any{"workspace": workspace, "schema": memstore.CurrentSchemaVersion})
 		} else {
 			contextBuilder = contextBuilder.WithLongTermMemory(memStore, cfg.Memory)
 		}

@@ -31,6 +31,29 @@ type Store struct {
 	usageWG        sync.WaitGroup
 	openedSchema   int
 	clock          func() int64
+	// pendingMigration marks an existing database that needs an explicit
+	// v3→v4 upgrade. Every read/write path fails closed while it is set.
+	pendingMigration bool
+}
+
+// ErrMigrationRequired is returned by memory reads and writes while the
+// database still needs an explicit schema migration. Opening the store stays
+// possible so the migration page and `picoclaw memory migrate` can run.
+var ErrMigrationRequired = errors.New(
+	"memstore: schema migration required; run `picoclaw memory migrate` or use the memory migration page")
+
+// PendingMigration reports whether the store opened in fail-closed mode
+// because the database needs an explicit migration.
+func (s *Store) PendingMigration() bool {
+	return s != nil && s.pendingMigration
+}
+
+// checkReady gates ordinary memory operations on a migrated schema.
+func (s *Store) checkReady() error {
+	if s != nil && s.pendingMigration {
+		return ErrMigrationRequired
+	}
+	return nil
 }
 
 // SetClock installs a deterministic clock for tests. Call it before concurrent
@@ -198,10 +221,17 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("memstore: %s: %w", pragma, err)
 		}
 	}
-	for _, stmt := range schemaStatements {
-		if _, err := db.Exec(stmt); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("memstore: schema: %w", err)
+	fresh, err := isFreshDatabase(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("memstore: inspect database: %w", err)
+	}
+	if fresh {
+		for _, stmt := range schemaStatements {
+			if _, err := db.Exec(stmt); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("memstore: schema: %w", err)
+			}
 		}
 	}
 	s := &Store{db: db, path: path, usage: make(map[string]int), usageLastFlush: time.Now()}
@@ -210,7 +240,15 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	s.openedSchema = s.schemaVersionLocked(context.Background())
-	if err := s.migrateSchema(context.Background()); err != nil {
+	if fresh {
+		// A brand-new database is created directly at v4 in one explicit
+		// bootstrap transaction: tables, governance columns, indexes, the
+		// isolated legacy domain and FTS.
+		if err := s.bootstrapV4(context.Background()); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	} else if err := s.checkReadiness(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -222,6 +260,76 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("memstore: forget ledger: %w", err)
 	}
 	return s, nil
+}
+
+// isFreshDatabase reports whether the file has no memory schema at all.
+// Existing databases are never touched during Open: migrating them is an
+// explicit, user-confirmed step.
+func isFreshDatabase(db *sql.DB) (bool, error) {
+	var n int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('meta','entries')`).Scan(&n); err != nil {
+		return false, err
+	}
+	return n == 0, nil
+}
+
+// bootstrapV4 creates the full v4 structure for a brand-new database.
+func (s *Store) bootstrapV4(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	plan := s.planV4(ctx) // must run before the transaction (MaxOpenConns(1))
+	fts := s.detectFTS(ctx)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := s.migrateToV4Locked(ctx, tx, plan, fts); err != nil {
+		return err
+	}
+	if err := s.setMetaLocked(ctx, tx, "schema_version", fmt.Sprintf("%d", CurrentSchemaVersion)); err != nil {
+		return err
+	}
+	if err := s.setMetaLocked(ctx, tx, "fts_tokenizer", fts.tokenizer); err != nil {
+		return err
+	}
+	if err := s.bumpRevision(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.openedSchema = CurrentSchemaVersion
+	s.pendingMigration = false
+	return nil
+}
+
+// checkReadiness decides whether an existing database may be used as-is. A
+// v3 database (or a v4 database missing objects) opens in fail-closed mode:
+// reads and writes return ErrMigrationRequired until the owner migrates.
+// Unsupported versions are rejected outright.
+func (s *Store) checkReadiness(ctx context.Context) error {
+	version := s.schemaVersionLocked(ctx)
+	if version > CurrentSchemaVersion {
+		return fmt.Errorf(
+			"memstore: database schema v%d is newer than this build (v%d); upgrade PicoClaw before using it",
+			version, CurrentSchemaVersion)
+	}
+	if version < MinMigratableSchemaVersion {
+		return fmt.Errorf(
+			"memstore: database schema v%d is not supported by this build; run a 0.6.x build once to upgrade it to v3, then retry",
+			version)
+	}
+	tokenizer := s.metaValueLocked(ctx, "fts_tokenizer")
+	fts := ftsPlan{available: tokenizer != "none", tokenizer: tokenizer}
+	plan := s.planV4(ctx)
+	if version == CurrentSchemaVersion && plan.complete() && s.ftsCompleteLocked(ctx, fts) {
+		s.pendingMigration = false
+		return nil
+	}
+	s.pendingMigration = true
+	return nil
 }
 
 func (s *Store) loadRevision() error {
@@ -362,6 +470,10 @@ func scanEntry(row scanner) (Entry, error) {
 
 // Add inserts or merges a memory after exact/near duplicate and conflict checks.
 func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	if strings.TrimSpace(in.Text) == "" {
 		return nil, fmt.Errorf("memstore: empty text")
 	}
@@ -764,6 +876,10 @@ func insertRelation(ctx context.Context, tx *sql.Tx, r Relation) error {
 
 // Get loads one entry with its sources.
 func (s *Store) Get(ctx context.Context, id string) (*Entry, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	row := s.db.QueryRowContext(ctx, `SELECT `+entryColumns+` FROM entries WHERE id=?`, id)
 	e, err := scanEntry(row)
 	if err != nil {
@@ -801,6 +917,10 @@ func (s *Store) Get(ctx context.Context, id string) (*Entry, error) {
 
 // List returns filtered entries ordered by importance and recency.
 func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	where := []string{"1=1"}
 	args := []any{}
 	if opts.Realm != "" {
@@ -867,6 +987,10 @@ func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
 // Correct so a correction gets a version and its own evidence; pinned_core
 // entries refuse text/audience/status changes unless force is set (B02).
 func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1006,6 +1130,10 @@ func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, err
 
 // SetStatus changes an entry's lifecycle status.
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {
+	if err := s.checkReady(); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1109,6 +1237,10 @@ func (s *Store) ResolveReview(ctx context.Context, id, action, targetID string) 
 
 // Compact archives expired entries and old low-value episodic memories.
 func (s *Store) Compact(ctx context.Context, retentionDays int) (int, error) {
+	if err := s.checkReady(); err != nil {
+		return 0, err
+	}
+
 	now := time.Now().UnixMilli()
 	s.mu.Lock()
 	defer s.mu.Unlock()

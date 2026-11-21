@@ -90,9 +90,9 @@ const (
 	FreshnessUnknown = "unknown"
 
 	// Sensitivity grades how carefully an entry may be used and shared.
-	SensitivityNormal   = "normal"
+	SensitivityNormal    = "normal"
 	SensitivitySensitive = "sensitive"
-	SensitivitySecret   = "secret"
+	SensitivitySecret    = "secret"
 )
 
 // Config controls the memory subsystem. It is copied from config.MemoryConfig.
@@ -271,16 +271,16 @@ type InspectResult struct {
 
 // ForgetPreview reports what a hard delete would remove.
 type ForgetPreview struct {
-	EntryID         string   `json:"entry_id"`
-	ContentHash     string   `json:"content_hash"`
-	Sources         int      `json:"sources"`
-	Relations       int      `json:"relations"`
-	ClusterIDs      []string `json:"cluster_ids"`
-	Summaries       int      `json:"summaries"`
-	AlreadyGone     bool     `json:"already_gone"`
+	EntryID          string   `json:"entry_id"`
+	ContentHash      string   `json:"content_hash"`
+	Sources          int      `json:"sources"`
+	Relations        int      `json:"relations"`
+	ClusterIDs       []string `json:"cluster_ids"`
+	Summaries        int      `json:"summaries"`
+	AlreadyGone      bool     `json:"already_gone"`
 	RelationshipKeys []string `json:"relationship_keys,omitempty"`
-	LedgerSeq       int64    `json:"ledger_seq,omitempty"`
-	RequestID       string   `json:"request_id,omitempty"`
+	LedgerSeq        int64    `json:"ledger_seq,omitempty"`
+	RequestID        string   `json:"request_id,omitempty"`
 }
 
 // FixedUsage accounts for the fixed prompt block and the boundary block.
@@ -400,29 +400,29 @@ type Overview struct {
 
 // RelationshipState is a current relationship attribute.
 type RelationshipState struct {
-	Key        string  `json:"key"`
-	Value      string  `json:"value"`
-	ValidFrom  int64   `json:"valid_from"`
-	Confidence float64 `json:"confidence"`
-	ExpiresAt  *int64  `json:"expires_at,omitempty"`
-	DomainID   string  `json:"domain_id,omitempty"`
-	Realm      string  `json:"realm,omitempty"`
-	Audience   string  `json:"audience,omitempty"`
-	SourceEventID string `json:"source_event_id,omitempty"`
+	Key           string  `json:"key"`
+	Value         string  `json:"value"`
+	ValidFrom     int64   `json:"valid_from"`
+	Confidence    float64 `json:"confidence"`
+	ExpiresAt     *int64  `json:"expires_at,omitempty"`
+	DomainID      string  `json:"domain_id,omitempty"`
+	Realm         string  `json:"realm,omitempty"`
+	Audience      string  `json:"audience,omitempty"`
+	SourceEventID string  `json:"source_event_id,omitempty"`
 }
 
 // RelationshipHistory is one archived version of a relationship attribute.
 type RelationshipHistory struct {
-	Key        string  `json:"key"`
-	Value      string  `json:"value"`
-	ValidFrom  int64   `json:"valid_from"`
-	ValidTo    int64   `json:"valid_to"`
-	Confidence float64 `json:"confidence"`
-	UpdatedAt  int64   `json:"updated_at"`
-	DomainID   string  `json:"domain_id,omitempty"`
-	Realm      string  `json:"realm,omitempty"`
-	Audience   string  `json:"audience,omitempty"`
-	SourceEventID string `json:"source_event_id,omitempty"`
+	Key           string  `json:"key"`
+	Value         string  `json:"value"`
+	ValidFrom     int64   `json:"valid_from"`
+	ValidTo       int64   `json:"valid_to"`
+	Confidence    float64 `json:"confidence"`
+	UpdatedAt     int64   `json:"updated_at"`
+	DomainID      string  `json:"domain_id,omitempty"`
+	Realm         string  `json:"realm,omitempty"`
+	Audience      string  `json:"audience,omitempty"`
+	SourceEventID string  `json:"source_event_id,omitempty"`
 }
 
 // Persona is a versioned character definition.

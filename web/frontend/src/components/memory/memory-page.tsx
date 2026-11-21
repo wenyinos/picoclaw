@@ -1039,7 +1039,7 @@ function MigrationTab({
   const applyMigration = () => {
     if (
       !window.confirm(
-        "将把 memory.db 从 v1/v2 升级到 schema v3：增加时间语义、证据链、关系网、治理日志和 FTS 索引，并执行存量数据修复。执行前会自动 VACUUM INTO 备份，只改分类和新增结构，不删除条目。继续吗？",
+        "将把 memory.db 从 schema v3 单段升级到 v4：新增权限域、渠道绑定、处理许可、来源事件、依赖/任务/审批计划、摘要证据与承诺表，并逐字段重建 sources 保留全部证据。执行前会自动 VACUUM INTO 备份；v1/v2 数据库需要先用 0.6.x 升到 v3。继续吗？",
       )
     ) {
       return
@@ -1050,7 +1050,7 @@ function MigrationTab({
       .then((r) => {
         setReport(r)
         onNotice(
-          `迁移完成：schema v${r.schema_version}，归位 predicate ${r.updated_predicates} 条，改判 ${r.reclassified} 条，恢复 ${r.restored} 条，FTS ${r.fts_rows} 行，备份：${r.backup}`,
+          `迁移完成：schema v${r.previous_schema_version} → v${r.schema_version}，条目 ${r.total}（active ${r.active}），域 ${r.domains_created ?? 0} 个，来源 ${r.sources_rebuilt ?? 0} 行，备份：${r.backup}`,
         )
         load()
       })
@@ -1080,18 +1080,20 @@ function MigrationTab({
       label: "数据库大小",
       value: `${Math.round((status?.db_size ?? 0) / 1024)} KB`,
     },
+    { label: "记忆域", value: status?.domains ?? 0 },
+    { label: "后台任务", value: status?.jobs ?? 0 },
   ]
 
   return (
     <div className="flex flex-col gap-4">
       <div className="rounded-lg border p-4">
-        <h2 className="text-sm font-semibold">数据库一键迁移（v1 / v2 → v3）</h2>
+        <h2 className="text-sm font-semibold">数据库一键迁移（v3 → v4）</h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          schema v3 增加时间语义（event_time_precision / valid_from / valid_to）、证据链
-          sources、关系网 memory_relations、治理日志 memory_operations、场景胶囊和 FTS
-          索引；v1 数据库会在同一个事务里先补齐 v2 再升级 v3。打开本页时会先做一次
-          schema 检查并自动备份；下方按钮用于执行或重新执行迁移与存量修复。只改分类、
-          新增结构，不删除记录。
+          schema v4 新增权限域与渠道绑定、处理用途许可、来源事件、依赖/任务/审批计划、
+          摘要证据、承诺与主动回忆表，并为 entries/sources/relationship 补充治理列。
+          sources 会逐字段重建，证据原文、模型、置信度与确认标志全部保留；旧数据进入
+          隔离域 legacy_unassigned，不猜测归属。只接受 v3 数据库：v1/v2 请先用 0.6.x
+          升到 v3。迁移幂等、整段事务，执行前自动 VACUUM INTO 备份。
         </p>
         <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
           {stats.map((s) => (
@@ -1143,9 +1145,12 @@ function MigrationTab({
             <div>
               条目：{report.total}（active {report.active}）
             </div>
-            <div>空 predicate：{report.empty_predicate}</div>
-            <div>已处理：{report.updated_predicates}</div>
-            <div>已映射 relationship：{report.mapped_relationships}</div>
+            <div>来源：{report.sources_rebuilt ?? 0} 行</div>
+            <div>
+              已认领域条目：{report.entries_with_domain ?? 0} · 隔离域：
+              {Math.max(0, report.total - (report.entries_with_domain ?? 0))}
+            </div>
+            <div>记忆域：{report.domains_created ?? 0} 个</div>
             <div className="break-all">备份：{report.backup}</div>
           </div>
         </div>
@@ -1154,12 +1159,14 @@ function MigrationTab({
       <div className="rounded-lg border p-4">
         <h3 className="text-sm font-semibold">迁移后建议</h3>
         <ul className="text-muted-foreground mt-2 list-disc space-y-1 pl-5 text-sm">
-          <li>空 predicate 会变成“待分类”，可在记忆库中逐条编辑。</li>
-          <li>relationship 条目现在会进入检索候选，但单次最多 2 条。</li>
           <li>
-            persona 默认是 private/real；伴侣人设请显式设为 fictional/private。
+            旧条目进入隔离域 legacy_unassigned；认领前只用于审计，不会被当作已授权画像注入。
           </li>
-          <li>迁移可重复执行；每次都会先生成新的 VACUUM INTO 备份。</li>
+          <li>
+            forget-ledger.db 与 memory.db 同目录，必须一起备份；账本丢失时遗忘操作会故障关闭。
+          </li>
+          <li>v1/v2 数据库不会被就地升级，先用 0.6.x 打开一次升到 v3。</li>
+          <li>迁移可重复执行；每次都会先生成新的 VACUUM INTO 备份，第二次运行零变更。</li>
         </ul>
       </div>
     </div>

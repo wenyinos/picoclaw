@@ -21,6 +21,10 @@ func EstimateTokens(s string) int {
 // Search scores active entries for a query using the hybrid channels
 // (anchor, FTS, LIKE, temporal) and returns the top matches.
 func (s *Store) Search(ctx context.Context, opts SearchOptions) ([]Entry, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	scored, err := s.retrieveCandidates(ctx, opts, false)
 	if err != nil {
 		return nil, err

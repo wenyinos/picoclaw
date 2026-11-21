@@ -102,7 +102,9 @@ Fixed, boundary, and retrieval blocks are accounted separately. The boundary blo
 
 ## Database migration (schema v4)
 
-0.7.0 upgrades `memory.db` from v3 to v4 in a single segment; the old v1 → v2 → v3 chain was removed. A v1/v2 database is rejected with an explicit error and must be opened once with a 0.6.x build first. v4 adds ownership domains and actor bindings, processing grants, origin events, dependency/job/plan tables, summary evidence, commitments and recalls, and the independent forget ledger.
+PicoClaw 0.7.2 and later never migrate on startup: an existing v3 database (or a v4 database missing objects) opens in fail-closed mode, ordinary reads/writes return `schema migration required`, and the owner runs the explicit migration from `/memory` or `picoclaw memory migrate`. A brand-new database is bootstrapped directly at v4.
+
+The v3 → v4 segment is the only migration this build ships; the old v1 → v2 → v3 chain was removed. A v1/v2 database is rejected with an explicit error and must be opened once with a 0.6.x build first. v4 adds ownership domains and actor bindings, processing grants, origin events, dependency/job/plan tables, summary evidence, commitments and recalls, and the independent forget ledger.
 
 The migration is one guarded segment:
 
@@ -162,13 +164,13 @@ picoclaw memory render   # optional Markdown export, never read back
 
 `memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does. `memory forget` without `--yes` is a dry run. `memory replay-forget` re-applies forget tombstones after restoring an older backup.
 
-## Migrating to 0.7.0
+## Migrating to 0.7.0+
 
-0.3.x → 0.4.x used a one-time `memory import` to move the old `MEMORY.md` into SQLite. 0.4.x → 0.5.x upgraded to schema v3 on first open. 0.7.0 upgrades v3 → v4; a v1/v2 database must pass through a 0.6.x build first, because the old migration chain is no longer shipped.
+0.3.x → 0.4.x used a one-time `memory import` to move the old `MEMORY.md` into SQLite. 0.4.x → 0.5.x upgraded to schema v3 on first open. 0.7.x upgrades v3 → v4 only when you run the migration explicitly; a v1/v2 database must pass through a 0.6.x build first, because the old migration chain is no longer shipped.
 
 1. Stop the gateway and launcher.
 2. Back up the old `workspace/memory` including `forget-ledger.db` once it exists.
-3. Start 0.7.0 and run the migration from `/memory` → “Database migration”; for a 0.3.x workspace, run `memory import` once first, and for a pre-v3 database run a 0.6.x build once.
+3. Start 0.7.x. Memory reads/writes stay disabled until you run the migration from `/memory` → “Database migration” or `picoclaw memory migrate`; for a 0.3.x workspace, run `memory import` once first, and for a pre-v3 database run a 0.6.x build once.
 4. Verify with `PRAGMA integrity_check`, `picoclaw memory audit`, and entry counts; check that a public channel cannot see a `fictional/private` persona.
 
 ## API

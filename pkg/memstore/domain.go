@@ -20,12 +20,12 @@ const (
 
 // Processing purposes bound by memory_processing_grants.
 const (
-	PurposeChat         = "chat"
-	PurposeToolForward  = "tool_forward"
-	PurposeSummary      = "summary"
-	PurposeExtraction   = "llm_extraction"
-	PurposeEmbedding    = "embedding"
-	PurposeProactive    = "proactive"
+	PurposeChat        = "chat"
+	PurposeToolForward = "tool_forward"
+	PurposeSummary     = "summary"
+	PurposeExtraction  = "llm_extraction"
+	PurposeEmbedding   = "embedding"
+	PurposeProactive   = "proactive"
 )
 
 // MemoryContext is the trusted caller context for every memory read or write.

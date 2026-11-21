@@ -158,18 +158,18 @@ func (svc *MemoryService) requireTarget(ctx context.Context, mc MemoryContext, i
 // ChangePlan is a one-shot previewed governance action. The model may create
 // a plan; only an owner-approved plan executes (FR-05).
 type ChangePlan struct {
-	PlanID          string `json:"plan_id"`
-	Action          string `json:"action"`
-	TargetKind      string `json:"target_kind"`
-	TargetID        string `json:"target_id"`
-	ExpectedRevision int64 `json:"expected_revision"`
-	ParamsDigest    string `json:"params_digest"`
-	Payload         string `json:"payload,omitempty"`
-	Status          string `json:"status"`
-	ApprovedBy      string `json:"approved_by,omitempty"`
-	ExpiresAt       int64  `json:"expires_at"`
-	CreatedAt       int64  `json:"created_at"`
-	ExecutedAt      *int64 `json:"executed_at,omitempty"`
+	PlanID           string `json:"plan_id"`
+	Action           string `json:"action"`
+	TargetKind       string `json:"target_kind"`
+	TargetID         string `json:"target_id"`
+	ExpectedRevision int64  `json:"expected_revision"`
+	ParamsDigest     string `json:"params_digest"`
+	Payload          string `json:"payload,omitempty"`
+	Status           string `json:"status"`
+	ApprovedBy       string `json:"approved_by,omitempty"`
+	ExpiresAt        int64  `json:"expires_at"`
+	CreatedAt        int64  `json:"created_at"`
+	ExecutedAt       *int64 `json:"executed_at,omitempty"`
 }
 
 // CreateChangePlan previews an action and stores it as a pending plan.

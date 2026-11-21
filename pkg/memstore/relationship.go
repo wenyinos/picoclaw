@@ -98,6 +98,10 @@ type RelationshipUpdate struct {
 // SetRelationshipFull writes one relationship attribute with explicit domain
 // and provenance.
 func (s *Store) SetRelationshipFull(ctx context.Context, u RelationshipUpdate) error {
+	if err := s.checkReady(); err != nil {
+		return err
+	}
+
 	key := trimSpace(u.Key)
 	if key == "" {
 		return fmt.Errorf("memstore: empty relationship key")

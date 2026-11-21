@@ -46,9 +46,9 @@ type MigrationStatus struct {
 	LastMigrationAt        int64  `json:"last_migration_at,omitempty"`
 
 	// V4 additions.
-	Domains    int `json:"domains"`
+	Domains      int `json:"domains"`
 	OriginEvents int `json:"origin_events"`
-	Jobs       int `json:"jobs"`
+	Jobs         int `json:"jobs"`
 	Dependencies int `json:"dependencies"`
 }
 
@@ -259,15 +259,15 @@ var v4SummaryColumns = []string{"domain_id", "generation", "input_fingerprint", 
 // v4Plan is computed before BeginTx: Store uses MaxOpenConns(1), so any s.db
 // query while the transaction holds the connection would deadlock.
 type v4Plan struct {
-	entryCols      map[string]bool
-	relCols        map[string]bool
-	relHistCols    map[string]bool
-	opCols         map[string]bool
-	clusterCols    map[string]bool
-	summaryCols    map[string]bool
-	sourceCols     map[string]bool
+	entryCols        map[string]bool
+	relCols          map[string]bool
+	relHistCols      map[string]bool
+	opCols           map[string]bool
+	clusterCols      map[string]bool
+	summaryCols      map[string]bool
+	sourceCols       map[string]bool
 	sourcesHasOrigin bool
-	missingTables  map[string]bool
+	missingTables    map[string]bool
 }
 
 func (s *Store) planV4(ctx context.Context) v4Plan {
@@ -966,6 +966,7 @@ func (s *Store) ApplyMigration(ctx context.Context) (MigrationReport, error) {
 	}
 
 	report := MigrationReport{PreviousSchemaVersion: previous}
+	s.pendingMigration = false
 	report.SchemaVersion = s.schemaVersionLocked(ctx)
 	report.Backup = s.metaValueLocked(ctx, "last_migration_backup")
 	report.FTSTokenizer = s.metaValueLocked(ctx, "fts_tokenizer")
@@ -978,8 +979,7 @@ func (s *Store) ApplyMigration(ctx context.Context) (MigrationReport, error) {
 	}
 	_ = s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM entries WHERE domain_id <> 'legacy_unassigned'`).Scan(&report.EntriesWithDomain)
-	_ = s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM entries WHERE domain_id = 'legacy_unassigned'`).Scan(&report.SourcesRebuilt)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources`).Scan(&report.SourcesRebuilt)
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_domains`).Scan(&report.DomainsCreated)
 	return report, nil
 }
@@ -1028,12 +1028,12 @@ func (s *Store) RepairData(ctx context.Context) (MigrationReport, error) {
 		return MigrationReport{}, err
 	}
 	report.SchemaVersion = s.schemaVersionLocked(ctx)
+	s.pendingMigration = false
 	report.Backup = backup
 	report.FTSTokenizer = s.metaValueLocked(ctx, "fts_tokenizer")
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries`).Scan(&report.Total)
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries WHERE status='active'`).Scan(&report.Active)
-	_ = s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM entries WHERE domain_id = 'legacy_unassigned'`).Scan(&report.SourcesRebuilt)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources`).Scan(&report.SourcesRebuilt)
 	return report, nil
 }
 

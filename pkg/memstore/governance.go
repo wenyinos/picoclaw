@@ -70,6 +70,10 @@ func (s *Store) Inspect(ctx context.Context, id string) (*InspectResult, error) 
 // Confirm marks a memory as user-confirmed: it gains a confirmed source,
 // confidence rises to 0.95 and pending_review entries become active.
 func (s *Store) Confirm(ctx context.Context, id, evidence string) error {
+	if err := s.checkReady(); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -183,6 +187,10 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 // Relationship-state copies (nicknames, birthdays, moods) are removed with the
 // entry: forgetting "call me X" must not leave the prompt block saying X.
 func (s *Store) Forget(ctx context.Context, id string, dryRun bool) (*ForgetPreview, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -374,6 +382,10 @@ func relationshipKeysForPredicate(predicate, subject string) []string {
 // to entries that came back after restoring an older backup. It matches by
 // versioned HMAC, so a restored database never needs the deleted text.
 func (s *Store) ReplayForget(ctx context.Context) (int, error) {
+	if err := s.checkReady(); err != nil {
+		return 0, err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
