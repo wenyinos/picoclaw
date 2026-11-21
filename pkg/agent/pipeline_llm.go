@@ -246,6 +246,11 @@ func (p *Pipeline) CallLLM(
 			candidateThinking := thinkingSettingsFromModelConfig(candidateCfg)
 			applyThinkingOption(callOpts, candidateProvider, candidateThinking, true, ts.agent.ID)
 			exec.suppressReasoning = shouldSuppressReasoningFor(candidateThinking)
+			// Every candidate — primary, fallback and retry — passes the same
+			// recipient policy before the request leaves the process.
+			if err := p.checkMemoryEgress(candidate.Provider, candidate.Model); err != nil {
+				return nil, err
+			}
 			return candidateProvider.Chat(ctx, messagesForCall, candidateTools, candidate.Model, callOpts)
 		}
 

@@ -84,9 +84,21 @@ func (s *Store) EnqueueJob(ctx context.Context, j Job) error {
 	return s.bumpRevisionLocked(ctx)
 }
 
-// LeaseJob atomically claims one runnable job for owner. It skips pending
-// forget work only if another lease holds it.
+// LeaseJob atomically claims one runnable job for owner.
 func (s *Store) LeaseJob(ctx context.Context, owner string, leaseFor time.Duration) (*Job, error) {
+	return s.leaseJob(ctx, owner, "", leaseFor)
+}
+
+// LeaseJobKind claims one runnable job of a specific kind. Cleanup workers use
+// it so an extraction backlog cannot delay accepted forget obligations.
+func (s *Store) LeaseJobKind(ctx context.Context, owner, kind string, leaseFor time.Duration) (*Job, error) {
+	if strings.TrimSpace(kind) == "" {
+		return nil, fmt.Errorf("memstore: job kind is required")
+	}
+	return s.leaseJob(ctx, owner, kind, leaseFor)
+}
+
+func (s *Store) leaseJob(ctx context.Context, owner, kind string, leaseFor time.Duration) (*Job, error) {
 	if leaseFor <= 0 {
 		leaseFor = 2 * time.Minute
 	}
@@ -99,16 +111,20 @@ func (s *Store) LeaseJob(ctx context.Context, owner string, leaseFor time.Durati
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	row := tx.QueryRowContext(ctx,
-		`SELECT id,job_id,job_kind,input_fingerprint,generation,policy_revision,
+	q := `SELECT id,job_id,job_kind,input_fingerprint,generation,policy_revision,
 		        lease_owner,lease_until,state,attempts,next_run_at,priority,last_error,payload,
 		        created_at,updated_at
 		 FROM memory_jobs
 		 WHERE state IN ('pending','running')
 		   AND (next_run_at IS NULL OR next_run_at <= ?)
-		   AND (lease_until IS NULL OR lease_until < ?)
-		 ORDER BY priority ASC, COALESCE(next_run_at, created_at) ASC, id ASC
-		 LIMIT 1`, now, now)
+		   AND (lease_until IS NULL OR lease_until < ?)`
+	args := []any{now, now}
+	if kind != "" {
+		q += ` AND job_kind=?`
+		args = append(args, kind)
+	}
+	q += ` ORDER BY priority ASC, COALESCE(next_run_at, created_at) ASC, id ASC LIMIT 1`
+	row := tx.QueryRowContext(ctx, q, args...)
 	j, err := scanJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

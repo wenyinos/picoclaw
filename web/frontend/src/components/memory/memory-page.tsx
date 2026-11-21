@@ -4,7 +4,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  type MemoryChangePlan,
+  type MemoryCluster,
+  type MemoryCommitment,
+  type MemoryDomain,
   type MemoryEntry,
+  type MemoryLedgerHealth,
   type MemoryMigrationReport,
   type MemoryMigrationStatus,
   type MemoryOverview,
@@ -12,6 +17,7 @@ import {
   type MemoryRepairPreview,
   type MemoryRepairTarget,
   type MemorySettings,
+  type MemorySummaryVersion,
   type Persona,
   type RelationshipValue,
   memoryApi,
@@ -23,6 +29,7 @@ const TABS = [
   "entries",
   "review",
   "relationship",
+  "governance",
   "settings",
   "repair",
 ] as const
@@ -34,6 +41,7 @@ const TAB_LABELS: Record<Tab, string> = {
   entries: "记忆库",
   review: "审核",
   relationship: "关系与人格",
+  governance: "治理与运行",
   settings: "设置",
   repair: "数据库修复",
 }
@@ -108,6 +116,9 @@ export function MemoryPage() {
         {tab === "relationship" && (
           <RelationshipTab onError={setError} onNotice={setNotice} />
         )}
+        {tab === "governance" && (
+          <GovernanceTab onError={setError} onNotice={setNotice} />
+        )}
         {tab === "settings" && (
           <SettingsTab onError={setError} onNotice={setNotice} />
         )}
@@ -115,6 +126,239 @@ export function MemoryPage() {
           <RepairTab onError={setError} onNotice={setNotice} />
         )}
       </div>
+    </div>
+  )
+}
+
+function GovernanceTab({
+  onError,
+  onNotice,
+}: {
+  onError: (v: string) => void
+  onNotice: (v: string) => void
+}) {
+  const [health, setHealth] = useState<MemoryLedgerHealth | null>(null)
+  const [plans, setPlans] = useState<MemoryChangePlan[]>([])
+  const [jobStats, setJobStats] = useState<Record<string, number>>({})
+  const [domains, setDomains] = useState<MemoryDomain[]>([])
+  const [commitments, setCommitments] = useState<MemoryCommitment[]>([])
+  const [clusters, setClusters] = useState<MemoryCluster[]>([])
+  const [summaries, setSummaries] = useState<
+    Record<string, MemorySummaryVersion[]>
+  >({})
+
+  const load = async () => {
+    const [h, p, j, d, c, cl] = await Promise.all([
+      memoryApi.ledgerHealth(),
+      memoryApi.plans("pending"),
+      memoryApi.jobs(),
+      memoryApi.domains(),
+      memoryApi.commitments(true),
+      memoryApi.clusters(),
+    ])
+    setHealth(h)
+    setPlans(p.plans)
+    setJobStats(j.stats)
+    setDomains(d.domains)
+    setCommitments(c.commitments)
+    setClusters(cl.clusters)
+  }
+
+  useEffect(() => {
+    load().catch((e: Error) => onError(e.message))
+  }, [])
+
+  const approve = async (id: string) => {
+    try {
+      await memoryApi.approvePlan(id)
+      onNotice(`计划 ${id} 已执行`)
+      await load()
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+
+  const replay = async () => {
+    try {
+      const r = await memoryApi.replayForget()
+      onNotice(`账本重放完成：删除 ${r.removed} 条复活数据`)
+      await load()
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+
+  const loadSummaries = async (clusterID: string) => {
+    try {
+      const r = await memoryApi.summaries(clusterID)
+      setSummaries((prev) => ({ ...prev, [clusterID]: r.summaries }))
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+
+  const generate = async (clusterID: string) => {
+    try {
+      await memoryApi.generateSummary(clusterID)
+      onNotice("摘要已生成并绑定证据")
+      await loadSummaries(clusterID)
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <section className="rounded-lg border p-4">
+        <h2 className="mb-3 text-sm font-semibold">遗忘账本</h2>
+        {!health ? (
+          <p className="text-muted-foreground text-sm">加载中…</p>
+        ) : health.available ? (
+          <div className="flex flex-col gap-2 text-sm">
+            <div className="text-muted-foreground text-xs break-all">
+              {health.path} · key {health.key_id}
+            </div>
+            <div>
+              待清理义务：{health.pending ?? 0} 条；账本 UUID：{health.ledger_uuid}
+            </div>
+            <div>
+              <Button size="sm" variant="outline" onClick={replay}>
+                重放账本（恢复后使用）
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-red-500">
+            账本不可用：{health.reason ?? "未打开"}。破坏性遗忘操作会故障关闭。
+          </p>
+        )}
+      </section>
+
+      <section className="rounded-lg border p-4">
+        <h2 className="mb-3 text-sm font-semibold">待审批计划</h2>
+        {plans.length === 0 ? (
+          <p className="text-muted-foreground text-sm">没有待审批计划。</p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {plans.map((p) => (
+              <div
+                key={p.plan_id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <div className="truncate">
+                    {p.action} → {p.target_id}
+                  </div>
+                  <div className="text-muted-foreground text-xs">
+                    期望版本 r{p.expected_revision} · 过期{" "}
+                    {fmtDate(p.expires_at)}
+                  </div>
+                </div>
+                <Button size="sm" onClick={() => approve(p.plan_id)}>
+                  批准并执行
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border p-4">
+        <h2 className="mb-3 text-sm font-semibold">后台任务</h2>
+        <div className="flex flex-wrap gap-2 text-sm">
+          {Object.keys(jobStats).length === 0 ? (
+            <span className="text-muted-foreground">没有任务。</span>
+          ) : (
+            Object.entries(jobStats).map(([state, n]) => (
+              <span key={state} className="rounded-md border px-2 py-1">
+                {state}: {n}
+              </span>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-lg border p-4">
+        <h2 className="mb-3 text-sm font-semibold">记忆域</h2>
+        {domains.length === 0 ? (
+          <p className="text-muted-foreground text-sm">没有域。</p>
+        ) : (
+          <div className="flex flex-col gap-1 text-sm">
+            {domains.map((d) => (
+              <div key={d.domain_id} className="flex justify-between gap-2">
+                <span className="truncate">{d.domain_id}</span>
+                <span className="text-muted-foreground text-xs">
+                  {d.status} · epoch {d.policy_epoch}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border p-4">
+        <h2 className="mb-3 text-sm font-semibold">承诺</h2>
+        {commitments.length === 0 ? (
+          <p className="text-muted-foreground text-sm">没有承诺。</p>
+        ) : (
+          <div className="flex flex-col gap-1 text-sm">
+            {commitments.map((c) => (
+              <div key={c.id} className="flex justify-between gap-2">
+                <span className="truncate">{c.text}</span>
+                <span className="text-muted-foreground text-xs">
+                  {c.status} · {fmtDate(c.due_at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border p-4">
+        <h2 className="mb-3 text-sm font-semibold">阶段摘要</h2>
+        {clusters.length === 0 ? (
+          <p className="text-muted-foreground text-sm">没有主题/阶段簇。</p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {clusters.map((c) => (
+              <div key={c.id} className="rounded-md border p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{c.title}</div>
+                    <div className="text-muted-foreground text-xs">
+                      {c.id} · generation {c.generation ?? 1}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => loadSummaries(c.id)}
+                    >
+                      查看摘要
+                    </Button>
+                    <Button size="sm" onClick={() => generate(c.id)}>
+                      生成摘要
+                    </Button>
+                  </div>
+                </div>
+                {(summaries[c.id] ?? []).length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {(summaries[c.id] ?? []).map((s) => (
+                      <div key={s.id} className="text-xs">
+                        <span className="text-muted-foreground">
+                          v{s.version} · {s.status}
+                        </span>{" "}
+                        {s.summary}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }

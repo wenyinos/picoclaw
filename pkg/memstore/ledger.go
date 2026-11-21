@@ -52,13 +52,14 @@ type ForgetIntent struct {
 }
 
 // ForgetTargetManifest is the minimal set of identifiers needed to replay a
-// cleanup without the deleted rows: entry ids, relationship-state keys and
-// content digests (never text).
+// cleanup without the deleted rows: entry ids, relationship-state keys,
+// content digests (never text) and message locators.
 type ForgetTargetManifest struct {
-	EntryIDs         []string `json:"entry_ids,omitempty"`
-	RelationshipKeys []string `json:"relationship_keys,omitempty"`
-	CapsuleIDs       []string `json:"capsule_ids,omitempty"`
-	OriginEventIDs   []string `json:"origin_event_ids,omitempty"`
+	EntryIDs         []string        `json:"entry_ids,omitempty"`
+	RelationshipKeys []string        `json:"relationship_keys,omitempty"`
+	CapsuleIDs       []string        `json:"capsule_ids,omitempty"`
+	OriginEventIDs   []string        `json:"origin_event_ids,omitempty"`
+	Locators         []SourceLocator `json:"locators,omitempty"`
 }
 
 // LedgerPathFor derives the ledger path next to the database file.

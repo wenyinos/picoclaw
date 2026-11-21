@@ -1,5 +1,24 @@
 # 变更日志
 
+## v0.7.1
+
+### 新增
+
+- **发送点门禁**：`memory.allowed_chat_recipients` 白名单在每次实际模型调用前检查（主调用、fallback 候选、流式调用），未列入的 provider 返回不可重试的 `memory egress denied`，不会被静默改投。空列表保持兼容模式，不阻断现有部署。
+- **跨存储清理执行器**：`forget` 在删除事务内写入 `memory_jobs`（`forget_cleanup`），manifest 保留来源消息定位与证据 HMAC（不存正文）。`picoclaw memory cleanup` 消费任务，对 JSONL 会话做精确内容匹配删除；匹配不到时报告 `unavailable/partial`，不伪造成功。
+- **前端治理工作台**：`/memory` 新增“治理与运行”页，展示遗忘账本健康与待清理义务、待审批计划、后台任务统计、记忆域、承诺和阶段摘要，并支持批准计划、重放账本、生成摘要。
+
+### 修复
+
+- 清理任务与遗忘义务在同一主库事务提交，崩溃后不会丢失跨存储清理目标。
+- 清理只处理 `forget_cleanup` 类型任务，抽取/摘要任务不会被清理 worker 误消费。
+
+### 升级
+
+- 无 Schema 变更（仍为 v4），无配置迁移。
+- 如需启用接收方白名单，在 `config.json` 的 `memory.allowed_chat_recipients` 中列出 `provider` 或 `provider/model`；不配置时行为与 0.7.0 一致。
+- 运行 `picoclaw memory cleanup` 可处理升级前遗留的清理义务。
+
 ## v0.7.0
 
 ### 新增

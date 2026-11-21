@@ -223,6 +223,18 @@ func (s *Store) Forget(ctx context.Context, id string, dryRun bool) (*ForgetPrev
 	if s.ledger == nil {
 		return nil, fmt.Errorf("memstore: forget ledger unavailable; refusing destructive forget")
 	}
+	// Capture message locators while the sources still exist; after the delete
+	// there is nothing left to point the cleanup worker at.
+	locators, err := s.sourceLocatorsLocked(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	manifest := ForgetTargetManifest{
+		EntryIDs:         []string{id},
+		RelationshipKeys: relKeys,
+		CapsuleIDs:       clusters,
+		Locators:         locators,
+	}
 	digest, keyID, hashVersion := s.ledger.Digest(text)
 	intent, err := s.ledger.RecordIntent(ctx, ForgetIntent{
 		DomainID:       domainID,
@@ -231,11 +243,7 @@ func (s *Store) Forget(ctx context.Context, id string, dryRun bool) (*ForgetPrev
 		HashVersion:    hashVersion,
 		KeyID:          keyID,
 		ScopeJSON:      `{"kind":"entry"}`,
-		TargetManifest: MarshalManifest(ForgetTargetManifest{
-			EntryIDs:         []string{id},
-			RelationshipKeys: relKeys,
-			CapsuleIDs:       clusters,
-		}),
+		TargetManifest: MarshalManifest(manifest),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("memstore: forget journal: %w", err)
@@ -288,6 +296,11 @@ func (s *Store) Forget(ctx context.Context, id string, dryRun bool) (*ForgetPrev
 		Reason: "user forget", AffectedCount: affected, CreatedAt: now,
 		RequestID: intent.RequestID, ReasonCode: "user_request",
 	}); err != nil {
+		return nil, err
+	}
+	// The cross-store cleanup obligation is committed with the deletion: a
+	// crash after commit still leaves a durable job pointing at the messages.
+	if err := enqueueCleanupJobTx(ctx, tx, intent.RequestID, MarshalManifest(manifest)); err != nil {
 		return nil, err
 	}
 	if err := s.bumpRevision(ctx, tx); err != nil {

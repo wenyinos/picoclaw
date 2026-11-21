@@ -13,6 +13,7 @@ import (
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/memstore"
+	sessionmem "github.com/sipeed/picoclaw/pkg/memory"
 )
 
 // NewMemoryCommand returns the `picoclaw memory` command group.
@@ -28,6 +29,7 @@ func NewMemoryCommand() *cobra.Command {
 		newRebuildFTSCommand(),
 		newForgetCommand(),
 		newReplayForgetCommand(),
+		newCleanupCommand(),
 		newCapsuleCommand(),
 		newImportCommand(),
 		newAuditCommand(),
@@ -237,6 +239,47 @@ func openStore() (*memstore.Store, *config.Config, error) {
 		return nil, nil, err
 	}
 	return store, cfg, nil
+}
+
+// newCleanupCommand drains queued forget-cleanup jobs into the session JSONL
+// backend. It deletes only messages whose content exactly matches the HMAC
+// recorded at forget time and reports anything it cannot verify as partial.
+func newCleanupCommand() *cobra.Command {
+	var maxJobs int
+	cmd := &cobra.Command{
+		Use:   "cleanup",
+		Short: "Drain queued forget-cleanup jobs against session JSONL",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, cfg, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			ledger := store.ForgetLedgerRef()
+			if ledger == nil {
+				return fmt.Errorf("forget ledger unavailable; nothing cleaned")
+			}
+			sessionsDir := filepath.Join(cfg.Agents.Defaults.Workspace, "sessions")
+			sessionStore, err := sessionmem.NewJSONLStore(sessionsDir)
+			if err != nil {
+				return err
+			}
+			defer sessionStore.Close()
+			cleaner := sessionmem.NewLocatorCleaner(sessionStore, func(text string) string {
+				digest, _, _ := ledger.Digest(text)
+				return digest
+			})
+			outcome, err := store.RunCleanupJobs(context.Background(), cleaner, maxJobs)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(outcome)
+		},
+	}
+	cmd.Flags().IntVar(&maxJobs, "max-jobs", 20, "maximum cleanup jobs to process")
+	return cmd
 }
 
 func newImportCommand() *cobra.Command {
