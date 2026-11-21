@@ -64,6 +64,11 @@ type MemoryConfig struct {
 	AutoExtract              bool     `json:"auto_extract"`
 	ExtractModel             string   `json:"extract_model,omitempty"`
 	PrivateChannelExclusions []string `json:"private_channel_exclusions,omitempty"`
+	// Deprecated since 0.7.3: the value is ignored and every channel reads
+	// private memories by default (opt out via PrivateChannelExclusions). The
+	// field must stay defined so config files written by 0.7.2 and earlier
+	// still pass strict unknown-field validation.
+	PrivateChannels []string `json:"private_channels,omitempty"`
 	InjectFictional          bool     `json:"inject_fictional"`
 	ReviewRequired           bool     `json:"review_required"`
 	EpisodicRetentionDays    int      `json:"episodic_retention_days,omitempty"`
@@ -1602,8 +1607,13 @@ func applyMemoryDefaults(cfg *Config, memoryConfigured bool) {
 		cfg.Memory.BudgetTokens = 1200
 	}
 	// PrivateChannelExclusions intentionally defaults to empty: every channel
-	// is private by default (0.7.3), and owners opt out per channel. The old
-	// private_channels allow-list field is no longer read.
+	// is private by default (0.7.3), and owners opt out per channel.
+	if len(cfg.Memory.PrivateChannels) > 0 {
+		logger.WarnCF("config",
+			"memory.private_channels is deprecated and ignored; private memories are visible to every channel by default, use private_channel_exclusions to opt out",
+			map[string]any{"deprecated_value": cfg.Memory.PrivateChannels})
+		cfg.Memory.PrivateChannels = nil
+	}
 	if cfg.Memory.EpisodicRetentionDays <= 0 {
 		cfg.Memory.EpisodicRetentionDays = 365
 	}

@@ -3270,3 +3270,34 @@ func testChannelsConfigWithTokens() ChannelsConfig {
 	}
 	return channels
 }
+
+func TestLoadConfig_LegacyPrivateChannelsStillLoads(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	// Config files written by 0.7.2 and earlier keep memory.private_channels.
+	// Strict unknown-field validation must not reject them (0.7.3 regression),
+	// the value is ignored and the exclusion list stays empty by default.
+	raw := `{
+		"version": 3,
+		"memory": {
+			"enabled": true,
+			"db_path": "memory/memory.db",
+			"budget_tokens": 1200,
+			"auto_extract": true,
+			"private_channels": ["pico", "qq"],
+			"private_channel_exclusions": ["weixin"],
+			"inject_fictional": false,
+			"review_required": true
+		}
+	}`
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("WriteFile(configPath): %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	assert.Nil(t, cfg.Memory.PrivateChannels,
+		"deprecated allow-list must be cleared after load")
+	assert.Equal(t, []string{"weixin"}, cfg.Memory.PrivateChannelExclusions)
+}

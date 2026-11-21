@@ -1,5 +1,17 @@
 # 变更日志
 
+## v0.7.4
+
+### 修复
+
+- **修复 0.7.3 的启动阻断**：配置加载是严格未知字段校验，0.7.3 删除 `private_channels` 字段后，旧 `config.json` 里残留的该字段直接导致 `Failed to load config: unknown field(s): memory.private_channels`，gateway 无法启动、systemd 反复重启。0.7.4 恢复该字段定义（标记 Deprecated），旧配置可正常加载；值被忽略并记录一条告警，默认全渠道私密语义不变。
+- 新增回归测试：含 `private_channels` 的旧配置必须能加载、加载后字段清空、`private_channel_exclusions` 不受影响。
+
+### 升级
+
+- 无 Schema 变更。从 0.7.2/0.7.3 升级只需覆盖二进制并重启。
+- 如果已经手动删除过 config.json 里的 `private_channels` 行，无需改回。
+
 ## v0.7.3
 
 ### 修复
