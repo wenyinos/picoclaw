@@ -103,7 +103,7 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		where = append(where, "domain_id=?")
 		args = append(args, domainID)
 
-		audience, audienceArgs := audienceSQLFor(opts.ChatKindHint, opts.Channel, opts.PrivateChannels)
+		audience, audienceArgs := audienceSQLFor(opts.ChatKindHint, opts.Channel, opts.PrivateChannelExclusions)
 		where = append(where, audience)
 		args = append(args, audienceArgs...)
 	}
@@ -370,7 +370,7 @@ func (s *Store) BuildFixedContext(
 	if persona, err := s.GetActivePersonaForChannel(ctx, channel, privateChannels, injectFictional); err == nil && persona != nil {
 		parts = append(parts, "## 角色设定\n"+strings.TrimSpace(persona.Content))
 	}
-	includeRelationship := channel == "" || containsChannel(privateChannels, channel)
+	includeRelationship := channel == "" || channelIsPrivate(channel, privateChannels)
 	if includeRelationship {
 		if rel, err := s.GetRelationship(ctx); err == nil && len(rel) > 0 {
 			var b strings.Builder
@@ -480,7 +480,7 @@ func (s *Store) BuildRetrievalContext(
 	}
 	opts := SearchOptions{
 		Query: query, Channel: channel, Limit: 200, IncludeFic: injectFictional,
-		PrivateChannels: privateChannels,
+		PrivateChannelExclusions: privateChannels,
 	}
 	entries, err := s.Search(ctx, opts)
 	if err != nil {
@@ -626,13 +626,13 @@ func truncateByTokens(s string, budget int) string {
 	return string(runes)
 }
 
-func audienceAllowed(audience, channel string, privateChannels []string) bool {
+func audienceAllowed(audience, channel string, privateExclusions []string) bool {
 	audience = strings.TrimSpace(audience)
 	if audience == "" || audience == "all" {
 		return true
 	}
 	if audience == "private" {
-		return containsChannel(privateChannels, channel)
+		return channelIsPrivate(channel, privateExclusions)
 	}
 	if strings.HasPrefix(audience, "channel:") {
 		return channel == strings.TrimPrefix(audience, "channel:")
@@ -645,36 +645,41 @@ func audienceAllowed(audience, channel string, privateChannels []string) bool {
 // audienceSQL is the SQL twin of audienceAllowed. It runs inside every
 // retrieval query so LIMIT counts visible rows (B07). Unknown audience values
 // fail closed: a typo must not expose a private memory.
-func audienceSQL(channel string, privateChannels []string) (string, []any) {
+func audienceSQL(channel string, privateExclusions []string) (string, []any) {
 	channel = strings.TrimSpace(channel)
 	if channel == "" {
 		return `(audience IN ('','all'))`, nil
 	}
-	if containsChannel(privateChannels, channel) {
+	if channelIsPrivate(channel, privateExclusions) {
 		return `(audience IN ('','all','private') OR audience = ?)`, []any{"channel:" + channel}
 	}
 	return `(audience IN ('','all') OR audience = ?)`, []any{"channel:" + channel}
 }
 
 // audienceSQLFor additionally respects the chat kind: a group or public chat
-// never reads private memory, even when the channel is configured private.
-func audienceSQLFor(chatKind, channel string, privateChannels []string) (string, []any) {
+// never reads private memory, even when the channel is not excluded.
+func audienceSQLFor(chatKind, channel string, privateExclusions []string) (string, []any) {
 	switch chatKind {
 	case ChatKindGroup, ChatKindPublic:
 		return `(audience IN ('','all'))`, nil
 	}
-	return audienceSQL(channel, privateChannels)
+	return audienceSQL(channel, privateExclusions)
 }
 
-func containsChannel(list []string, channel string) bool {
+// channelIsPrivate reports whether one channel may read private memories.
+// Since 0.7.3 every channel is private by default; the owner opts out per
+// channel through an exclusion list instead of maintaining an allow-list.
+// An empty channel is never private: without a channel identity the caller
+// gets the conservative public view.
+func channelIsPrivate(channel string, exclusions []string) bool {
 	channel = strings.TrimSpace(channel)
 	if channel == "" {
 		return false
 	}
-	for _, item := range list {
-		if strings.EqualFold(strings.TrimSpace(item), channel) {
-			return true
+	for _, excluded := range exclusions {
+		if strings.EqualFold(strings.TrimSpace(excluded), channel) {
+			return false
 		}
 	}
-	return false
+	return true
 }

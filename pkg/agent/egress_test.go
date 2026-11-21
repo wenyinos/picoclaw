@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
@@ -55,5 +56,27 @@ func TestMemoryEgressZeroBudget(t *testing.T) {
 	p := &Pipeline{Cfg: cfg}
 	if err := p.checkMemoryEgress("deepseek", "chat"); err != nil {
 		t.Fatalf("zero budget means no memory is injected: %v", err)
+	}
+}
+
+func TestSharedChatKind(t *testing.T) {
+	mk := func(chatType string) *turnState {
+		return &turnState{opts: processOptions{Dispatch: DispatchRequest{
+			InboundContext: &bus.InboundContext{ChatType: chatType},
+		}}}
+	}
+	if sharedChatKind(nil) {
+		t.Fatal("nil turn state must not count as shared")
+	}
+	if sharedChatKind(&turnState{}) {
+		t.Fatal("missing inbound context must not count as shared")
+	}
+	if sharedChatKind(mk("direct")) {
+		t.Fatal("direct chat must not count as shared")
+	}
+	for _, kind := range []string{"group", "channel", "public", "Group"} {
+		if !sharedChatKind(mk(kind)) {
+			t.Fatalf("chat type %q must count as shared", kind)
+		}
 	}
 }

@@ -69,7 +69,7 @@ func TestContextAndAudience(t *testing.T) {
 		}
 	}
 
-	fixed := mustFixed(s.BuildFixedContext(ctx, 800, false, "pico", []string{"pico"}))
+	fixed := mustFixed(s.BuildFixedContext(ctx, 800, false, "pico", nil))
 	for _, want := range []string{"角色设定", "关系状态", "小P", "乌龙茶", "不要在工作群"} {
 		if !strings.Contains(fixed, want) {
 			t.Fatalf("fixed context missing %q: %s", want, fixed)
@@ -77,11 +77,11 @@ func TestContextAndAudience(t *testing.T) {
 	}
 
 	// Private memories must not leak into a channel-less retrieval.
-	public := s.BuildRetrievalContext(ctx, "海", "", 400, false, []string{"pico"})
+	public := s.BuildRetrievalContext(ctx, "海", "", 400, false, nil)
 	if strings.Contains(public, "一起去看了海") {
 		t.Fatalf("private memory leaked without channel: %s", public)
 	}
-	private := s.BuildRetrievalContext(ctx, "海", "pico", 400, false, []string{"pico"})
+	private := s.BuildRetrievalContext(ctx, "海", "pico", 400, false, nil)
 	if !strings.Contains(private, "一起去看了海") {
 		t.Fatalf("private memory missing for private channel: %s", private)
 	}

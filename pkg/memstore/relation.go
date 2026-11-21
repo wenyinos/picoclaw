@@ -93,7 +93,7 @@ func (s *Store) ExpandOneHop(ctx context.Context, seeds []Entry, perSeed int, fi
 	if domainID == "" {
 		domainID = DomainLegacyUnassigned
 	}
-	audience, audienceArgs := audienceSQLFor(filter.ChatKindHint, filter.Channel, filter.PrivateChannels)
+	audience, audienceArgs := audienceSQLFor(filter.ChatKindHint, filter.Channel, filter.PrivateChannelExclusions)
 	var out []Entry
 	for _, seed := range seeds {
 		// Visibility is part of the edge query: taking the top N edges and
@@ -167,7 +167,7 @@ func (s *Store) ExpandOneHop(ctx context.Context, seeds []Entry, perSeed int, fi
 			if filter.Scope != "" && target.Scope != filter.Scope {
 				continue
 			}
-			if !audienceAllowed(target.Audience, filter.Channel, filter.PrivateChannels) {
+			if !audienceAllowed(target.Audience, filter.Channel, filter.PrivateChannelExclusions) {
 				continue
 			}
 			if target.Attributes == nil {
@@ -211,7 +211,7 @@ func (s *Store) LoadCapsule(
 	}
 	result := CapsuleResult{ID: c.ID, Title: c.Title}
 	if c.Realm == RealmFictional {
-		if !injectFictional || !containsChannel(privateChannels, channel) {
+		if !injectFictional || !channelIsPrivate(channel, privateChannels) {
 			return result, nil
 		}
 	}

@@ -58,15 +58,15 @@ type Config struct {
 
 // MemoryConfig controls the SQLite-backed long-term memory subsystem.
 type MemoryConfig struct {
-	Enabled               bool     `json:"enabled"`
-	DBPath                string   `json:"db_path,omitempty"`
-	BudgetTokens          int      `json:"budget_tokens,omitempty"`
-	AutoExtract           bool     `json:"auto_extract"`
-	ExtractModel          string   `json:"extract_model,omitempty"`
-	PrivateChannels       []string `json:"private_channels,omitempty"`
-	InjectFictional       bool     `json:"inject_fictional"`
-	ReviewRequired        bool     `json:"review_required"`
-	EpisodicRetentionDays int      `json:"episodic_retention_days,omitempty"`
+	Enabled                  bool     `json:"enabled"`
+	DBPath                   string   `json:"db_path,omitempty"`
+	BudgetTokens             int      `json:"budget_tokens,omitempty"`
+	AutoExtract              bool     `json:"auto_extract"`
+	ExtractModel             string   `json:"extract_model,omitempty"`
+	PrivateChannelExclusions []string `json:"private_channel_exclusions,omitempty"`
+	InjectFictional          bool     `json:"inject_fictional"`
+	ReviewRequired           bool     `json:"review_required"`
+	EpisodicRetentionDays    int      `json:"episodic_retention_days,omitempty"`
 
 	// V4 (schema 4) policy switches. All are opt-in: a missing field keeps the
 	// safe default, so an old config file never silently enables external
@@ -1601,9 +1601,9 @@ func applyMemoryDefaults(cfg *Config, memoryConfigured bool) {
 	if cfg.Memory.BudgetTokens <= 0 {
 		cfg.Memory.BudgetTokens = 1200
 	}
-	if len(cfg.Memory.PrivateChannels) == 0 {
-		cfg.Memory.PrivateChannels = []string{"pico"}
-	}
+	// PrivateChannelExclusions intentionally defaults to empty: every channel
+	// is private by default (0.7.3), and owners opt out per channel. The old
+	// private_channels allow-list field is no longer read.
 	if cfg.Memory.EpisodicRetentionDays <= 0 {
 		cfg.Memory.EpisodicRetentionDays = 365
 	}

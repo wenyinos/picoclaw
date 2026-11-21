@@ -1509,22 +1509,40 @@ function SettingsTab({
           className="mt-1"
         />
       </label>
-      <label className="text-sm">
-        私有渠道（逗号分隔）
-        <Input
-          value={(settings.private_channels || []).join(",")}
-          onChange={(e) =>
-            update(
-              "private_channels",
-              e.target.value
-                .split(",")
-                .map((v) => v.trim())
-                .filter(Boolean),
+      <div className="rounded-lg border p-3 text-sm">
+        <div className="mb-1 font-medium">渠道记忆可见性</div>
+        <p className="text-muted-foreground mb-2 text-xs">
+          默认所有渠道都能读取私密记忆；取消勾选即排除该渠道。群聊/公开会话始终不可见。
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {(settings.available_channels ?? ["pico"]).map((ch) => {
+            const excluded =
+              settings.private_channel_exclusions?.includes(ch) ?? false
+            return (
+              <label
+                key={ch}
+                className="flex items-center gap-1.5 rounded-md border px-3 py-1.5"
+              >
+                <input
+                  type="checkbox"
+                  checked={!excluded}
+                  onChange={(e) => {
+                    const prev =
+                      settings.private_channel_exclusions ?? []
+                    update(
+                      "private_channel_exclusions",
+                      e.target.checked
+                        ? prev.filter((v) => v !== ch)
+                        : [...prev, ch],
+                    )
+                  }}
+                />
+                <span>{ch}</span>
+              </label>
             )
-          }
-          className="mt-1"
-        />
-      </label>
+          })}
+        </div>
+      </div>
       <label className="text-sm">
         事件记忆保留天数
         <Input

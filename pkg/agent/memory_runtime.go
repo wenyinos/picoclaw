@@ -17,11 +17,29 @@ func memstoreConfigFrom(cfg config.MemoryConfig) memstore.Config {
 		BudgetTokens:          cfg.BudgetTokens,
 		AutoExtract:           cfg.AutoExtract,
 		ExtractModel:          cfg.ExtractModel,
-		PrivateChannels:       append([]string(nil), cfg.PrivateChannels...),
+		PrivateChannelExclusions:       append([]string(nil), cfg.PrivateChannelExclusions...),
 		InjectFictional:       cfg.InjectFictional,
 		ReviewRequired:        cfg.ReviewRequired,
 		EpisodicRetentionDays: cfg.EpisodicRetentionDays,
 	}
+}
+
+// sharedChatKind reports whether this turn arrived from a group or public
+// chat. Shared conversations must never feed the personal long-term profile:
+// the text belongs to the group, not to the owner (0.7.3).
+func sharedChatKind(ts *turnState) bool {
+	if ts == nil {
+		return false
+	}
+	req := ts.opts.Dispatch
+	if req.InboundContext == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(req.InboundContext.ChatType)) {
+	case "group", "channel", "public":
+		return true
+	}
+	return false
 }
 
 // extractMemoryAsync applies conservative rule-based extraction after a turn.

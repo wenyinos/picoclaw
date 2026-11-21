@@ -88,9 +88,12 @@ func (p *Pipeline) Finalize(
 	}
 
 	// Extract durable memories after the response path; failures never affect
-	// the turn result.
-	p.al.extractMemoryAsync(ts.agent.Workspace, p.Cfg.Memory, ts.userMessage, finalContent,
-		ts.sessionKey, time.Now())
+	// the turn result. Group/public chats are skipped: shared conversation is
+	// not private evidence and must not enter the owner's profile (0.7.3).
+	if !sharedChatKind(ts) {
+		p.al.extractMemoryAsync(ts.agent.Workspace, p.Cfg.Memory, ts.userMessage, finalContent,
+			ts.sessionKey, time.Now())
+	}
 
 	// If streaming never became visible, keep the legacy Pico interim publish path
 	// so the final answer is still delivered outside normal SendResponse.

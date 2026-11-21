@@ -987,7 +987,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			}
 			fixed, usage := cb.longTerm.BuildFixedContext(
 				context.Background(), fixedBudget, cb.longTermCfg.InjectFictional,
-				req.Channel, cb.longTermCfg.PrivateChannels,
+				req.Channel, cb.longTermCfg.PrivateChannelExclusions,
 			)
 			fixedUsage = usage
 			if fixed != "" {
@@ -1013,7 +1013,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			}
 			if retrieval := cb.longTerm.BuildRetrievalContext(
 				context.Background(), req.CurrentMessage, req.Channel, budget,
-				cb.longTermCfg.InjectFictional, cb.longTermCfg.PrivateChannels,
+				cb.longTermCfg.InjectFictional, cb.longTermCfg.PrivateChannelExclusions,
 			); retrieval != "" {
 				retrievalPart := PromptPart{
 					ID:      "context.memory.retrieval",

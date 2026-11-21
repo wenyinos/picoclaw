@@ -15,7 +15,7 @@ type MemoryTool struct {
 	workspace       string
 	dbPath          string
 	reviewRequired  bool
-	privateChans    []string
+	privateExclusions []string
 	injectFictional bool
 }
 
@@ -30,9 +30,10 @@ func NewMemoryTool(workspace, dbPath string, reviewRequired bool) *MemoryTool {
 	return &MemoryTool{workspace: workspace, dbPath: dbPath, reviewRequired: reviewRequired}
 }
 
-// WithChannels sets the private-channel policy used by capsule loading.
-func (t *MemoryTool) WithChannels(privateChannels []string, injectFictional bool) *MemoryTool {
-	t.privateChans = append([]string(nil), privateChannels...)
+// WithChannels sets the per-channel exclusion policy: every channel is private
+// by default and the listed ones are opted out (0.7.3 semantics).
+func (t *MemoryTool) WithChannels(privateExclusions []string, injectFictional bool) *MemoryTool {
+	t.privateExclusions = append([]string(nil), privateExclusions...)
 	t.injectFictional = injectFictional
 	return t
 }
@@ -218,7 +219,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		entries, err := store.Search(ctx, memstore.SearchOptions{
 			Query: query, Realm: realm, Layer: layer, Predicate: predicate,
 			Facet: facet, Status: status, Limit: 20,
-			Channel: channel, PrivateChannels: t.privateChans,
+			Channel: channel, PrivateChannelExclusions: t.privateExclusions,
 			DomainID: memstore.DomainLegacyUnassigned, AllLayers: true,
 			IncludeFic: t.injectFictional,
 		})
@@ -252,7 +253,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 			return ErrorResult(fmt.Sprintf("memory inspect failed: %v", err))
 		}
 		channel := toolshared.ToolChannel(ctx)
-		if strings.TrimSpace(channel) == "" || !memstore.EntryVisible(res.Entry, channel, t.privateChans) {
+		if strings.TrimSpace(channel) == "" || !memstore.EntryVisible(res.Entry, channel, t.privateExclusions) {
 			// Same message for "missing" and "not visible": no enumeration.
 			return ErrorResult("memory not found")
 		}
@@ -345,7 +346,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if strings.TrimSpace(channel) == "" {
 			return ErrorResult("memory load_capsule needs a trusted channel context")
 		}
-		capsule, err := store.LoadCapsule(ctx, clusterID, channel, t.privateChans, t.injectFictional, 1200)
+		capsule, err := store.LoadCapsule(ctx, clusterID, channel, t.privateExclusions, t.injectFictional, 1200)
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory load_capsule failed: %v", err))
 		}

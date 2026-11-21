@@ -33,7 +33,7 @@ func TestContextBuilder_LongTermMemoryInjectionAndCacheInvalidation(t *testing.T
 	}
 
 	cb := NewContextBuilder(workspace).WithLongTermMemory(store, config.MemoryConfig{
-		Enabled: true, BudgetTokens: 1200, PrivateChannels: []string{"pico"},
+		Enabled: true, BudgetTokens: 1200, PrivateChannelExclusions: nil,
 	})
 	build := func(msg string) string {
 		msgs := cb.BuildMessages(nil, "", msg, nil, "pico", "chat1", "user1", "User")

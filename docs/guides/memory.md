@@ -29,7 +29,7 @@ workspace/
   "budget_tokens": 1200,
   "auto_extract": true,
   "extract_model": "",
-  "private_channels": ["pico"],
+  "private_channel_exclusions": [],
   "inject_fictional": false,
   "review_required": true,
   "episodic_retention_days": 365
@@ -37,10 +37,10 @@ workspace/
 ```
 
 - `enabled`: disables long-term memory entirely when `false`; there is no Markdown fallback.
-- `budget_tokens`: total injection budget for fixed and retrieved blocks. `boundary` rules are appended outside the fixed-block budget; they are not trimmed by it, but still obey audience, private-channel, and fictional filtering.
-- `auto_extract`: run rule-based extraction after each turn.
+- `budget_tokens`: total injection budget for fixed and retrieved blocks. `boundary` rules are appended outside the fixed-block budget; they are not trimmed by it, but still obey audience, channel-visibility, and fictional filtering.
+- `auto_extract`: run rule-based extraction after each turn. Group/public chats are skipped: shared conversation never enters the personal profile.
 - `review_required`: uncertain memories enter `pending_review` and are not injected.
-- `private_channels`: memories with `audience=private` are only injected into these channels.
+- `private_channel_exclusions` (0.7.3): every channel reads `audience=private` memories by default; add the channels you want to opt out. The settings page renders this as checkboxes, checked by default. The old `private_channels` field is no longer read. Group/public chats stay invisible regardless of this setting.
 - `inject_fictional`: whether role-play memories may enter real conversations (off by default).
 
 ## Memory model
@@ -88,7 +88,7 @@ Writes are processed in order:
 
 ## Search semantics
 
-The `memory` tool's search is an administrative search: it covers all layers by default, supports `realm` / `layer` / `predicate` / `facet` / `status` filters, and can see private memories. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, private-channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures.
+The `memory` tool's search covers all layers by default and supports `realm` / `layer` / `predicate` / `facet` / `status` filters. Since 0.7 it uses the real request channel and the same visibility rules as injection: private memories are visible in every channel that is not excluded (`private_channel_exclusions`), and never in group/public chats. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures.
 
 Both paths share the hybrid candidate set:
 

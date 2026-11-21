@@ -97,15 +97,15 @@ const (
 
 // Config controls the memory subsystem. It is copied from config.MemoryConfig.
 type Config struct {
-	Enabled               bool
-	DBPath                string
-	BudgetTokens          int
-	AutoExtract           bool
-	ExtractModel          string
-	PrivateChannels       []string
-	InjectFictional       bool
-	ReviewRequired        bool
-	EpisodicRetentionDays int
+	Enabled                  bool
+	DBPath                   string
+	BudgetTokens             int
+	AutoExtract              bool
+	ExtractModel             string
+	PrivateChannelExclusions []string
+	InjectFictional          bool
+	ReviewRequired           bool
+	EpisodicRetentionDays    int
 }
 
 // DefaultConfig mirrors config defaults for callers without a config file.
@@ -115,7 +115,6 @@ func DefaultConfig(workspace string) Config {
 		DBPath:                "memory/memory.db",
 		BudgetTokens:          1200,
 		AutoExtract:           true,
-		PrivateChannels:       []string{"pico"},
 		InjectFictional:       false,
 		ReviewRequired:        true,
 		EpisodicRetentionDays: 365,
@@ -358,19 +357,19 @@ type AddResult struct {
 
 // SearchOptions filters entry listing and retrieval.
 type SearchOptions struct {
-	Query           string
-	Realm           string
-	Layer           string
-	Predicate       string
-	Facet           string
-	Status          string
-	Audience        string
-	Scope           string
-	Channel         string
-	PrivateChannels []string
-	Limit           int
-	Offset          int
-	IncludeFic      bool
+	Query                    string
+	Realm                    string
+	Layer                    string
+	Predicate                string
+	Facet                    string
+	Status                   string
+	Audience                 string
+	Scope                    string
+	Channel                  string
+	PrivateChannelExclusions []string
+	Limit                    int
+	Offset                   int
+	IncludeFic               bool
 	// DomainID restricts reads to one permission partition. Empty means the
 	// caller has no domain binding and reads fall back to the isolated legacy
 	// domain instead of the whole database.

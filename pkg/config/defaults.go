@@ -512,7 +512,6 @@ func DefaultConfig() *Config {
 			DBPath:                "memory/memory.db",
 			BudgetTokens:          1200,
 			AutoExtract:           true,
-			PrivateChannels:       []string{"pico"},
 			InjectFictional:       false,
 			ReviewRequired:        true,
 			EpisodicRetentionDays: 365,

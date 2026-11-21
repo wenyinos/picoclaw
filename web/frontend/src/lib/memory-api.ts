@@ -234,7 +234,8 @@ export interface MemorySettings {
   budget_tokens?: number
   auto_extract: boolean
   extract_model?: string
-  private_channels?: string[]
+  private_channel_exclusions?: string[]
+  available_channels?: string[]
   inject_fictional: boolean
   review_required: boolean
   episodic_retention_days?: number

@@ -185,7 +185,7 @@ pnpm run format
 ### 4.5 检索与权限
 
 - 权限（status/domain/realm/audience）必须在 SQL 的 `LIMIT` 之前生效，不得先取候选再过滤。
-- 群聊/公开会话永远不能读取 `audience=private`；`private_channels` 只限制渠道，不替代 chat kind 判断。
+- 群聊/公开会话永远不能读取 `audience=private`，也不能进入自动抽取；渠道可见性自 0.7.3 起是**排除制**（`private_channel_exclusions`，默认全渠道私密），旧 `private_channels` 白名单字段已废弃，不得恢复。
 - 时间命中是独立相关性依据，不要求正文含时间词；`created_at` 不等于事件时间。
 - 1-Hop 与主检索共享去重集合和层配额（relationship ≤2、其他 ≤6）；预算按最终渲染文本计，含分隔符。
 - 空上下文不等于管理员：普通域感知查询/写入的无域兼容默认是 `legacy_unassigned`，不是所有低层 Store API 都自带该限制。敏感操作缺可信身份时拒绝，不能降级为全库视图或借管理接口扩大权限。

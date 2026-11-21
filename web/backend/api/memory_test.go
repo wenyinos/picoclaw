@@ -28,7 +28,7 @@ func newMemoryTestHandler(t *testing.T) (*Handler, string) {
 			"budget_tokens":    1200,
 			"auto_extract":     false,
 			"review_required":  true,
-			"private_channels": []string{"pico"},
+			"private_channel_exclusions": []string{},
 			"inject_fictional": true,
 		},
 	}
@@ -125,6 +125,17 @@ func TestMemoryAPI_RelationshipPersonaSettings(t *testing.T) {
 	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"realm":"fictional"`)) {
 		t.Fatalf("private persona missing for pico: %s", rec.Body.String())
 	}
+	// 0.7.3: every channel is private unless excluded. Exclude the "public"
+	// channel via settings, then it must not see the private persona; an
+	// unexcluded channel keeps it.
+	rec = doJSON(t, mux, http.MethodPut, "/api/memory/settings", map[string]any{
+		"enabled": true, "db_path": "memory/memory.db", "budget_tokens": 1200,
+		"auto_extract": false, "review_required": true, "inject_fictional": true,
+		"private_channel_exclusions": []string{"public"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings (exclusions) status = %d, body=%s", rec.Code, rec.Body.String())
+	}
 	rec = doJSON(t, mux, http.MethodGet, "/api/memory/persona?channel=public", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("public persona status = %d", rec.Code)
@@ -136,7 +147,11 @@ func TestMemoryAPI_RelationshipPersonaSettings(t *testing.T) {
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &publicPersona)
 	if publicPersona.Active != nil {
-		t.Fatalf("private persona leaked into public channel: %s", rec.Body.String())
+		t.Fatalf("private persona leaked into excluded channel: %s", rec.Body.String())
+	}
+	rec = doJSON(t, mux, http.MethodGet, "/api/memory/persona?channel=wechat", nil)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"realm":"fictional"`)) {
+		t.Fatalf("unexcluded channel lost private persona: %s", rec.Body.String())
 	}
 
 	rec = doJSON(t, mux, http.MethodPut, "/api/memory/settings", map[string]any{

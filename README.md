@@ -42,7 +42,7 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 - **Scene capsules**: `load_capsule` returns the T0 writing rules in one call (full or compact); capsules use the real request channel and return empty for public chats.
 - **Real budget accounting**: fixed, boundary and retrieval blocks are counted separately, and `memory audit` prints the measured tokens.
 - **Schema v4 migration**: one segment from v3 to v4 with a `VACUUM INTO` backup. Databases older than v3 must be upgraded with 0.6.x first; see [Memory schema v4](docs/reference/memory-schema-v4.md).
-- **Private-channel filtering**: intimate memories are only injected into the channels you mark as private.
+- **Channel visibility (opt-out)**: private memories are visible in every channel by default; exclude the ones you do not want in the settings page (checkboxes, all checked by default). Group chats never see them.
 
 ### A dashboard for the relationship
 
@@ -145,7 +145,7 @@ CGO_ENABLED=0 go build -tags goolm,stdjson ./...
     "db_path": "memory/memory.db",
     "budget_tokens": 1200,
     "auto_extract": true,
-    "private_channels": ["pico"],
+    "private_channel_exclusions": [],
     "inject_fictional": false,
     "review_required": true,
     "episodic_retention_days": 365

@@ -206,7 +206,7 @@ func newCapsuleCommand() *cobra.Command {
 				return fmt.Errorf("unknown preset %q (want t0 or t0_compact)", preset)
 			}
 			capsule, err := store.LoadCapsule(context.Background(), clusterID, "pico",
-				cfg.Memory.PrivateChannels, true, cfg.Memory.BudgetTokens)
+				cfg.Memory.PrivateChannelExclusions, true, cfg.Memory.BudgetTokens)
 			if err != nil {
 				return err
 			}
@@ -230,7 +230,7 @@ func openStore() (*memstore.Store, *config.Config, error) {
 		DBPath:                cfg.Memory.DBPath,
 		BudgetTokens:          cfg.Memory.BudgetTokens,
 		AutoExtract:           cfg.Memory.AutoExtract,
-		PrivateChannels:       cfg.Memory.PrivateChannels,
+		PrivateChannelExclusions:       cfg.Memory.PrivateChannelExclusions,
 		InjectFictional:       cfg.Memory.InjectFictional,
 		ReviewRequired:        cfg.Memory.ReviewRequired,
 		EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,
@@ -338,13 +338,13 @@ func newAuditCommand() *cobra.Command {
 			}
 			fixedBudget := cfg.Memory.BudgetTokens * 45 / 100
 			fixed, usage := store.BuildFixedContext(ctx, fixedBudget, cfg.Memory.InjectFictional,
-				"pico", cfg.Memory.PrivateChannels)
+				"pico", cfg.Memory.PrivateChannelExclusions)
 			retrievalBudget := cfg.Memory.BudgetTokens - usage.TotalTokens
 			if retrievalBudget < 200 {
 				retrievalBudget = 200
 			}
 			retrieval := store.BuildRetrievalContext(ctx, "本质定调", "pico", retrievalBudget,
-				cfg.Memory.InjectFictional, cfg.Memory.PrivateChannels)
+				cfg.Memory.InjectFictional, cfg.Memory.PrivateChannelExclusions)
 			var uncategorized int
 			if entries, err := store.List(ctx, memstore.SearchOptions{
 				Status: memstore.StatusActive, Predicate: "待分类", Limit: 500,
@@ -463,7 +463,7 @@ func newRenderCommand() *cobra.Command {
 			}
 			ctx := context.Background()
 			content, _ := store.BuildFixedContext(ctx, cfg.Memory.BudgetTokens, cfg.Memory.InjectFictional,
-				"pico", []string{"pico"})
+				"pico", nil)
 			entries, _ := store.List(ctx, memstore.SearchOptions{Status: memstore.StatusActive, Limit: 100})
 			var b strings.Builder
 			if content == "" {

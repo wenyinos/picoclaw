@@ -29,7 +29,7 @@ func TestPersonaVersioningAndChannelFilter(t *testing.T) {
 		t.Fatalf("personas = %d, want 2", len(list))
 	}
 
-	got, err := s.GetActivePersonaForChannel(ctx, "pico", []string{"pico"}, true)
+	got, err := s.GetActivePersonaForChannel(ctx, "pico", nil, true)
 	if err != nil || got == nil || got.Content != "私密人设 v2" {
 		t.Fatalf("private persona = %+v, %v", got, err)
 	}
@@ -37,7 +37,7 @@ func TestPersonaVersioningAndChannelFilter(t *testing.T) {
 	if err != nil || got != nil {
 		t.Fatalf("public persona should be hidden: %+v, %v", got, err)
 	}
-	got, err = s.GetActivePersonaForChannel(ctx, "pico", []string{"pico"}, false)
+	got, err = s.GetActivePersonaForChannel(ctx, "pico", nil, false)
 	if err != nil || got != nil {
 		t.Fatalf("fictional persona should be hidden without inject_fictional: %+v, %v", got, err)
 	}

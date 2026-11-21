@@ -155,7 +155,7 @@ func NewAgentInstance(
 	}
 	if cfg.Memory.Enabled {
 		toolsRegistry.Register(tools.NewMemoryTool(workspace, cfg.Memory.DBPath, cfg.Memory.ReviewRequired).
-			WithChannels(cfg.Memory.PrivateChannels, cfg.Memory.InjectFictional))
+			WithChannels(cfg.Memory.PrivateChannelExclusions, cfg.Memory.InjectFictional))
 	}
 	if cfg.Tools.IsToolEnabled("exec") {
 		execTool, err := tools.NewExecToolWithConfig(workspace, restrict, cfg, allowReadPaths)
@@ -185,7 +185,7 @@ func NewAgentInstance(
 			BudgetTokens:          cfg.Memory.BudgetTokens,
 			AutoExtract:           cfg.Memory.AutoExtract,
 			ExtractModel:          cfg.Memory.ExtractModel,
-			PrivateChannels:       append([]string(nil), cfg.Memory.PrivateChannels...),
+			PrivateChannelExclusions:       append([]string(nil), cfg.Memory.PrivateChannelExclusions...),
 			InjectFictional:       cfg.Memory.InjectFictional,
 			ReviewRequired:        cfg.Memory.ReviewRequired,
 			EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,

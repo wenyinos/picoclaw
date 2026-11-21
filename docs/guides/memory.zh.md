@@ -29,7 +29,7 @@ workspace/
   "budget_tokens": 1200,
   "auto_extract": true,
   "extract_model": "",
-  "private_channels": ["pico"],
+  "private_channel_exclusions": [],
   "inject_fictional": false,
   "review_required": true,
   "episodic_retention_days": 365
@@ -37,10 +37,10 @@ workspace/
 ```
 
 - `enabled`：为 `false` 时完全关闭长期记忆，不会回退到 Markdown。
-- `budget_tokens`：固定块与检索块的总注入预算；`boundary` 在固定块预算之外单独拼接，不参与裁剪，但仍受 audience / 私有渠道 / fictional 过滤。
-- `auto_extract`：每轮结束后用规则抽取候选记忆。
+- `budget_tokens`：固定块与检索块的总注入预算；`boundary` 在固定块预算之外单独拼接，不参与裁剪，但仍受 audience / 渠道可见性 / fictional 过滤。
+- `auto_extract`：每轮结束后用规则抽取候选记忆；群聊/公开会话不参与抽取。
 - `review_required`：新抽取的未知领域记忆进入待审核队列，不进入提示词。
-- `private_channels`：`audience=private` 的记忆只在这些渠道注入。
+- `private_channel_exclusions`（0.7.3）：默认所有渠道都能读取 `audience=private` 的记忆；把不想读取的渠道加进排除列表即可，设置页提供默认全选的复选框。旧字段 `private_channels` 已废弃且不再读取。群聊/公开会话无论配置如何始终不可见。
 - `inject_fictional`：是否把角色扮演/虚构记忆注入真实对话，默认关闭。
 
 ## 记忆分类
@@ -88,7 +88,7 @@ schema v3 新增：
 
 ## 搜索语义
 
-`memory` 工具的 search 面向管理检索：默认查全部 layer，支持 `realm` / `layer` / `predicate` / `facet` / `status` 过滤，并且可以看到 private 记忆。提示词注入使用更窄的检索路径：只取 active 的 relationship / episodic / procedural，按相关性过滤，并继续执行 audience / 私有渠道 / fictional 隔离。relationship 条目单次最多注入 2 条，避免长关系设定挤掉事件和流程。
+`memory` 工具的 search 默认查全部 layer，支持 `realm` / `layer` / `predicate` / `facet` / `status` 过滤。0.7 起它使用真实请求渠道，与注入共用同一套可见性规则：`audience=private` 的记忆对所有未排除的渠道可见（`private_channel_exclusions`），群聊/公开会话永远不可见。提示词注入使用更窄的检索路径：只取 active 的 relationship / episodic / procedural，按相关性过滤，并继续执行 audience / 渠道 / fictional 隔离。relationship 条目单次最多注入 2 条，避免长关系设定挤掉事件和流程。
 
 两条路径共用混合候选集：
 

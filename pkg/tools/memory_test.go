@@ -29,7 +29,7 @@ func TestMemoryToolSearchAcrossLayers(t *testing.T) {
 		}
 	}
 
-	tool := NewMemoryTool(workspace, "memory/memory.db", false).WithChannels([]string{"pico"}, true)
+	tool := NewMemoryTool(workspace, "memory/memory.db", false).WithChannels(nil, true)
 
 	t.Run("profile and private memory", func(t *testing.T) {
 		res := tool.Execute(ctx, map[string]any{"action": "search", "query": "生日"})

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -71,7 +72,7 @@ func (h *Handler) memoryStore() (*memstore.Store, *config.Config, error) {
 		DBPath:                cfg.Memory.DBPath,
 		BudgetTokens:          cfg.Memory.BudgetTokens,
 		AutoExtract:           cfg.Memory.AutoExtract,
-		PrivateChannels:       cfg.Memory.PrivateChannels,
+		PrivateChannelExclusions:       cfg.Memory.PrivateChannelExclusions,
 		InjectFictional:       cfg.Memory.InjectFictional,
 		ReviewRequired:        cfg.Memory.ReviewRequired,
 		EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,
@@ -565,7 +566,7 @@ func memoryConfigFrom(cfg *config.Config) memstore.Config {
 		DBPath:                cfg.Memory.DBPath,
 		BudgetTokens:          cfg.Memory.BudgetTokens,
 		AutoExtract:           cfg.Memory.AutoExtract,
-		PrivateChannels:       cfg.Memory.PrivateChannels,
+		PrivateChannelExclusions:       cfg.Memory.PrivateChannelExclusions,
 		InjectFictional:       cfg.Memory.InjectFictional,
 		ReviewRequired:        cfg.Memory.ReviewRequired,
 		EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,
@@ -678,7 +679,7 @@ func (h *Handler) handleMemoryPersona(w http.ResponseWriter, r *http.Request) {
 	active, _ := store.GetActivePersona(r.Context())
 	if channel := strings.TrimSpace(r.URL.Query().Get("channel")); channel != "" {
 		active, _ = store.GetActivePersonaForChannel(
-			r.Context(), channel, cfg.Memory.PrivateChannels, cfg.Memory.InjectFictional,
+			r.Context(), channel, cfg.Memory.PrivateChannelExclusions, cfg.Memory.InjectFictional,
 		)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"personas": list, "active": active})
@@ -717,13 +718,34 @@ func (h *Handler) handleMemoryUpdatePersona(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, p)
 }
 
+// availableChannelNames lists the channel names for the settings UI: the
+// built-in pico channel plus every configured adapter. The memory settings
+// page renders them as opt-out checkboxes (private by default, 0.7.3).
+func availableChannelNames(cfg *config.Config) []string {
+	names := []string{"pico"}
+	seen := map[string]bool{"pico": true}
+	for name := range cfg.Channels {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	sort.Strings(names[1:])
+	return names
+}
+
 func (h *Handler) handleMemorySettings(w http.ResponseWriter, r *http.Request) {
 	_, cfg, err := h.memoryStore()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, cfg.Memory)
+	writeJSON(w, http.StatusOK, struct {
+		config.MemoryConfig
+		AvailableChannels []string `json:"available_channels"`
+	}{cfg.Memory, availableChannelNames(cfg)})
 }
 
 func (h *Handler) handleMemoryUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -830,7 +852,7 @@ func (h *Handler) handleMemoryCapsule(w http.ResponseWriter, r *http.Request) {
 		inject = true
 	}
 	capsule, err := store.LoadCapsule(r.Context(), id, channel,
-		cfg.Memory.PrivateChannels, inject, cfg.Memory.BudgetTokens)
+		cfg.Memory.PrivateChannelExclusions, inject, cfg.Memory.BudgetTokens)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

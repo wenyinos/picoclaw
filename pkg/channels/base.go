@@ -123,17 +123,6 @@ func NewBaseChannel(
 		opt(bc)
 	}
 
-	// Security Audit: Check for open-by-default (unsecured) channels.
-	// PicoClaw aims to be secure-by-default. If allow_from is empty, the bot
-	// currently defaults to accepting messages from ANYONE. To explicitly
-	// acknowledge and permit this (e.g. for a public bot), use ["*"].
-	if len(bc.allowList) == 0 {
-		logger.WarnCF("channels", "SECURITY: Channel allows EVERYONE (allow_from is empty)", map[string]any{
-			"channel": bc.name,
-			"hint":    "Set allow_from to your ID, or use '*' to explicitly acknowledge open access.",
-		})
-	}
-
 	return bc
 }
 

@@ -153,7 +153,7 @@ func TestV3EvalCases(t *testing.T) {
 			}
 		}
 		related, err := s.ExpandOneHop(ctx, seeds, 3, SearchOptions{
-			Channel: "pico", PrivateChannels: []string{"pico"}, IncludeFic: false,
+			Channel: "pico", PrivateChannelExclusions: nil, IncludeFic: false,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -237,21 +237,25 @@ func TestV3EvalCases(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, tc := range []struct {
-			channel string
-			inject  bool
+			// 0.7.3 semantics: every channel is private unless excluded;
+			// fictional capsules additionally require injectFictional.
+			channel    string
+			inject     bool
+			exclusions []string
+			want       bool
 		}{
-			{"discord", false},
-			{"discord", true},
-			{"pico", false},
-			{"pico", true},
+			{"pico", true, nil, true},
+			{"discord", true, nil, true},
+			{"discord", true, []string{"discord"}, false},
+			{"pico", false, nil, false},
 		} {
-			capsule, err := s.LoadCapsule(ctx, "capsule:eval", tc.channel, []string{"pico"}, tc.inject, 1200)
+			capsule, err := s.LoadCapsule(ctx, "capsule:eval", tc.channel, tc.exclusions, tc.inject, 1200)
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantLeak := tc.channel == "pico" && tc.inject
-			if wantLeak != (len(capsule.Items) > 0) {
-				t.Fatalf("capsule channel=%s inject=%v leaked=%v", tc.channel, tc.inject, len(capsule.Items) > 0)
+			if tc.want != (len(capsule.Items) > 0) {
+				t.Fatalf("capsule channel=%s inject=%v exclusions=%v leaked=%v",
+					tc.channel, tc.inject, tc.exclusions, len(capsule.Items) > 0)
 			}
 		}
 	})

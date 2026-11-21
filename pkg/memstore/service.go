@@ -75,8 +75,8 @@ func (svc *MemoryService) Search(ctx context.Context, mc MemoryContext, opts Sea
 	}
 	opts.DomainID = mc.DomainID
 	opts.Channel = firstNonEmpty(opts.Channel, mc.Channel)
-	if len(opts.PrivateChannels) == 0 {
-		opts.PrivateChannels = svc.cfg.PrivateChannels
+	if len(opts.PrivateChannelExclusions) == 0 {
+		opts.PrivateChannelExclusions = svc.cfg.PrivateChannelExclusions
 	}
 	if mc.ChatKind == ChatKindGroup || mc.ChatKind == ChatKindPublic {
 		opts.IncludeFic = false
@@ -97,7 +97,7 @@ func (svc *MemoryService) Get(ctx context.Context, mc MemoryContext, id string) 
 	if e.DomainID != "" && e.DomainID != mc.DomainID {
 		return nil, fmt.Errorf("memstore: memory not found")
 	}
-	if !EntryVisible(*e, mc.Channel, svc.cfg.PrivateChannels) {
+	if !EntryVisible(*e, mc.Channel, svc.cfg.PrivateChannelExclusions) {
 		return nil, fmt.Errorf("memstore: memory not found")
 	}
 	return e, nil

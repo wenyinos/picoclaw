@@ -288,6 +288,84 @@ func TestJobLeaseAndRetry(t *testing.T) {
 	}
 }
 
+// TestDefaultAllChannelsPrivate verifies the 0.7.3 semantics: with no
+// exclusions every channel reads private memories. The QQ regression
+// (private_channels allow-list hiding 107 entries) must not come back.
+func TestDefaultAllChannelsPrivate(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.Add(ctx, AddInput{
+		Text: "只在私聊说的偏好", Layer: LayerProfile, Audience: "private",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add(ctx, AddInput{
+		Text: "公开的自我介绍", Layer: LayerProfile, Audience: "all",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range []string{"qq", "weixin", "telegram", "pico"} {
+		got, err := s.Search(ctx, SearchOptions{
+			Query: "偏好", Channel: ch, AllLayers: true, DomainID: DomainLegacyUnassigned,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) == 0 {
+			t.Fatalf("channel %q saw no memories under default-private semantics", ch)
+		}
+		sawPrivate := false
+		for _, e := range got {
+			if e.Audience == "private" {
+				sawPrivate = true
+			}
+		}
+		if !sawPrivate {
+			t.Fatalf("channel %q could not read private memory by default", ch)
+		}
+	}
+}
+
+// TestChannelExclusionHidesPrivate verifies the opt-out side: an excluded
+// channel keeps the public view while other channels stay private.
+func TestChannelExclusionHidesPrivate(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.Add(ctx, AddInput{
+		Text: "私密偏好", Layer: LayerProfile, Audience: "private",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	excluded, err := s.Search(ctx, SearchOptions{
+		Query: "偏好", Channel: "qq", AllLayers: true,
+		PrivateChannelExclusions: []string{"qq"}, DomainID: DomainLegacyUnassigned,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range excluded {
+		if e.Audience == "private" {
+			t.Fatalf("excluded channel read private memory: %+v", e)
+		}
+	}
+	kept, err := s.Search(ctx, SearchOptions{
+		Query: "偏好", Channel: "weixin", AllLayers: true,
+		PrivateChannelExclusions: []string{"qq"}, DomainID: DomainLegacyUnassigned,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawPrivate := false
+	for _, e := range kept {
+		if e.Audience == "private" {
+			sawPrivate = true
+		}
+	}
+	if !sawPrivate {
+		t.Fatal("non-excluded channel lost private visibility")
+	}
+}
+
 // TestVisibilityBlocksPrivateInGroup verifies §5.2: a group chat cannot read
 // private memory even on a channel configured as private.
 func TestVisibilityBlocksPrivateInGroup(t *testing.T) {
@@ -304,8 +382,8 @@ func TestVisibilityBlocksPrivateInGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	group, err := s.Search(ctx, SearchOptions{
-		Query: "偏好", ChatKindHint: ChatKindGroup, Channel: "pico",
-		PrivateChannels: []string{"pico"}, AllLayers: true, DomainID: DomainLegacyUnassigned,
+		Query: "偏好", ChatKindHint: ChatKindGroup, Channel: "pico", PrivateChannelExclusions: nil,
+		AllLayers: true, DomainID: DomainLegacyUnassigned,
 	})
 	if err != nil {
 		t.Fatal(err)

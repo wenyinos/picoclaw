@@ -64,7 +64,7 @@ func TestFixedUsageAccountsForBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fixed, usage := s.BuildFixedContext(ctx, 540, true, "pico", []string{"pico"})
+	fixed, usage := s.BuildFixedContext(ctx, 540, true, "pico", nil)
 	if fixed == "" {
 		t.Fatal("empty fixed context")
 	}
@@ -105,21 +105,21 @@ func TestCapsuleChannelIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	public, err := s.LoadCapsule(ctx, "capsule:test", "discord", []string{"pico"}, false, 1200)
+	public, err := s.LoadCapsule(ctx, "capsule:test", "discord", nil, false, 1200)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(public.Items) != 0 {
 		t.Fatalf("fictional capsule leaked to a public channel: %+v", public)
 	}
-	off, err := s.LoadCapsule(ctx, "capsule:test", "pico", []string{"pico"}, false, 1200)
+	off, err := s.LoadCapsule(ctx, "capsule:test", "pico", nil, false, 1200)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(off.Items) != 0 {
 		t.Fatalf("fictional capsule leaked with inject_fictional=false: %+v", off)
 	}
-	private, err := s.LoadCapsule(ctx, "capsule:test", "pico", []string{"pico"}, true, 1200)
+	private, err := s.LoadCapsule(ctx, "capsule:test", "pico", nil, true, 1200)
 	if err != nil {
 		t.Fatal(err)
 	}

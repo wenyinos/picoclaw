@@ -146,7 +146,7 @@ func TestSearch_PromptRetrievalFiltersIrrelevantAndPrivate(t *testing.T) {
 		}
 
 		got, err = s.Search(ctx, SearchOptions{
-			Query: "生日", Channel: "pico", PrivateChannels: []string{"pico"}, Limit: 20,
+			Query: "生日", Channel: "pico", PrivateChannelExclusions: nil, Limit: 20,
 		})
 		if err != nil {
 			t.Fatal(err)
