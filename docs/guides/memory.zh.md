@@ -100,29 +100,35 @@ schema v3 新增：
 
 固定块、边界块、检索块分别记账。边界块有独立上限（`max(200, 固定预算*30%)`），至少保留 1 条，并计入总账，不再静默突破预算。
 
-## 数据库迁移（schema v3）
+## 数据库迁移（schema v4）
 
-新版本会把 `memory.db` 从 v1/v2 升级到 v3。v2 带来 `facet`、版本化 persona、`relationship_state.expires_at` 和历史表；v3 增加时间语义、证据链、关系网、治理日志、场景胶囊和 FTS。
+0.7.0 只做一段 `v3 → v4` 升级；旧的 v1 → v2 → v3 迁移链已删除。v1/v2 数据库会被明确拒绝，必须先用 0.6.x 打开一次升到 v3。v4 增加归属域与渠道绑定、处理用途许可、来源事件、依赖/任务/计划表、摘要证据、承诺与回忆，以及独立遗忘账本。
 
-迁移分两段：
+迁移是一段带守卫的升级：
 
-1. `migrateToV2Locked` 补齐任何缺失的 v2 对象（逐列/逐表守卫）。
-2. `migrateToV3Locked` 用事务外算好的列存在性计划补齐 6 个 `entries` 列，然后只执行幂等 DDL（`CREATE TABLE IF NOT EXISTS`、`INSERT OR IGNORE`、`SELECT ... WHERE EXISTS`）。
-3. 两段都成功后，才在同一事务里写入 `schema_version=3`。
+1. 创建 v4 新表（`CREATE TABLE IF NOT EXISTS`）。
+2. 按事务外算好的列存在性计划补齐 v4 列。
+3. 逐字段重建 `sources`：保留证据原文、模型、prompt 版本、置信度、确认标志与 `message_id`；旧表缺失的列才用显式默认值。
+4. 建立隔离域 `legacy_unassigned`，把精确指纹索引改为 `(domain_id, content_hash)`。
+5. 整段成功后才在同一事务里写入 `schema_version=4`。
 
 其他保证：
 
 - 先写 `VACUUM INTO` 备份到 `memory/backups/`，只保留最新 2 份。
-- `sources` 重建时保留 v2 唯一键，`INSERT OR IGNORE` 仍然去重；孤儿行数量写入 `meta.v3_dropped_orphan_sources`。
-- 断链 `supersedes` 数量写入 `meta.v3_dropped_orphan_supersedes`（参考库为 9 和 129）。
-- FTS5 在事务前探测；没有 trigram 时记录 `fts_tokenizer=unicode61`，完全没有 FTS5 时记录 `none`，不会导致数据库打不开。
-- 数据修复会归位参考库的 9 条 relationship 与 14 条 `待分类`，把被误存为真实画像的台词改判，恢复被误归档的生日条目（日期从原文派生），并补齐缺失来源；不删除条目。
+- 重复执行安全；当前版本的库第二次运行报告零变更。
+- FTS5 在事务前探测；缺失的投影会重建，完全没有 FTS5 时记录 `none`，不会导致数据库打不开。
+- 缺失的 v4 表/列由同一段幂等逻辑自愈。
+- 已删除的 v3 数据修复（硬编码改判、生日恢复）不会重放；仍需这些修复的库请先运行 0.6.x。
+
+`forget-ledger.db` 与 `memory.db` 同目录、使用独立 HMAC 密钥，必须随数据库一起备份；账本丢失时破坏性记忆操作按故障关闭处理，不会静默丢掉遗忘义务。
 
 可以在 `/memory` 的“数据库迁移”页一键执行，也可以运行：
 
 ```bash
 picoclaw memory migrate
 ```
+
+完整步骤见 [Memory Schema v4](../reference/memory-schema-v4.zh.md)。
 
 ## 后台页面
 
@@ -156,13 +162,13 @@ picoclaw memory render   # 可选 Markdown 导出，不会被运行时读回
 
 `memory import` 是唯一会读取旧 `MEMORY.md` 的命令；运行时不读取。`memory forget` 不带 `--yes` 时只预览；`memory replay-forget` 用于从旧备份恢复后重新应用遗忘墓碑。
 
-## 从 0.3.x / 0.4.x 迁移
+## 迁移到 0.7.0
 
-0.3.x → 0.4.x 用一次 `memory import` 把旧 `MEMORY.md` 导入 SQLite。0.4.x → 0.5.x 不需要手写 SQL：首次打开记忆库会先备份并升级 schema v3；v1 数据库在同一事务里走完 v1 → v2 → v3。数据迁移在 `/memory` → “数据库迁移”执行，或运行 `picoclaw memory migrate`。
+0.3.x → 0.4.x 用一次 `memory import` 把旧 `MEMORY.md` 导入 SQLite。0.4.x → 0.5.x 在首次打开时升级到 schema v3；0.7.0 只做 v3 → v4。v1/v2 数据库必须先经过一次 0.6.x，因为旧迁移链已不再随包发布。
 
 1. 停止 gateway 与 launcher。
-2. 备份旧 `workspace/memory`。
-3. 启动 0.5.10，打开 `/memory` → “数据库迁移”执行迁移；0.3.x 旧 workspace 先运行一次 `memory import`。
+2. 备份旧 `workspace/memory`（账本 `forget-ledger.db` 一旦存在也必须一起备份）。
+3. 启动 0.7.0，打开 `/memory` → “数据库迁移”执行迁移；0.3.x 旧 workspace 先运行一次 `memory import`，v3 之前的库先运行一次 0.6.x。
 4. 用 `PRAGMA integrity_check`、`picoclaw memory audit` 和条目数验证；检查公开渠道看不到 `fictional/private` 伴侣人设。
 
 ## API

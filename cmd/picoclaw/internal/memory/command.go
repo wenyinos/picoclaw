@@ -43,7 +43,7 @@ func newMigrateCommand() *cobra.Command {
 	var backup bool
 	cmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "Upgrade memory.db through schema v2 to v3 and repair data",
+		Short: "Upgrade memory.db from schema v3 to v4 with a backup",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, _, err := openStore()
 			if err != nil {
@@ -70,7 +70,7 @@ func newRepairCommand() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "repair",
-		Short: "Apply the idempotent v3 data repairs",
+		Short: "Heal missing v4 columns, tables, indexes and the FTS projection",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, _, err := openStore()
 			if err != nil {

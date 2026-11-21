@@ -174,9 +174,9 @@ picoclaw memory render
 
 ---
 
-## 从 0.3.x / 0.4.x 迁移到 0.5.x
+## 迁移到 0.7.0
 
-0.5 仍以 `workspace/memory/memory.db` 为唯一事实源，并升级到 schema v3。已有 v1 / v2 数据库会原地升级，不需要手写 SQL。首次打开时，0.5.10 会先做 `VACUUM INTO` 备份，再升级表结构；数据迁移在 `/memory` → “数据库迁移”执行，或运行 `picoclaw memory migrate`。一键迁移仍然覆盖 v1 → v2 → v3，0.4.x 数据库不需要先装中间版本。
+0.7 仍以 `workspace/memory/memory.db` 为唯一事实源，并把 schema 从 v3 单段升级到 v4。v1 / v2 数据库不会被就地升级：先用 0.6.x 打开一次升到 v3，再升级到 0.7.0。首次打开会先做 `VACUUM INTO` 备份，再升级表结构；迁移在 `/memory` → “数据库迁移”执行，或运行 `picoclaw memory migrate`。完整步骤见 [Memory Schema v4](../reference/memory-schema-v4.zh.md)。
 
 1. **停止服务**
 
@@ -190,7 +190,7 @@ picoclaw memory render
    cp -a ~/.picoclaw/workspace ~/.picoclaw/workspace.backup-$(date +%F)
    ```
 
-3. **启动 0.5.x 并打开迁移页**
+3. **启动 0.7.0 并打开迁移页**
 
    ```bash
    systemctl --user start picoclaw picoclaw-launcher
@@ -202,7 +202,7 @@ picoclaw memory render
    picoclaw memory migrate
    ```
 
-   迁移是幂等的：升级 v1 → v2 → v3、把空 predicate 统一为“待分类”、把参考库 v13–v21 的 relationship 与 14 条待分类条目归位、恢复被误归档的生日条目、补齐缺失来源，并在 `memory/backups/` 轮转备份（保留最新 2 份）。
+   迁移是幂等的：新增 v4 治理列与表、逐字段重建 `sources`、建立隔离域 `legacy_unassigned`、把精确指纹索引改为域内唯一、缺失时重建 FTS，并在 `memory/backups/` 轮转备份（保留最新 2 份）。已删除的 v1 → v2 → v3 修复不会重放。
 
 4. **验证**
 

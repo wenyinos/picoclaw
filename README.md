@@ -179,9 +179,9 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 ---
 
-## Migrating from 0.3.x / 0.4.x to 0.5.x
+## Migrating to 0.7.0
 
-0.5 keeps `workspace/memory/memory.db` as the source of truth and adds schema v3. Existing v1 and v2 databases are upgraded in place; there is no manual SQL step. On first open, 0.5.10 creates a `VACUUM INTO` backup and upgrades the schema. The data migration runs from `/memory` → “Database migration”, or with `picoclaw memory migrate`. The one-click path still handles v1 → v2 → v3, so a 0.4.x database never needs an intermediate release.
+0.7 keeps `workspace/memory/memory.db` as the source of truth and upgrades it from schema v3 to v4 in one segment. Databases older than v3 are rejected: open them once with a 0.6.x build to reach v3, then upgrade to 0.7.0. The upgrade runs automatically on first open (with a `VACUUM INTO` backup), from `/memory` → “Database migration”, or with `picoclaw memory migrate`. See [Memory schema v4](docs/reference/memory-schema-v4.md) for the full matrix.
 
 1. **Stop the services**
 
@@ -195,7 +195,7 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
    cp -a ~/.picoclaw/workspace ~/.picoclaw/workspace.backup-$(date +%F)
    ```
 
-3. **Start 0.5.x and open the migration page**
+3. **Start 0.7.0 and open the migration page**
 
    ```bash
    systemctl --user start picoclaw picoclaw-launcher
@@ -207,7 +207,7 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
    picoclaw memory migrate
    ```
 
-   The migration is idempotent. It upgrades v1 → v2 → v3, turns empty predicates into `待分类`, reclassifies the reference database's miscategorized entries, restores the archived birthday entry, backfills missing sources, and writes a rotated `memory/backups/memory.db.bak-*` file (the newest two are kept).
+   The migration is idempotent. It adds the v4 governance columns and tables, rebuilds `sources` field by field, creates the isolated `legacy_unassigned` domain, replaces the exact-fingerprint index with a per-domain one, rebuilds FTS when missing, and writes a rotated `memory/backups/memory.db.bak-*` file (the newest two are kept). The removed v1/v2/v3 repairs are not replayed.
 
 4. **Verify**
 
@@ -223,7 +223,7 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 Notes:
 
-- The v0.4.6 tag remains available; install 0.5.10 to get schema v3 and the Launcher migration page.
+- The v0.4.6 tag remains available; install 0.7.0 to get schema v4, the forget ledger and the Launcher migration page.
 - Historical 0.3.x → 0.4.0 guide: [migration/0.4.0.md](docs/migration/0.4.0.md).
 - The old `MEMORY.md` is only an import source; raw session history stays in `workspace/sessions/*.jsonl`.
 - `memory.db` is WAL-mode SQLite; stop the process before copying the workspace, or run `picoclaw memory audit` once to checkpoint an idle store.

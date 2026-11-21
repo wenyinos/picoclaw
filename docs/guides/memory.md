@@ -100,29 +100,35 @@ Both paths share the hybrid candidate set:
 
 Fixed, boundary, and retrieval blocks are accounted separately. The boundary block has its own cap (`max(200, fixed_budget*30%)`), always keeps at least one rule, and is included in the total instead of silently doubling it.
 
-## Database migration (schema v3)
+## Database migration (schema v4)
 
-New builds upgrade `memory.db` through v2 to v3. v2 added `facet`, versioned personas, `relationship_state.expires_at` and history; v3 adds time semantics, the evidence chain, relations, governance log, capsules and FTS.
+0.7.0 upgrades `memory.db` from v3 to v4 in a single segment; the old v1 → v2 → v3 chain was removed. A v1/v2 database is rejected with an explicit error and must be opened once with a 0.6.x build first. v4 adds ownership domains and actor bindings, processing grants, origin events, dependency/job/plan tables, summary evidence, commitments and recalls, and the independent forget ledger.
 
-The migration is two-segment:
+The migration is one guarded segment:
 
-1. `migrateToV2Locked` fills in any missing v2 object (guarded per column/table).
-2. `migrateToV3Locked` adds the six `entries` columns with a precomputed existence plan, then runs only idempotent DDL (`CREATE TABLE IF NOT EXISTS`, `INSERT OR IGNORE`, `SELECT ... WHERE EXISTS`).
-3. The `schema_version=3` write happens only after both segments succeed, in the same transaction.
+1. Creates the v4 tables (`CREATE TABLE IF NOT EXISTS`).
+2. Adds the v4 columns with a precomputed existence plan.
+3. Rebuilds `sources` field by field, preserving `evidence_text`, model, prompt version, confidence, confirmation flags and `message_id`; missing old columns get explicit defaults.
+4. Creates the isolated `legacy_unassigned` domain and replaces the exact-fingerprint index with `(domain_id, content_hash)`.
+5. Writes `schema_version=4` only after the whole segment succeeds, in the same transaction.
 
 Other guarantees:
 
 - A `VACUUM INTO` backup is written to `memory/backups/`; the newest two are kept.
-- `sources` is rebuilt with the v2 unique key preserved, so `INSERT OR IGNORE` still dedupes; orphan rows are counted in `meta.v3_dropped_orphan_sources`.
-- Broken `supersedes` edges are counted in `meta.v3_dropped_orphan_supersedes` (the reference database has 9 and 129).
-- FTS5 is probed before the transaction; without trigram the build records `fts_tokenizer=unicode61`, and without FTS5 it records `none` instead of failing to open.
-- The data repair maps the reference database's nine relationship entries and fourteen `待分类` entries, reclassifies the dialogue entry that was stored as a real profile fact, restores the archived birthday entry (the date is derived from the text), and backfills missing sources. It never deletes entries.
+- Re-running is safe and reports zero changes on a current database.
+- FTS5 is probed before the transaction; a missing projection is rebuilt, and a build without FTS5 records `none` instead of failing to open.
+- Missing v4 tables/columns are healed by the same idempotent segment.
+- The removed v3 data repairs (hard-coded reclassification, birthday restore) are not replayed; run 0.6.x if a database still needs them.
+
+`forget-ledger.db` lives next to `memory.db`, uses its own HMAC key, and must be backed up with the database. Losing the ledger disables destructive memory operations instead of silently dropping obligations.
 
 Run it from `/memory` → “Database migration” or:
 
 ```bash
 picoclaw memory migrate
 ```
+
+Full procedure: [Memory schema v4](../reference/memory-schema-v4.md).
 
 ## Dashboard
 
@@ -156,13 +162,13 @@ picoclaw memory render   # optional Markdown export, never read back
 
 `memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does. `memory forget` without `--yes` is a dry run. `memory replay-forget` re-applies forget tombstones after restoring an older backup.
 
-## Migrating from 0.3.x / 0.4.x
+## Migrating to 0.7.0
 
-0.3.x → 0.4.x used a one-time `memory import` to move the old `MEMORY.md` into SQLite. 0.4.x → 0.5.x needs no manual SQL: the first open backs up the database and upgrades it to schema v3; a v1 database goes v1 → v2 → v3 in one transaction. Run the data migration from `/memory` → “Database migration”, or with `picoclaw memory migrate`.
+0.3.x → 0.4.x used a one-time `memory import` to move the old `MEMORY.md` into SQLite. 0.4.x → 0.5.x upgraded to schema v3 on first open. 0.7.0 upgrades v3 → v4; a v1/v2 database must pass through a 0.6.x build first, because the old migration chain is no longer shipped.
 
 1. Stop the gateway and launcher.
-2. Back up the old `workspace/memory`.
-3. Start 0.5.10 and run the migration from `/memory` → “Database migration”; for a 0.3.x workspace, run `memory import` once first.
+2. Back up the old `workspace/memory` including `forget-ledger.db` once it exists.
+3. Start 0.7.0 and run the migration from `/memory` → “Database migration”; for a 0.3.x workspace, run `memory import` once first, and for a pre-v3 database run a 0.6.x build once.
 4. Verify with `PRAGMA integrity_check`, `picoclaw memory audit`, and entry counts; check that a public channel cannot see a `fictional/private` persona.
 
 ## API
