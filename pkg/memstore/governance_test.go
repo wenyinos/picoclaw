@@ -109,7 +109,8 @@ func TestForgetCascadesAndBlocksResurrection(t *testing.T) {
 		"restored", "real", "profile", "user", "all", "user", "偏好", "隐私", "",
 		"用户不希望保留这条记忆", Normalize("用户不希望保留这条记忆"), hash, int64(0), "", "",
 		1, 0.9, 0.0, 0.0, 0.8, "active", nil, nil, now, now, nil, 0, "{}",
-		PrecisionUnknown, "", "user_stated", nil, nil, 0); err != nil {
+		PrecisionUnknown, "", "user_stated", nil, nil, 0,
+		DomainLegacyUnassigned, 1, "", nil, nil, "normal", "", "", EvidenceSupported, FreshnessUnknown); err != nil {
 		t.Fatal(err)
 	}
 	removed, err := s.ReplayForget(ctx)

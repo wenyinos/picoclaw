@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/memstore"
+	toolshared "github.com/sipeed/picoclaw/pkg/tools/shared"
 )
 
 // MemoryTool lets the model save and recall long-term memories.
@@ -184,6 +185,10 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 			Subject: subject, Predicate: predicate, Facet: facet, Value: value,
 			SupersedesID: supersedesID, EmotionalWeight: emotionalWeight, Valence: valence,
 			Audience: "private", SourceType: memstore.SourceExplicit, EvidenceText: text,
+			// Model-driven writes stay in the isolated legacy partition and
+			// the classifier can only raise protection, never lower it.
+			DomainID:    memstore.DomainLegacyUnassigned,
+			Sensitivity: memstore.SensitivityForText(text),
 		})
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory add failed: %v", err))
@@ -203,9 +208,19 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		predicate, _ := args["predicate"].(string)
 		facet, _ := args["facet"].(string)
 		status, _ := args["status"].(string)
-		entries, err := store.SearchEntries(ctx, memstore.SearchOptions{
+		// The real channel comes from the request context, never from a model
+		// parameter, so a public conversation cannot read private memory by
+		// asking for it (B01).
+		channel := toolshared.ToolChannel(ctx)
+		if strings.TrimSpace(channel) == "" {
+			return ErrorResult("memory search needs a trusted channel context")
+		}
+		entries, err := store.Search(ctx, memstore.SearchOptions{
 			Query: query, Realm: realm, Layer: layer, Predicate: predicate,
 			Facet: facet, Status: status, Limit: 20,
+			Channel: channel, PrivateChannels: t.privateChans,
+			DomainID: memstore.DomainLegacyUnassigned, AllLayers: true,
+			IncludeFic: t.injectFictional,
 		})
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory search failed: %v", err))
@@ -235,6 +250,11 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		res, err := store.Inspect(ctx, id)
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory inspect failed: %v", err))
+		}
+		channel := toolshared.ToolChannel(ctx)
+		if strings.TrimSpace(channel) == "" || !memstore.EntryVisible(res.Entry, channel, t.privateChans) {
+			// Same message for "missing" and "not visible": no enumeration.
+			return ErrorResult("memory not found")
 		}
 		return SilentResult(formatInspect(res))
 
@@ -292,21 +312,20 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if strings.TrimSpace(id) == "" {
 			return ErrorResult("id is required for action=forget")
 		}
-		dryRun, _ := args["dry_run"].(bool)
-		preview, err := store.Forget(ctx, id, dryRun)
+		// Permanent forget is an owner decision. The model may only preview
+		// the impact; a model-requested erase must be approved by the host
+		// through the dashboard or CLI (FR-05).
+		preview, err := store.Forget(ctx, id, true)
 		if err != nil {
-			return ErrorResult(fmt.Sprintf("memory forget failed: %v", err))
+			return ErrorResult(fmt.Sprintf("memory forget preview failed: %v", err))
 		}
 		if preview.AlreadyGone {
 			return SilentResult("memory already gone: " + id)
 		}
-		if dryRun {
-			return SilentResult(fmt.Sprintf(
-				"forget preview: %s would remove %d source(s), %d relation(s), %d summary(ies), clusters=%v",
-				id, preview.Sources, preview.Relations, preview.Summaries, preview.ClusterIDs))
-		}
 		return SilentResult(fmt.Sprintf(
-			"memory forgotten: %s（已级联清理 sources/relations/摘要，不可恢复）", id))
+			"forget preview only: %s would remove %d source(s), %d relation(s), %d summary(ies), relationship keys=%v. "+
+				"Permanent erase needs owner approval in the memory dashboard.",
+			id, preview.Sources, preview.Relations, preview.Summaries, preview.RelationshipKeys))
 
 	case "load_capsule":
 		clusterID, _ := args["cluster_id"].(string)
@@ -320,9 +339,11 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if strings.TrimSpace(clusterID) == "" {
 			return ErrorResult("cluster_id or preset is required for action=load_capsule")
 		}
-		channel := "pico"
-		if len(t.privateChans) > 0 {
-			channel = t.privateChans[0]
+		// Capsules are scoped to the actual request channel; selecting the
+		// first configured private channel would leak into public chats (B01).
+		channel := toolshared.ToolChannel(ctx)
+		if strings.TrimSpace(channel) == "" {
+			return ErrorResult("memory load_capsule needs a trusted channel context")
 		}
 		capsule, err := store.LoadCapsule(ctx, clusterID, channel, t.privateChans, t.injectFictional, 1200)
 		if err != nil {
@@ -348,7 +369,11 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 			v := time.Now().Add(time.Duration(ttl * float64(time.Second))).UnixMilli()
 			expires = &v
 		}
-		if err := store.SetRelationshipWithTTL(ctx, key, value, 0.9, expires); err != nil {
+		if err := store.SetRelationshipFull(ctx, memstore.RelationshipUpdate{
+			Key: key, Value: value, Confidence: 0.9, ExpiresAt: expires,
+			DomainID: memstore.DomainLegacyUnassigned,
+			Realm:    memstore.RealmReal, Audience: "private",
+		}); err != nil {
 			return ErrorResult(fmt.Sprintf("memory update_state failed: %v", err))
 		}
 		return SilentResult("relationship state updated: " + key)

@@ -1,5 +1,40 @@
 # 变更日志
 
+## v0.7.0
+
+### 新增
+
+- **记忆 schema v4**：一次 `v3 → v4` 单段迁移（`memstore.CurrentSchemaVersion = 4`）。新增 owner/域（`memory_domains`）、渠道绑定（`memory_actor_bindings`）、处理用途许可（`memory_processing_grants`）、来源事件（`memory_origin_events`）、依赖表（`memory_dependencies`）、持久任务（`memory_jobs`）、审批计划（`memory_change_plans`）、承诺（`memory_commitments`）、主动回忆（`memory_recalls` / `memory_recall_feedback`）、摘要证据（`memory_summary_evidence`）。
+- **旧迁移链移除**：不再包含 v1 → v2 → v3 的迁移代码。v1/v2 数据库会明确拒绝打开，需先用 0.6.x 升级到 v3，再由 0.7.0 迁移到 v4。
+- **独立遗忘账本** `memory/forget-ledger.db`：`forget` 先写 journal（HMAC 选择器、目标清单、request_id），再改主库；主库或 outbox 回滚后仍可由账本重放。`replay-forget` 改为按账本 HMAC 匹配，跨备份阻止复活。
+- **遗忘联动关系状态**：删除称呼/生日/情绪条目时同步清理 `relationship_state` 与历史，不再出现“忘了记忆但提示词仍叫这个名字”。
+- **域内去重**：精确指纹唯一索引改为 `(domain_id, content_hash) WHERE status='active'`；模板折叠、近重合并、自动标量替换全部限定在同一 `domain_id`，不同权限域的同文记忆独立保留。
+- **检索正确性**：权限（状态/域/受众）在 `LIMIT` 之前进入 SQL；长查询也保留 LIKE 回退；纯时间命中不再因缺少词面重合被丢弃；1-Hop 与主检索共享去重集合和层配额；预算计入分隔符与实际渲染文本。
+- **统一服务层**：`MemoryService`（`pkg/memstore/service.go`）提供授权读写、一次性变更计划（`CreateChangePlan` / `ApproveChangePlan`，带目标 revision 的 CAS 冲突检测）；模型工具只能创建预览，不能自批永久遗忘。
+- **阶段摘要与证据**：手工主题/阶段簇、逐 claim 绑定 entry/source、`generation` 递增失效；遗忘或纠错会使依赖摘要立即不可见。默认使用本地规则摘要器，不调用外部模型。
+- **承诺与主动回忆**：承诺生命周期 `proposed → confirmed → fulfilled/cancelled`，到期不会自动判违约；主动回忆默认关闭，需要私密目标、每日上限与主题冷却；投递状态区分 `sent` / `delivery_unknown`。
+- **持久任务队列**：租约、重试退避、attempts 上限后进入 `blocked`，已接受的遗忘/清理任务不会被容量淘汰。
+- **Web API**：`GET /entries/{id}/inspect`、`POST /entries/{id}/correct`、`POST /entries/{id}/forget`（支持 `dry_run`）、`GET /domains`、`GET /ledger/health`、`POST /ledger/replay`、`GET/POST /clusters`、`/clusters/{id}/summaries`、`/summaries/{id}/evidence`、`GET/POST /commitments`、`/commitments/{id}/status`、`GET /recalls`、`/recalls/{id}/feedback`、`GET /jobs`、`GET /plans`、`POST /plans/{id}/approve`。
+- **前端 API 客户端**：`web/frontend/src/lib/memory-api.ts` 补齐 inspect / correct / forget / 域 / 账本 / 摘要 / 承诺 / 任务 / 计划方法。
+- **配置开关（默认关闭）**：`memory.sensitivity_capture`、`summary_enabled`、`llm_extraction_enabled`、`semantic_retrieval_enabled`、`proactive_recall_enabled`、`proactive_daily_limit`、`proactive_topic_cooldown_days`、`allowed_chat_recipients`、`allow_tool_forwarding`、`ledger_path`。缺失字段保持安全默认。
+
+### 修复
+
+- `memory` 工具改用真实请求渠道上下文（`ToolChannel`）读取，胶囊不再选择“配置里的第一个私密渠道”；无渠道上下文时拒绝敏感操作。
+- `PUT /api/memory/entries/{id}` 的正文变化转为版本化 `Correct`，不再原地覆盖；`pinned_core` 条目在无 `force` 时拒绝正文/受众/作用域变更。
+- 自愈式来源重建逐字段保留 `evidence_text`、`model`、`prompt_version`、`confidence`、`user_confirmed`、`message_id`；缺失列才补默认值。
+- `SetRelationshipFull` 支持 TTL 三态（省略=保留、清除、设置），修复编辑时静默清除原到期时间。
+- `TestExtractMoodGoesToRelationshipStateOnly` 改用可控时钟，不再依赖运行日期。
+- 迁移报告继续兼容仪表盘输出；`migrate` 命令始终保留一份 `VACUUM INTO` 备份。
+
+### 升级
+
+- **迁移前置**：确认数据库已经是 schema v3（0.6.x 打开过一次）。v1/v2 数据库会被拒绝并提示先用 0.6.x。
+- **迁移方式**：启动即自动执行（`Open` 时先备份再迁移），或 `picoclaw memory migrate`；仪表盘“迁移”页签名不变。
+- **回滚限制**：v4 数据不可由 0.6.x 二进制直接写入；如需回到 v3，必须离线恢复备份并重放最新 `forget-ledger.db`。备份位置 `memory/backups/`，保留最新 2 份。
+- **账本持久化**：`forget-ledger.db` 与 `memory.db` 同目录，权限 0600，必须与数据库一起备份；账本丢失时记忆服务按故障关闭处理，不会静默创建空账本。
+- **新增默认关闭能力**：外部摘要/抽取/embedding、语义召回、主动回忆均不随升级启用。
+
 ## v0.6.0
 
 ### 新增

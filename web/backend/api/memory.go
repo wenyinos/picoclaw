@@ -18,9 +18,29 @@ func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/memory/entries", h.handleMemoryEntries)
 	mux.HandleFunc("POST /api/memory/entries", h.handleMemoryAddEntry)
 	mux.HandleFunc("GET /api/memory/entries/{id}", h.handleMemoryGetEntry)
+	mux.HandleFunc("GET /api/memory/entries/{id}/inspect", h.handleMemoryInspectEntry)
 	mux.HandleFunc("PUT /api/memory/entries/{id}", h.handleMemoryUpdateEntry)
+	mux.HandleFunc("POST /api/memory/entries/{id}/correct", h.handleMemoryCorrectEntry)
+	mux.HandleFunc("POST /api/memory/entries/{id}/forget", h.handleMemoryForgetEntry)
 	mux.HandleFunc("POST /api/memory/entries/{id}/archive", h.handleMemoryArchiveEntry)
 	mux.HandleFunc("POST /api/memory/entries/{id}/restore", h.handleMemoryRestoreEntry)
+	mux.HandleFunc("GET /api/memory/domains", h.handleMemoryDomains)
+	mux.HandleFunc("GET /api/memory/ledger/health", h.handleMemoryLedgerHealth)
+	mux.HandleFunc("POST /api/memory/ledger/replay", h.handleMemoryLedgerReplay)
+	mux.HandleFunc("GET /api/memory/clusters", h.handleMemoryClusters)
+	mux.HandleFunc("POST /api/memory/clusters", h.handleMemoryCreateCluster)
+	mux.HandleFunc("POST /api/memory/clusters/{id}/members", h.handleMemoryClusterMembers)
+	mux.HandleFunc("POST /api/memory/clusters/{id}/summaries", h.handleMemoryGenerateSummary)
+	mux.HandleFunc("GET /api/memory/clusters/{id}/summaries", h.handleMemoryListSummaries)
+	mux.HandleFunc("GET /api/memory/summaries/{id}/evidence", h.handleMemorySummaryEvidence)
+	mux.HandleFunc("GET /api/memory/commitments", h.handleMemoryCommitments)
+	mux.HandleFunc("POST /api/memory/commitments", h.handleMemoryCreateCommitment)
+	mux.HandleFunc("POST /api/memory/commitments/{id}/status", h.handleMemoryCommitmentStatus)
+	mux.HandleFunc("GET /api/memory/recalls", h.handleMemoryRecalls)
+	mux.HandleFunc("POST /api/memory/recalls/{id}/feedback", h.handleMemoryRecallFeedback)
+	mux.HandleFunc("GET /api/memory/jobs", h.handleMemoryJobs)
+	mux.HandleFunc("GET /api/memory/plans", h.handleMemoryPlans)
+	mux.HandleFunc("POST /api/memory/plans/{id}/approve", h.handleMemoryApprovePlan)
 	mux.HandleFunc("GET /api/memory/review", h.handleMemoryReview)
 	mux.HandleFunc("POST /api/memory/review/{id}/resolve", h.handleMemoryResolveReview)
 	mux.HandleFunc("GET /api/memory/relationship", h.handleMemoryRelationship)
@@ -151,7 +171,58 @@ func (h *Handler) handleMemoryAddEntry(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+func (h *Handler) handleMemoryInspectEntry(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	res, err := store.Inspect(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "memory not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 func (h *Handler) handleMemoryUpdateEntry(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	id := r.PathValue("id")
+	in, err := decodeBody[memstore.AddInput](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	old, err := store.Get(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "memory not found")
+		return
+	}
+	// A body change is a correction, not an in-place overwrite: it gets a new
+	// version and keeps the old evidence (B02). Metadata-only edits keep the
+	// existing Update path but still pass the pinned_core guard.
+	if strings.TrimSpace(in.Text) != "" && strings.TrimSpace(in.Text) != old.Text {
+		res, err := store.Correct(r.Context(), id, in)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, res.Entry)
+		return
+	}
+	e, err := store.Update(r.Context(), id, in)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, e)
+}
+
+func (h *Handler) handleMemoryCorrectEntry(w http.ResponseWriter, r *http.Request) {
 	store, _, err := h.memoryStore()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -162,12 +233,343 @@ func (h *Handler) handleMemoryUpdateEntry(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	e, err := store.Update(r.Context(), r.PathValue("id"), in)
+	res, err := store.Correct(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *Handler) handleMemoryForgetEntry(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dryRun := strings.EqualFold(r.URL.Query().Get("dry_run"), "true") ||
+		r.URL.Query().Get("dry_run") == "1"
+	if r.ContentLength > 0 {
+		parsed, err := decodeBody[struct {
+			DryRun bool `json:"dry_run"`
+		}](r)
+		if err == nil && parsed.DryRun {
+			dryRun = true
+		}
+	}
+	preview, err := store.Forget(r.Context(), r.PathValue("id"), dryRun)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status := http.StatusOK
+	if !dryRun && !preview.AlreadyGone {
+		// The journal entry is durable before this response, but derived
+		// stores are cleaned asynchronously: accepted, not "completed".
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, preview)
+}
+
+func (h *Handler) handleMemoryDomains(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	domains, err := store.ListDomains(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"domains": domains})
+}
+
+func (h *Handler) handleMemoryLedgerHealth(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	health, err := store.LedgerHealth(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, health)
+}
+
+func (h *Handler) handleMemoryLedgerReplay(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	removed, err := store.ReplayForget(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"removed": removed})
+}
+
+func (h *Handler) handleMemoryClusters(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	clusters, err := store.ListClusters(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"clusters": clusters})
+}
+
+func (h *Handler) handleMemoryCreateCluster(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	in, err := decodeBody[memstore.Cluster](r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, e)
+	c, err := store.CreateCluster(r.Context(), in)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, c)
+}
+
+func (h *Handler) handleMemoryClusterMembers(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	in, err := decodeBody[struct {
+		EntryIDs []string `json:"entry_ids"`
+	}](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := store.AddClusterMembers(r.Context(), r.PathValue("id"), in.EntryIDs); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"added": len(in.EntryIDs)})
+}
+
+func (h *Handler) handleMemoryGenerateSummary(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	v, err := store.GenerateSummary(r.Context(), r.PathValue("id"), nil)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, v)
+}
+
+func (h *Handler) handleMemoryListSummaries(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	versions, err := store.ListSummaries(r.Context(), r.PathValue("id"), 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"summaries": versions})
+}
+
+func (h *Handler) handleMemorySummaryEvidence(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid summary id")
+		return
+	}
+	entries, err := store.ExpandSummaryEvidence(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
+func (h *Handler) handleMemoryCommitments(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	includeClosed := strings.EqualFold(r.URL.Query().Get("include_closed"), "true")
+	list, err := store.ListCommitments(r.Context(), r.URL.Query().Get("domain_id"), includeClosed)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commitments": list})
+}
+
+func (h *Handler) handleMemoryCreateCommitment(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	in, err := decodeBody[memstore.Commitment](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	c, err := store.CreateCommitment(r.Context(), in)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, c)
+}
+
+func (h *Handler) handleMemoryCommitmentStatus(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	in, err := decodeBody[struct {
+		Status   string `json:"status"`
+		Evidence string `json:"evidence"`
+	}](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	c, err := store.UpdateCommitmentStatus(r.Context(), r.PathValue("id"), in.Status, in.Evidence)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+func (h *Handler) handleMemoryRecalls(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	list, err := store.ListRecalls(r.Context(), r.URL.Query().Get("domain_id"), 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"recalls": list})
+}
+
+func (h *Handler) handleMemoryRecallFeedback(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	in, err := decodeBody[struct {
+		Feedback string `json:"feedback"`
+	}](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := store.RecordRecallFeedback(r.Context(), r.PathValue("id"), in.Feedback); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) handleMemoryJobs(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jobs, err := store.ListJobs(r.Context(), r.URL.Query().Get("state"), 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	stats, err := store.JobStats(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "stats": stats})
+}
+
+func (h *Handler) handleMemoryPlans(w http.ResponseWriter, r *http.Request) {
+	store, cfg, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	svc := memstore.NewMemoryService(store, memoryConfigFrom(cfg))
+	list, err := svc.ListChangePlans(r.Context(), r.URL.Query().Get("status"), 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plans": list})
+}
+
+func (h *Handler) handleMemoryApprovePlan(w http.ResponseWriter, r *http.Request) {
+	store, cfg, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	svc := memstore.NewMemoryService(store, memoryConfigFrom(cfg))
+	// The dashboard route is already authenticated; this is the owner context.
+	mc := memstore.MemoryContext{
+		DomainID: memstore.DomainLegacyUnassigned,
+		ChatKind: memstore.ChatKindAdmin,
+		Purpose:  "dashboard",
+	}
+	plan, err := svc.ApproveChangePlan(r.Context(), mc, r.PathValue("id"), "dashboard")
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+// memoryConfigFrom converts the loaded app config into a memstore config.
+func memoryConfigFrom(cfg *config.Config) memstore.Config {
+	return memstore.Config{
+		Enabled:               cfg.Memory.Enabled,
+		DBPath:                cfg.Memory.DBPath,
+		BudgetTokens:          cfg.Memory.BudgetTokens,
+		AutoExtract:           cfg.Memory.AutoExtract,
+		PrivateChannels:       cfg.Memory.PrivateChannels,
+		InjectFictional:       cfg.Memory.InjectFictional,
+		ReviewRequired:        cfg.Memory.ReviewRequired,
+		EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,
+	}
 }
 
 func (h *Handler) handleMemoryArchiveEntry(w http.ResponseWriter, r *http.Request) {

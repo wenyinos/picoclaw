@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/sipeed/picoclaw/pkg/memstore"
+	toolshared "github.com/sipeed/picoclaw/pkg/tools/shared"
 )
 
 func TestMemoryToolSearchAcrossLayers(t *testing.T) {
@@ -16,7 +17,7 @@ func TestMemoryToolSearchAcrossLayers(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	ctx := context.Background()
+	ctx := toolshared.WithToolContext(context.Background(), "pico", "")
 
 	for _, in := range []memstore.AddInput{
 		{Text: "我的生日是1989年6月4日", Realm: memstore.RealmReal, Layer: memstore.LayerProfile, Audience: "private"},
@@ -28,7 +29,7 @@ func TestMemoryToolSearchAcrossLayers(t *testing.T) {
 		}
 	}
 
-	tool := NewMemoryTool(workspace, "memory/memory.db", false)
+	tool := NewMemoryTool(workspace, "memory/memory.db", false).WithChannels([]string{"pico"}, true)
 
 	t.Run("profile and private memory", func(t *testing.T) {
 		res := tool.Execute(ctx, map[string]any{"action": "search", "query": "生日"})

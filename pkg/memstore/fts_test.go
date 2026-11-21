@@ -73,7 +73,7 @@ func TestFTSUsageUpdateDoesNotRebuild(t *testing.T) {
 	if _, err := s.Update(ctx, added.Entry.ID, AddInput{Text: "FTS 触发器同步新内容"}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := s.searchFTS(ctx, "同步新内容", 10)
+	hits, err := s.searchFTS(ctx, "同步新内容", 10, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

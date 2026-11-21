@@ -83,7 +83,7 @@ func (s *Store) ExtractTurnAt(
 		turnAt = time.Now()
 	}
 	results := []AddResult{}
-	add := func(in AddInput) {
+	add := func(in AddInput) *AddResult {
 		if in.SourceType == "" {
 			in.SourceType = SourceInferred
 		}
@@ -109,7 +109,9 @@ func (s *Store) ExtractTurnAt(
 		}
 		if r, err := s.Add(ctx, in); err == nil && r != nil {
 			results = append(results, *r)
+			return r
 		}
+		return nil
 	}
 
 	// 1. Emotional one-liners only update relationship state with a 24h TTL.
@@ -138,17 +140,27 @@ func (s *Store) ExtractTurnAt(
 	if idx := nicknamePat.FindStringSubmatchIndex(text); len(idx) == 4 {
 		name := strings.TrimSpace(text[idx[2]:idx[3]])
 		if validNickname(name) && !insideQuote(text, idx[0]) {
-			add(AddInput{Text: "用户希望被称为「" + name + "」", Subject: "user", Predicate: "nickname",
+			r := add(AddInput{Text: "用户希望被称为「" + name + "」", Subject: "user", Predicate: "nickname",
 				Facet: "称呼", Value: name, Importance: 0.95, SourceType: SourceExplicit})
-			_ = s.SetRelationship(ctx, "user_name", name, 0.9)
+			if r != nil && r.Entry != nil {
+				_ = s.SetRelationshipFull(ctx, RelationshipUpdate{
+					Key: "user_name", Value: name, Confidence: 0.9,
+					SourceEventID: "entry:" + r.Entry.ID,
+				})
+			}
 		}
 	}
 	if idx := aiNicknamePat.FindStringSubmatchIndex(text); len(idx) == 4 {
 		name := strings.TrimSpace(text[idx[2]:idx[3]])
 		if validNickname(name) && !insideQuote(text, idx[0]) {
-			add(AddInput{Text: "用户希望 AI 被称为「" + name + "」", Subject: "ai", Predicate: "nickname",
+			r := add(AddInput{Text: "用户希望 AI 被称为「" + name + "」", Subject: "ai", Predicate: "nickname",
 				Facet: "称呼", Value: name, Importance: 0.95, SourceType: SourceExplicit})
-			_ = s.SetRelationship(ctx, "ai_name", name, 0.9)
+			if r != nil && r.Entry != nil {
+				_ = s.SetRelationshipFull(ctx, RelationshipUpdate{
+					Key: "ai_name", Value: name, Confidence: 0.9,
+					SourceEventID: "entry:" + r.Entry.ID,
+				})
+			}
 		}
 	}
 
@@ -164,9 +176,14 @@ func (s *Store) ExtractTurnAt(
 		if strings.Contains(text, "纪念日") {
 			key = "anniversary"
 		}
-		add(AddInput{Text: text, Layer: LayerRelationship, Predicate: key, Facet: "日期",
+		r := add(AddInput{Text: text, Layer: LayerRelationship, Predicate: key, Facet: "日期",
 			Importance: 0.9, SourceType: SourceExplicit})
-		_ = s.SetRelationship(ctx, key, text, 0.9)
+		if r != nil && r.Entry != nil {
+			_ = s.SetRelationshipFull(ctx, RelationshipUpdate{
+				Key: key, Value: text, Confidence: 0.9,
+				SourceEventID: "entry:" + r.Entry.ID,
+			})
+		}
 	}
 
 	// 7. Dated events with a short duration.
@@ -218,7 +235,7 @@ func hasEventKeyword(text string) bool {
 	return false
 }
 
-func addEvent(add func(AddInput), text string, eventAt time.Time, precision string, turnAt time.Time) {
+func addEvent(add func(AddInput) *AddResult, text string, eventAt time.Time, precision string, turnAt time.Time) {
 	var expires *int64
 	switch {
 	case weekPattern.MatchString(text):

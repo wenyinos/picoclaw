@@ -12,7 +12,15 @@ import (
 )
 
 // CurrentSchemaVersion is the schema version expected by this build.
-const CurrentSchemaVersion = 3
+//
+// PicoClaw 0.7 migrates v3 databases to v4 and nothing else: the 0.4/0.5
+// migration chain (v1 → v2 → v3) was removed on purpose. A database that is
+// still on v1 or v2 must be opened once with a 0.6.x build, which upgrades it
+// to v3; this build then migrates v3 → v4 without replaying old segments.
+const CurrentSchemaVersion = 4
+
+// MinMigratableSchemaVersion is the oldest schema this build accepts.
+const MinMigratableSchemaVersion = 3
 
 // MigrationStatus describes whether the database needs a schema or data
 // migration. It is safe to call while the service is running.
@@ -36,76 +44,42 @@ type MigrationStatus struct {
 	DBSize                 int64  `json:"db_size"`
 	Backup                 string `json:"backup,omitempty"`
 	LastMigrationAt        int64  `json:"last_migration_at,omitempty"`
+
+	// V4 additions.
+	Domains    int `json:"domains"`
+	OriginEvents int `json:"origin_events"`
+	Jobs       int `json:"jobs"`
+	Dependencies int `json:"dependencies"`
 }
 
 // MigrationReport is returned after applying the migration chain.
 type MigrationReport struct {
-	PreviousSchemaVersion   int    `json:"previous_schema_version"`
-	SchemaVersion           int    `json:"schema_version"`
-	Total                   int    `json:"total"`
-	Active                  int    `json:"active"`
-	EmptyPredicate          int    `json:"empty_predicate"`
-	UpdatedPredicates       int    `json:"updated_predicates"`
-	MappedRelationships     int    `json:"mapped_relationships"`
-	MappedPredicates        int    `json:"mapped_predicates"`
-	Reclassified            int    `json:"reclassified"`
-	Restored                int    `json:"restored"`
-	BackfilledSources       int    `json:"backfilled_sources"`
-	DroppedOrphanSources    int    `json:"dropped_orphan_sources"`
-	DroppedOrphanSupersedes int    `json:"dropped_orphan_supersedes"`
-	FTSRows                 int    `json:"fts_rows"`
-	FTSTokenizer            string `json:"fts_tokenizer"`
-	Backup                  string `json:"backup"`
-}
+	PreviousSchemaVersion int    `json:"previous_schema_version"`
+	SchemaVersion         int    `json:"schema_version"`
+	Total                 int    `json:"total"`
+	Active                int    `json:"active"`
+	Backup                string `json:"backup"`
+	FTSTokenizer          string `json:"fts_tokenizer"`
+	FTSRows               int    `json:"fts_rows"`
 
-type relationshipFacetMapping struct {
-	predicate string
-	facet     string
-}
+	// Legacy field names stay for the dashboard that still renders them; the
+	// v3 data-repair segments no longer run, so they are always zero.
+	EmptyPredicate          int `json:"empty_predicate"`
+	UpdatedPredicates       int `json:"updated_predicates"`
+	MappedRelationships     int `json:"mapped_relationships"`
+	MappedPredicates        int `json:"mapped_predicates"`
+	Reclassified            int `json:"reclassified"`
+	Restored                int `json:"restored"`
+	BackfilledSources       int `json:"backfilled_sources"`
+	DroppedOrphanSources    int `json:"dropped_orphan_sources"`
+	DroppedOrphanSupersedes int `json:"dropped_orphan_supersedes"`
 
-// relationshipFacetMappings covers the v13-v21 relationship entries that
-// existed when schema v2 was introduced. They share an empty predicate but
-// are distinct facets, so they must not be collapsed into one bucket.
-var relationshipFacetMappings = map[string]relationshipFacetMapping{
-	"mem_1793291583022394804_389b234ff07a": {predicate: "身份关系", facet: "公开身份"},
-	"mem_1793291885976466654_95b96ef1a4f9": {predicate: "身份关系", facet: "家庭边界"},
-	"mem_1793292294971378150_0af7465383c9": {predicate: "身份关系", facet: "家庭压力"},
-	"mem_1793292513257056884_2e137cb26ec6": {predicate: "身份关系", facet: "家庭压力"},
-	"mem_1793292854557996374_10c4f737c415": {predicate: "身份关系", facet: "未来规划"},
-	"mem_1793293169053496943_d8e84bbbedc0": {predicate: "权力结构", facet: "欲望宣示"},
-	"mem_1793293677975808379_484086f37aae": {predicate: "心理状态", facet: "道德账本"},
-	"mem_1793294105315856968_5f3e83628cb5": {predicate: "事件·第一次", facet: "真相修正"},
-	"mem_1793294608257053406_2c4aeb68e2b8": {predicate: "事件·第一次", facet: "真相披露"},
+	// V4 additions.
+	SourcesRebuilt    int `json:"sources_rebuilt"`
+	DomainsCreated    int `json:"domains_created"`
+	EntriesWithDomain int `json:"entries_with_domain"`
+	JobsScheduled     int `json:"jobs_scheduled"`
 }
-
-// v3PredicateMappings reclassifies the reference database's remaining
-// 待分类 entries. The IDs are stable because memstore IDs never change.
-var v3PredicateMappings = map[string]relationshipFacetMapping{
-	"mem_1793482597225392486_d8b4d02583d0": {predicate: "记忆加载机制", facet: "加载机制与锚词"},
-	"mem_1793484881062066614_1feaad9e8781": {predicate: "外貌", facet: "造型体系补充"},
-	"mem_1793485792475128563_c87b05aa8668": {predicate: "日常层", facet: "日常基调"},
-	"mem_1793485807406295562_8df1a6cefbd4": {predicate: "场景", facet: "一天·撒娇版v3定稿"},
-	"mem_1793486010139840130_9d15c41d1215": {predicate: "日常层", facet: "生活全景·分栏总集"},
-	"mem_1793486024978862407_b3781c6af32c": {predicate: "日常层", facet: "社交·节日·旅行·公共场合"},
-	"mem_1793486047021908668_c294bd5e3c2e": {predicate: "日常层", facet: "日常人格·自由度·升级路径"},
-	"mem_1793486047024473426_a5d832fba732": {predicate: "写作规则", facet: "适用范围勘误"},
-	"mem_1793486594591599593_f50c0d0089c1": {predicate: "日常层", facet: "记账机制"},
-	"mem_1793486929344429223_009ed44cf8d0": {predicate: "权力结构", facet: "欲望处理流程"},
-	"mem_1793521634131564327_85d7549aca02": {predicate: "场景", facet: "约定戏码·假装被侵犯"},
-	"mem_1793522088347460077_62d9ca2a2a1c": {predicate: "场景", facet: "开局宣告台词"},
-	"mem_1793522313671742095_d4c3c3a18040": {predicate: "场景", facet: "高潮段·说你爱我"},
-	"mem_1793522476207926084_125c1e1e9517": {predicate: "道具", facet: "薄丝袜与撕裂声"},
-}
-
-const (
-	// v3PollutionEntry is a line of dialogue that was stored as a real profile
-	// fact. It is reclassified, not merged: the original wording is material.
-	v3PollutionEntry = "mem_1793522100304491181_1e963afd8670"
-	// v3BirthdayEntry was archived by mistake and has to be active again.
-	v3BirthdayEntry = "mem_1792917685707659889_b898d4bfcfd6"
-	// v3ManualSourceEntry is the one hand-written entry without a source.
-	v3ManualSourceEntry = "mem_1793459045418_8ee6a0820d74"
-)
 
 func (s *Store) schemaVersionLocked(ctx context.Context) int {
 	var raw string
@@ -167,23 +141,14 @@ func (s *Store) hasColumnLocked(ctx context.Context, table, column string) bool 
 	return false
 }
 
-func (s *Store) personasHasCompositeKeyLocked(ctx context.Context) bool {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(personas)`)
-	if err != nil {
-		return false
+// tableSQLLocked returns the CREATE statement recorded in sqlite_master.
+func (s *Store) tableSQLLocked(ctx context.Context, table string) string {
+	var sqlText string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&sqlText); err != nil {
+		return ""
 	}
-	defer rows.Close()
-	pk := map[string]int{}
-	for rows.Next() {
-		var cid, notNull, pkPos int
-		var name, typ string
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pkPos); err != nil {
-			return false
-		}
-		pk[name] = pkPos
-	}
-	return pk["id"] > 0 && pk["version"] > 0
+	return sqlText
 }
 
 // backupWithRotation writes a VACUUM INTO snapshot under memory/backups and
@@ -218,60 +183,9 @@ func (s *Store) rotateBackups(dir string, keep int) {
 	}
 }
 
-// migrateSchema upgrades an existing v1 database through v2 to v3. It is
-// idempotent and safe to call on every Open.
-func (s *Store) migrateSchema(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, _, err := s.migrateSchemaLocked(ctx)
-	return err
-}
-
-type v2Plan struct {
-	hasFacet       bool
-	hasExpires     bool
-	hasHistory     bool
-	personasExists bool
-	personasV2     bool
-}
-
-type v3Plan struct {
-	have map[string]bool
-}
-
 type ftsPlan struct {
 	available bool
 	tokenizer string
-}
-
-func (s *Store) planV2(ctx context.Context) v2Plan {
-	return v2Plan{
-		hasFacet:       s.hasColumnLocked(ctx, "entries", "facet"),
-		hasExpires:     s.hasColumnLocked(ctx, "relationship_state", "expires_at"),
-		hasHistory:     s.tableExistsLocked(ctx, "relationship_state_history"),
-		personasExists: s.tableExistsLocked(ctx, "personas"),
-		personasV2: s.hasColumnLocked(ctx, "personas", "realm") &&
-			s.hasColumnLocked(ctx, "personas", "audience") &&
-			s.hasColumnLocked(ctx, "personas", "scope") &&
-			s.personasHasCompositeKeyLocked(ctx),
-	}
-}
-
-func (p v2Plan) complete() bool {
-	return p.hasFacet && p.hasExpires && p.hasHistory && p.personasV2
-}
-
-// planV3Columns must run before BeginTx: Store uses MaxOpenConns(1), so any
-// s.db query while the transaction holds the connection would deadlock.
-func (s *Store) planV3Columns(ctx context.Context) v3Plan {
-	p := v3Plan{have: map[string]bool{}}
-	for _, c := range []string{
-		"event_time_precision", "event_timezone", "event_time_source",
-		"valid_from", "valid_to", "pinned_core",
-	} {
-		p.have[c] = s.hasColumnLocked(ctx, "entries", c)
-	}
-	return p
 }
 
 // detectFTS probes FTS5 and the trigram tokenizer before the transaction. A
@@ -290,52 +204,175 @@ func (s *Store) detectFTS(ctx context.Context) ftsPlan {
 	return ftsPlan{available: true, tokenizer: "unicode61"}
 }
 
-func (s *Store) v3CompleteLocked(ctx context.Context, fts ftsPlan) bool {
-	if !s.hasColumnLocked(ctx, "entries", "valid_to") ||
-		!s.hasColumnLocked(ctx, "entries", "pinned_core") ||
-		!s.hasColumnLocked(ctx, "entries", "event_time_precision") ||
-		!s.hasColumnLocked(ctx, "sources", "confidence") ||
-		!s.tableExistsLocked(ctx, "memory_relations") ||
-		!s.tableExistsLocked(ctx, "memory_operations") ||
-		!s.tableExistsLocked(ctx, "memory_clusters") ||
-		!s.tableExistsLocked(ctx, "memory_cluster_members") ||
-		!s.tableExistsLocked(ctx, "memory_summary_versions") {
+func (s *Store) ftsCompleteLocked(ctx context.Context, fts ftsPlan) bool {
+	if !fts.available {
+		return true
+	}
+	return s.tableExistsLocked(ctx, "entries_fts") &&
+		s.triggerExistsLocked(ctx, "entries_ai") &&
+		s.triggerExistsLocked(ctx, "entries_ad") &&
+		s.triggerExistsLocked(ctx, "entries_au")
+}
+
+// v4Tables are the tables that must exist in a v4 database. Tables that
+// already existed in v3 are included so a partially healed database is
+// repaired by the same idempotent segment.
+var v4Tables = []string{
+	"memory_relations",
+	"memory_clusters",
+	"memory_cluster_members",
+	"memory_summary_versions",
+	"memory_operations",
+	"memory_domains",
+	"memory_actor_bindings",
+	"memory_processing_grants",
+	"memory_origin_events",
+	"memory_dependencies",
+	"memory_jobs",
+	"memory_change_plans",
+	"memory_commitments",
+	"memory_recalls",
+	"memory_recall_feedback",
+	"memory_summary_evidence",
+}
+
+// v3EntryColumns are the columns added by the removed v3 segment. They are
+// still verified here so a v3 database that lost a column (interrupted
+// upgrade) is healed by the v4 segment instead of writing to a broken table.
+var v3EntryColumns = []string{
+	"event_time_precision", "event_timezone", "event_time_source",
+	"valid_from", "valid_to", "pinned_core",
+}
+
+// v4EntryColumns are the columns added by v4.
+var v4EntryColumns = []string{
+	"domain_id", "row_revision", "archived_from", "event_start", "event_end",
+	"sensitivity", "qualifiers", "qualifiers_hash", "evidence_status", "freshness",
+}
+
+var v4RelationshipColumns = []string{"domain_id", "realm", "audience", "source_event_id"}
+var v4RelationshipHistoryColumns = []string{"domain_id", "realm", "audience", "source_event_id"}
+var v4OperationColumns = []string{"request_id", "actor_ref", "reason_code", "policy_revision"}
+var v4ClusterColumns = []string{"domain_id", "generation", "stage_start", "stage_end"}
+var v4SummaryColumns = []string{"domain_id", "generation", "input_fingerprint", "claims", "review_status", "invalidated_at"}
+
+// v4Plan is computed before BeginTx: Store uses MaxOpenConns(1), so any s.db
+// query while the transaction holds the connection would deadlock.
+type v4Plan struct {
+	entryCols      map[string]bool
+	relCols        map[string]bool
+	relHistCols    map[string]bool
+	opCols         map[string]bool
+	clusterCols    map[string]bool
+	summaryCols    map[string]bool
+	sourceCols     map[string]bool
+	sourcesHasOrigin bool
+	missingTables  map[string]bool
+}
+
+func (s *Store) planV4(ctx context.Context) v4Plan {
+	p := v4Plan{
+		entryCols:     map[string]bool{},
+		relCols:       map[string]bool{},
+		relHistCols:   map[string]bool{},
+		opCols:        map[string]bool{},
+		clusterCols:   map[string]bool{},
+		summaryCols:   map[string]bool{},
+		sourceCols:    map[string]bool{},
+		missingTables: map[string]bool{},
+	}
+	for _, c := range append(append([]string{}, v3EntryColumns...), v4EntryColumns...) {
+		p.entryCols[c] = s.hasColumnLocked(ctx, "entries", c)
+	}
+	for _, c := range v4RelationshipColumns {
+		p.relCols[c] = s.hasColumnLocked(ctx, "relationship_state", c)
+	}
+	for _, c := range v4RelationshipHistoryColumns {
+		p.relHistCols[c] = s.hasColumnLocked(ctx, "relationship_state_history", c)
+	}
+	for _, c := range v4OperationColumns {
+		p.opCols[c] = s.hasColumnLocked(ctx, "memory_operations", c)
+	}
+	for _, c := range v4ClusterColumns {
+		p.clusterCols[c] = s.hasColumnLocked(ctx, "memory_clusters", c)
+	}
+	for _, c := range v4SummaryColumns {
+		p.summaryCols[c] = s.hasColumnLocked(ctx, "memory_summary_versions", c)
+	}
+	for _, c := range []string{
+		"entry_id", "conversation_id", "session_key", "message_id", "source_id",
+		"source_type", "evidence_text", "extraction_model", "prompt_version",
+		"confidence", "user_confirmed", "created_at",
+	} {
+		p.sourceCols[c] = s.hasColumnLocked(ctx, "sources", c)
+	}
+	p.sourcesHasOrigin = strings.Contains(s.tableSQLLocked(ctx, "sources"), "origin_event_id")
+	for _, t := range v4Tables {
+		p.missingTables[t] = !s.tableExistsLocked(ctx, t)
+	}
+	return p
+}
+
+func (p v4Plan) complete() bool {
+	for _, cols := range []map[string]bool{
+		p.entryCols, p.relCols, p.relHistCols, p.opCols, p.clusterCols, p.summaryCols,
+	} {
+		for _, ok := range cols {
+			if !ok {
+				return false
+			}
+		}
+	}
+	for _, ok := range p.sourceCols {
+		if !ok {
+			return false
+		}
+	}
+	if !p.sourcesHasOrigin {
 		return false
 	}
-	if fts.available {
-		if !s.tableExistsLocked(ctx, "entries_fts") ||
-			!s.triggerExistsLocked(ctx, "entries_ai") ||
-			!s.triggerExistsLocked(ctx, "entries_ad") ||
-			!s.triggerExistsLocked(ctx, "entries_au") {
+	for _, missing := range p.missingTables {
+		if missing {
 			return false
 		}
 	}
 	return true
 }
 
+// migrateSchema upgrades an existing v3 database to v4. It is idempotent and
+// safe to call on every Open. Databases older than v3 are rejected: the old
+// v1 → v2 → v3 chain is intentionally gone.
+func (s *Store) migrateSchema(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _, err := s.migrateSchemaLocked(ctx)
+	return err
+}
+
 func (s *Store) migrateSchemaLocked(ctx context.Context) (int, string, error) {
 	previous := s.schemaVersionLocked(ctx)
-	planV2 := s.planV2(ctx)
-	planV3 := s.planV3Columns(ctx)
-	fts := s.detectFTS(ctx)
+	if previous > CurrentSchemaVersion {
+		return previous, "", fmt.Errorf(
+			"memstore: database schema v%d is newer than this build (v%d); upgrade PicoClaw before using it",
+			previous, CurrentSchemaVersion)
+	}
+	if previous < MinMigratableSchemaVersion {
+		return previous, "", fmt.Errorf(
+			"memstore: database schema v%d is not supported by this build; run a 0.6.x build once to upgrade it to v3, then retry",
+			previous)
+	}
 
-	needV2 := !planV2.complete()
-	needV3 := !s.v3CompleteLocked(ctx, fts)
-	if !needV2 && !needV3 && previous >= CurrentSchemaVersion {
+	plan := s.planV4(ctx)
+	fts := s.detectFTS(ctx)
+	if plan.complete() && previous >= CurrentSchemaVersion && s.ftsCompleteLocked(ctx, fts) {
 		return previous, "", nil
 	}
 
 	backup := ""
-	hasExistingData := false
-	if s.tableExistsLocked(ctx, "entries") {
-		var n int
-		if s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries`).Scan(&n) == nil && n > 0 {
-			hasExistingData = true
-		}
-	}
-	if previous > 0 || hasExistingData {
+	needBackup := previous < CurrentSchemaVersion
+	if needBackup {
 		var err error
-		backup, err = s.backupWithRotation(ctx, "schema-v3")
+		backup, err = s.backupWithRotation(ctx, "schema-v4")
 		if err != nil {
 			return previous, "", err
 		}
@@ -347,16 +384,11 @@ func (s *Store) migrateSchemaLocked(ctx context.Context) (int, string, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if needV2 {
-		if err := s.migrateToV2Locked(ctx, tx, planV2); err != nil {
-			return previous, backup, err
-		}
-	}
-	if err := s.migrateToV3Locked(ctx, tx, planV3, fts); err != nil {
+	if err := s.migrateToV4Locked(ctx, tx, plan, fts); err != nil {
 		return previous, backup, err
 	}
 
-	// The version is written only after both segments succeeded (B1).
+	// The version is written only after the whole segment succeeded.
 	if err := s.setMetaLocked(ctx, tx, "schema_version", fmt.Sprintf("%d", CurrentSchemaVersion)); err != nil {
 		return previous, backup, err
 	}
@@ -381,78 +413,23 @@ func (s *Store) migrateSchemaLocked(ctx context.Context) (int, string, error) {
 	return previous, backup, nil
 }
 
-// migrateToV2Locked is the original v1 → v2 upgrade. Every object is guarded
-// by a precomputed flag, so the segment can run on an already-upgraded DB.
-func (s *Store) migrateToV2Locked(ctx context.Context, tx *sql.Tx, plan v2Plan) error {
-	if !plan.hasFacet {
-		if _, err := tx.ExecContext(ctx,
-			`ALTER TABLE entries ADD COLUMN facet TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("v2 add facet: %w", err)
+// migrateToV4Locked is the single v3 → v4 schema segment. Every statement is
+// guarded by the precomputed plan so the segment can be re-run on a partially
+// healed database. Sources are rebuilt field by field: the old v3 segment is
+// gone, and losing evidence columns was exactly the B05 defect this avoids.
+func (s *Store) migrateToV4Locked(ctx context.Context, tx *sql.Tx, plan v4Plan, fts ftsPlan) error {
+	now := time.Now().UnixMilli()
+
+	// 0. Create the v4 tables first. On a fresh database the ALTERs below then
+	// add the governance columns; on a v3 database this is a no-op and the
+	// ALTERs do the upgrade.
+	for _, stmt := range v4Statements() {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("v4 schema: %w", err)
 		}
-	}
-	if !plan.hasExpires {
-		if _, err := tx.ExecContext(ctx,
-			`ALTER TABLE relationship_state ADD COLUMN expires_at INTEGER`); err != nil {
-			return fmt.Errorf("v2 add expires_at: %w", err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS relationship_state_history (
-		key TEXT NOT NULL,
-		value TEXT NOT NULL,
-		valid_from INTEGER NOT NULL,
-		valid_to INTEGER NOT NULL,
-		confidence REAL NOT NULL,
-		updated_at INTEGER NOT NULL,
-		PRIMARY KEY (key, valid_from)
-	)`); err != nil {
-		return fmt.Errorf("v2 history table: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`CREATE INDEX IF NOT EXISTS ix_entries_facet ON entries(realm, subject, predicate, facet, status)`); err != nil {
-		return fmt.Errorf("v2 facet index: %w", err)
 	}
 
-	if !plan.personasV2 {
-		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS personas_v2`); err != nil {
-			return fmt.Errorf("v2 drop personas_v2: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE personas_v2 (
-			id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			version INTEGER NOT NULL,
-			content TEXT NOT NULL,
-			active INTEGER NOT NULL DEFAULT 0,
-			realm TEXT NOT NULL DEFAULT 'real',
-			audience TEXT NOT NULL DEFAULT 'private',
-			scope TEXT NOT NULL DEFAULT 'user',
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY (id, version)
-		)`); err != nil {
-			return fmt.Errorf("v2 create personas_v2: %w", err)
-		}
-		if plan.personasExists {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO personas_v2
-				(id,name,version,content,active,realm,audience,scope,created_at)
-				SELECT id,name,version,content,active,'real','private','user',created_at FROM personas`); err != nil {
-				return fmt.Errorf("v2 copy personas: %w", err)
-			}
-			if _, err := tx.ExecContext(ctx, `DROP TABLE personas`); err != nil {
-				return fmt.Errorf("v2 drop personas: %w", err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `ALTER TABLE personas_v2 RENAME TO personas`); err != nil {
-			return fmt.Errorf("v2 rename personas: %w", err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx,
-		`CREATE INDEX IF NOT EXISTS ix_personas_active ON personas(active, realm, audience)`); err != nil {
-		return fmt.Errorf("v2 persona index: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) migrateToV3Locked(ctx context.Context, tx *sql.Tx, plan v3Plan, fts ftsPlan) error {
-	// Segment A: non-idempotent ALTERs, guarded by the precomputed plan.
+	// 1. entries: v3 base columns first (heal), then v4 governance columns.
 	for _, col := range []struct{ name, ddl string }{
 		{"event_time_precision", `ALTER TABLE entries ADD COLUMN event_time_precision TEXT NOT NULL DEFAULT 'unknown'`},
 		{"event_timezone", `ALTER TABLE entries ADD COLUMN event_timezone TEXT NOT NULL DEFAULT ''`},
@@ -460,64 +437,256 @@ func (s *Store) migrateToV3Locked(ctx context.Context, tx *sql.Tx, plan v3Plan, 
 		{"valid_from", `ALTER TABLE entries ADD COLUMN valid_from INTEGER`},
 		{"valid_to", `ALTER TABLE entries ADD COLUMN valid_to INTEGER`},
 		{"pinned_core", `ALTER TABLE entries ADD COLUMN pinned_core INTEGER NOT NULL DEFAULT 0`},
+		{"domain_id", `ALTER TABLE entries ADD COLUMN domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned'`},
+		{"row_revision", `ALTER TABLE entries ADD COLUMN row_revision INTEGER NOT NULL DEFAULT 1`},
+		{"archived_from", `ALTER TABLE entries ADD COLUMN archived_from TEXT NOT NULL DEFAULT ''`},
+		{"event_start", `ALTER TABLE entries ADD COLUMN event_start INTEGER`},
+		{"event_end", `ALTER TABLE entries ADD COLUMN event_end INTEGER`},
+		{"sensitivity", `ALTER TABLE entries ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'normal'`},
+		{"qualifiers", `ALTER TABLE entries ADD COLUMN qualifiers TEXT NOT NULL DEFAULT ''`},
+		{"qualifiers_hash", `ALTER TABLE entries ADD COLUMN qualifiers_hash TEXT NOT NULL DEFAULT ''`},
+		{"evidence_status", `ALTER TABLE entries ADD COLUMN evidence_status TEXT NOT NULL DEFAULT 'supported'`},
+		{"freshness", `ALTER TABLE entries ADD COLUMN freshness TEXT NOT NULL DEFAULT 'unknown'`},
 	} {
-		if plan.have[col.name] {
+		if plan.entryCols[col.name] {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
-			return fmt.Errorf("v3 add column %s: %w", col.name, err)
+			return fmt.Errorf("v4 add entries.%s: %w", col.name, err)
 		}
 	}
 
-	// Segment B: fully idempotent DDL and backfills.
-	for _, stmt := range v3Statements(fts) {
+	// 2. relationship state and history: domain/audience scoping.
+	for _, col := range []struct{ name, ddl string }{
+		{"domain_id", `ALTER TABLE relationship_state ADD COLUMN domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned'`},
+		{"realm", `ALTER TABLE relationship_state ADD COLUMN realm TEXT NOT NULL DEFAULT ''`},
+		{"audience", `ALTER TABLE relationship_state ADD COLUMN audience TEXT NOT NULL DEFAULT ''`},
+		{"source_event_id", `ALTER TABLE relationship_state ADD COLUMN source_event_id TEXT NOT NULL DEFAULT ''`},
+	} {
+		if plan.relCols[col.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
+			return fmt.Errorf("v4 add relationship_state.%s: %w", col.name, err)
+		}
+	}
+	for _, col := range []struct{ name, ddl string }{
+		{"domain_id", `ALTER TABLE relationship_state_history ADD COLUMN domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned'`},
+		{"realm", `ALTER TABLE relationship_state_history ADD COLUMN realm TEXT NOT NULL DEFAULT ''`},
+		{"audience", `ALTER TABLE relationship_state_history ADD COLUMN audience TEXT NOT NULL DEFAULT ''`},
+		{"source_event_id", `ALTER TABLE relationship_state_history ADD COLUMN source_event_id TEXT NOT NULL DEFAULT ''`},
+	} {
+		if plan.relHistCols[col.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
+			return fmt.Errorf("v4 add relationship_state_history.%s: %w", col.name, err)
+		}
+	}
+
+	// 3. Operation log: request identity and policy revision.
+	for _, col := range []struct{ name, ddl string }{
+		{"request_id", `ALTER TABLE memory_operations ADD COLUMN request_id TEXT NOT NULL DEFAULT ''`},
+		{"actor_ref", `ALTER TABLE memory_operations ADD COLUMN actor_ref TEXT NOT NULL DEFAULT ''`},
+		{"reason_code", `ALTER TABLE memory_operations ADD COLUMN reason_code TEXT NOT NULL DEFAULT ''`},
+		{"policy_revision", `ALTER TABLE memory_operations ADD COLUMN policy_revision INTEGER NOT NULL DEFAULT 0`},
+	} {
+		if plan.opCols[col.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
+			return fmt.Errorf("v4 add memory_operations.%s: %w", col.name, err)
+		}
+	}
+
+	// 4. Cluster and summary versions: stage/generation bookkeeping.
+	for _, col := range []struct{ name, ddl string }{
+		{"domain_id", `ALTER TABLE memory_clusters ADD COLUMN domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned'`},
+		{"generation", `ALTER TABLE memory_clusters ADD COLUMN generation INTEGER NOT NULL DEFAULT 1`},
+		{"stage_start", `ALTER TABLE memory_clusters ADD COLUMN stage_start INTEGER`},
+		{"stage_end", `ALTER TABLE memory_clusters ADD COLUMN stage_end INTEGER`},
+	} {
+		if plan.clusterCols[col.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
+			return fmt.Errorf("v4 add memory_clusters.%s: %w", col.name, err)
+		}
+	}
+	for _, col := range []struct{ name, ddl string }{
+		{"domain_id", `ALTER TABLE memory_summary_versions ADD COLUMN domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned'`},
+		{"generation", `ALTER TABLE memory_summary_versions ADD COLUMN generation INTEGER NOT NULL DEFAULT 1`},
+		{"input_fingerprint", `ALTER TABLE memory_summary_versions ADD COLUMN input_fingerprint TEXT NOT NULL DEFAULT ''`},
+		{"claims", `ALTER TABLE memory_summary_versions ADD COLUMN claims TEXT NOT NULL DEFAULT '[]'`},
+		{"review_status", `ALTER TABLE memory_summary_versions ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'`},
+		{"invalidated_at", `ALTER TABLE memory_summary_versions ADD COLUMN invalidated_at INTEGER`},
+	} {
+		if plan.summaryCols[col.name] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
+			return fmt.Errorf("v4 add memory_summary_versions.%s: %w", col.name, err)
+		}
+	}
+
+	// 5. Rebuild sources with the origin-event identity, preserving every v3
+	// evidence field instead of projecting onto a reduced column set (B05).
+	if !plan.sourcesHasOrigin {
+		if err := rebuildSourcesV4(ctx, tx, plan, now); err != nil {
+			return err
+		}
+	}
+
+	// 6. Default isolated domain for unclaimed legacy data. Migration never
+	// guesses an owner from scope, session or text.
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO memory_domains
+		 (domain_id,owner_principal_id,scope_key,status,policy_epoch,created_at,updated_at)
+		 VALUES('legacy_unassigned','','','active',1,?,?)`, now, now); err != nil {
+		return fmt.Errorf("v4 default domain: %w", err)
+	}
+
+	// 8. Indexes: the exact-fingerprint uniqueness is now per domain (FR-03).
+	for _, stmt := range []string{
+		`DROP INDEX IF EXISTS ux_entries_hash`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_entries_hash ON entries(domain_id, content_hash) WHERE status='active'`,
+		`CREATE INDEX IF NOT EXISTS ix_entries_domain ON entries(domain_id, status, realm, layer)`,
+		`CREATE INDEX IF NOT EXISTS ix_entries_revision ON entries(row_revision)`,
+		`CREATE INDEX IF NOT EXISTS ix_entries_facet ON entries(realm, subject, predicate, facet, status)`,
+		`CREATE INDEX IF NOT EXISTS ix_entries_valid ON entries(status, realm, valid_from, valid_to)`,
+		`CREATE INDEX IF NOT EXISTS ix_entries_pinned ON entries(status, pinned_core) WHERE pinned_core=1`,
+		`CREATE INDEX IF NOT EXISTS ix_sources_entry ON sources(entry_id)`,
+		`CREATE INDEX IF NOT EXISTS ix_sources_message ON sources(message_id) WHERE message_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS ix_sources_session ON sources(session_key) WHERE session_key <> ''`,
+		`CREATE INDEX IF NOT EXISTS ix_sources_origin ON sources(origin_event_id) WHERE origin_event_id <> ''`,
+		`CREATE INDEX IF NOT EXISTS ix_memory_ops_request ON memory_operations(request_id) WHERE request_id <> ''`,
+		`CREATE INDEX IF NOT EXISTS ix_personas_active ON personas(active, realm, audience)`,
+		`CREATE INDEX IF NOT EXISTS ix_origin_events_session ON memory_origin_events(session_key, message_id)`,
+		`CREATE INDEX IF NOT EXISTS ix_origin_events_domain ON memory_origin_events(domain_id)`,
+		`CREATE INDEX IF NOT EXISTS ix_memory_dep_child ON memory_dependencies(child_kind, child_id)`,
+		`CREATE INDEX IF NOT EXISTS ix_memory_dep_parent ON memory_dependencies(parent_kind, parent_id)`,
+		`CREATE INDEX IF NOT EXISTS ix_memory_jobs_state ON memory_jobs(state, priority, next_run_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_memory_recalls_dedup ON memory_recalls(dedup_key) WHERE dedup_key <> ''`,
+		`CREATE INDEX IF NOT EXISTS ix_memory_recalls_domain ON memory_recalls(domain_id, status)`,
+	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("v3 schema: %w", err)
+			return fmt.Errorf("v4 index: %w", err)
+		}
+	}
+
+	// 9. FTS is a derived index: rebuild it when missing, never if disabled.
+	if fts.available {
+		for _, stmt := range []string{
+			`CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+				subject, predicate, facet, value, text, tokenize="` + fts.tokenizer + `")`,
+			`CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
+				INSERT INTO entries_fts(rowid,subject,predicate,facet,value,text)
+				VALUES (new.rowid,new.subject,new.predicate,new.facet,new.value,new.text);
+			END`,
+			`CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
+				DELETE FROM entries_fts WHERE rowid = old.rowid;
+			END`,
+			`CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE OF text,subject,predicate,facet,value ON entries BEGIN
+				DELETE FROM entries_fts WHERE rowid = old.rowid;
+				INSERT INTO entries_fts(rowid,subject,predicate,facet,value,text)
+				VALUES (new.rowid,new.subject,new.predicate,new.facet,new.value,new.text);
+			END`,
+			`INSERT OR IGNORE INTO entries_fts(rowid,subject,predicate,facet,value,text)
+			 SELECT rowid,subject,predicate,facet,value,text FROM entries`,
+		} {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("v4 fts: %w", err)
+			}
 		}
 	}
 	return nil
 }
 
-func v3Statements(fts ftsPlan) []string {
-	stmts := []string{
-		`CREATE INDEX IF NOT EXISTS ix_entries_valid ON entries(status, realm, valid_from, valid_to)`,
-		`CREATE INDEX IF NOT EXISTS ix_entries_pinned ON entries(status, pinned_core) WHERE pinned_core=1`,
+// rebuildSourcesV4 copies the old sources table into the v4 shape. Columns
+// missing in the old table get explicit defaults; nothing that exists is
+// dropped. Orphan rows never enter the new table.
+func rebuildSourcesV4(ctx context.Context, tx *sql.Tx, plan v4Plan, now int64) error {
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS sources_v4`); err != nil {
+		return fmt.Errorf("v4 drop sources_v4: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE sources_v4 (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		entry_id         TEXT NOT NULL,
+		conversation_id  TEXT NOT NULL DEFAULT '',
+		session_key      TEXT NOT NULL DEFAULT '',
+		message_id       INTEGER,
+		source_id        TEXT NOT NULL DEFAULT '',
+		source_type      TEXT NOT NULL DEFAULT 'explicit',
+		evidence_text    TEXT NOT NULL DEFAULT '',
+		extraction_model TEXT NOT NULL DEFAULT '',
+		prompt_version   TEXT NOT NULL DEFAULT '',
+		confidence       REAL NOT NULL DEFAULT 1.0,
+		user_confirmed   INTEGER NOT NULL DEFAULT 0,
+		origin_event_id  TEXT NOT NULL DEFAULT '',
+		origin_revision  INTEGER NOT NULL DEFAULT 1,
+		confirmation_event_id TEXT NOT NULL DEFAULT '',
+		evidence_root    TEXT NOT NULL DEFAULT '',
+		created_at       INTEGER NOT NULL,
+		UNIQUE(entry_id, source_type, source_id, session_key, origin_event_id),
+		FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
+	)`); err != nil {
+		return fmt.Errorf("v4 create sources_v4: %w", err)
+	}
 
-		// sources v3 keeps the v2 unique key so INSERT OR IGNORE still dedupes.
-		`CREATE TABLE IF NOT EXISTS sources_v3 (
-			id               INTEGER PRIMARY KEY AUTOINCREMENT,
-			entry_id         TEXT NOT NULL,
-			conversation_id  TEXT NOT NULL DEFAULT '',
-			session_key      TEXT NOT NULL DEFAULT '',
-			message_id       INTEGER,
-			source_id        TEXT NOT NULL DEFAULT '',
-			source_type      TEXT NOT NULL DEFAULT 'explicit',
-			evidence_text    TEXT NOT NULL DEFAULT '',
-			extraction_model TEXT NOT NULL DEFAULT '',
-			prompt_version   TEXT NOT NULL DEFAULT '',
-			confidence       REAL NOT NULL DEFAULT 1.0,
-			user_confirmed   INTEGER NOT NULL DEFAULT 0,
-			created_at       INTEGER NOT NULL,
-			UNIQUE(entry_id, source_type, source_id, session_key),
-			FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
-		)`,
-		`INSERT OR IGNORE INTO sources_v3 (
-			entry_id, session_key, source_id, source_type, confidence, user_confirmed, created_at)
-		 SELECT s.entry_id, s.session_key, s.source_id,
-		        CASE s.source_type WHEN 'user_statement' THEN 'explicit' ELSE s.source_type END,
-		        0.9, 0, s.created_at
-		 FROM sources s
-		 WHERE EXISTS (SELECT 1 FROM entries e WHERE e.id = s.entry_id)`,
-		`INSERT OR IGNORE INTO meta(key,value) VALUES(
-			'v3_dropped_orphan_sources',
-			CAST((SELECT COUNT(*) FROM sources s
-			      WHERE NOT EXISTS (SELECT 1 FROM entries e WHERE e.id=s.entry_id)) AS TEXT))`,
-		`DROP TABLE IF EXISTS sources`,
-		`ALTER TABLE sources_v3 RENAME TO sources`,
-		`CREATE INDEX IF NOT EXISTS ix_sources_entry   ON sources(entry_id)`,
-		`CREATE INDEX IF NOT EXISTS ix_sources_message ON sources(message_id) WHERE message_id IS NOT NULL`,
-		`CREATE INDEX IF NOT EXISTS ix_sources_session ON sources(session_key) WHERE session_key <> ''`,
+	cols := []string{
+		"entry_id", "conversation_id", "session_key", "message_id", "source_id",
+		"source_type", "evidence_text", "extraction_model", "prompt_version",
+		"confidence", "user_confirmed",
+	}
+	defaults := map[string]string{
+		"conversation_id":  "''",
+		"session_key":      "''",
+		"message_id":       "NULL",
+		"source_id":        "''",
+		"source_type":      "'explicit'",
+		"evidence_text":    "''",
+		"extraction_model": "''",
+		"prompt_version":   "''",
+		"confidence":       "0.9",
+		"user_confirmed":   "0",
+	}
+	selects := make([]string, len(cols))
+	for i, c := range cols {
+		switch {
+		case !plan.sourceCols[c]:
+			selects[i] = defaults[c]
+		case c == "source_type":
+			// v1/v2 used user_statement for the same evidence grade.
+			selects[i] = `CASE source_type WHEN 'user_statement' THEN 'explicit' ELSE source_type END`
+		default:
+			selects[i] = c
+		}
+	}
+	createdAt := "created_at"
+	if !plan.sourceCols["created_at"] {
+		createdAt = fmt.Sprintf("%d", now)
+	}
+	insert := `INSERT INTO sources_v4 (` + strings.Join(cols, ",") + `,created_at)
+		SELECT ` + strings.Join(selects, ",") + `,` + createdAt + `
+		FROM sources
+		WHERE EXISTS (SELECT 1 FROM entries e WHERE e.id = sources.entry_id)`
+	if _, err := tx.ExecContext(ctx, insert); err != nil {
+		return fmt.Errorf("v4 copy sources: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE sources`); err != nil {
+		return fmt.Errorf("v4 drop sources: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE sources_v4 RENAME TO sources`); err != nil {
+		return fmt.Errorf("v4 rename sources: %w", err)
+	}
+	return nil
+}
 
+// v4Statements creates the v4 tables. They are all IF NOT EXISTS so the
+// segment can heal a database where a table was dropped by hand or by an
+// interrupted upgrade.
+func v4Statements() []string {
+	return []string{
 		`CREATE TABLE IF NOT EXISTS memory_relations (
 			id            INTEGER PRIMARY KEY AUTOINCREMENT,
 			source_id     TEXT NOT NULL,
@@ -528,20 +697,9 @@ func v3Statements(fts ftsPlan) []string {
 			created_at    INTEGER NOT NULL,
 			UNIQUE(source_id, target_id, relation_type),
 			FOREIGN KEY (source_id) REFERENCES entries(id) ON DELETE CASCADE,
-			FOREIGN KEY (target_id) REFERENCES entries(id) ON DELETE CASCADE
-		)`,
+			FOREIGN KEY (target_id) REFERENCES entries(id) ON DELETE CASCADE)`,
 		`CREATE INDEX IF NOT EXISTS ix_memory_rel_source ON memory_relations(source_id)`,
 		`CREATE INDEX IF NOT EXISTS ix_memory_rel_target ON memory_relations(target_id)`,
-		`INSERT OR IGNORE INTO memory_relations (source_id,target_id,relation_type,confidence,source_type,created_at)
-		 SELECT s.entry_id, s.superseded_id, 'supersedes', 1.0, 'explicit', s.created_at
-		 FROM supersedes s
-		 WHERE EXISTS (SELECT 1 FROM entries e1 WHERE e1.id = s.entry_id)
-		   AND EXISTS (SELECT 1 FROM entries e2 WHERE e2.id = s.superseded_id)`,
-		`INSERT OR IGNORE INTO meta(key,value) VALUES(
-			'v3_dropped_orphan_supersedes',
-			CAST((SELECT COUNT(*) FROM supersedes s
-			      WHERE NOT EXISTS (SELECT 1 FROM entries e WHERE e.id=s.superseded_id)
-			         OR NOT EXISTS (SELECT 1 FROM entries e WHERE e.id=s.entry_id)) AS TEXT))`,
 
 		`CREATE TABLE IF NOT EXISTS memory_clusters (
 			id TEXT PRIMARY KEY, realm TEXT NOT NULL DEFAULT 'real', title TEXT NOT NULL,
@@ -559,6 +717,19 @@ func v3Statements(fts ftsPlan) []string {
 			status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, superseded_at INTEGER,
 			UNIQUE(cluster_id, version),
 			FOREIGN KEY (cluster_id) REFERENCES memory_clusters(id) ON DELETE CASCADE)`,
+		`CREATE TABLE IF NOT EXISTS memory_summary_evidence (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			summary_version_id INTEGER NOT NULL,
+			claim_id TEXT NOT NULL,
+			entry_id TEXT NOT NULL,
+			source_id INTEGER NOT NULL DEFAULT 0,
+			row_revision INTEGER NOT NULL DEFAULT 0,
+			evidence_span TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			UNIQUE(summary_version_id, claim_id, entry_id),
+			FOREIGN KEY (summary_version_id) REFERENCES memory_summary_versions(id) ON DELETE CASCADE)`,
+		`CREATE INDEX IF NOT EXISTS ix_summary_evidence_entry ON memory_summary_evidence(entry_id)`,
+
 		`CREATE TABLE IF NOT EXISTS memory_operations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, operation TEXT NOT NULL,
 			target_entry_id TEXT NOT NULL DEFAULT '',
@@ -569,52 +740,135 @@ func v3Statements(fts ftsPlan) []string {
 		`CREATE INDEX IF NOT EXISTS ix_memory_ops_target ON memory_operations(target_entry_id)`,
 		`CREATE INDEX IF NOT EXISTS ix_memory_ops_hash ON memory_operations(content_hash) WHERE content_hash <> ''`,
 
-		// Capsule rows are only inserted for entries that exist, so migrating a
-		// different workspace cannot fail on a foreign key violation.
-		`INSERT OR IGNORE INTO memory_clusters(id,realm,title,topic,status,created_at,updated_at) VALUES
-		 ('capsule:fictional_t0','fictional','虚构写作 T0 铁律包','写作前置','active',
-		  CAST(strftime('%s','now') AS INTEGER)*1000, CAST(strftime('%s','now') AS INTEGER)*1000),
-		 ('capsule:fictional_t0_compact','fictional','虚构写作 T0 铁律包（紧凑版）','写作前置','active',
-		  CAST(strftime('%s','now') AS INTEGER)*1000, CAST(strftime('%s','now') AS INTEGER)*1000)`,
-		`INSERT OR IGNORE INTO memory_cluster_members(cluster_id,entry_id,ordinal)
-		 SELECT 'capsule:fictional_t0', id, 1 FROM entries WHERE id='mem_b4_writing_card'`,
-		`INSERT OR IGNORE INTO memory_cluster_members(cluster_id,entry_id,ordinal)
-		 SELECT 'capsule:fictional_t0', id, 2 FROM entries WHERE id='mem_b4_writing_boundary'`,
-		`INSERT OR IGNORE INTO memory_cluster_members(cluster_id,entry_id,ordinal)
-		 SELECT 'capsule:fictional_t0', id, 3 FROM entries WHERE id='mem_b4_writing_direction'`,
-		`INSERT OR IGNORE INTO memory_cluster_members(cluster_id,entry_id,ordinal)
-		 SELECT 'capsule:fictional_t0', id, 4 FROM entries WHERE id='mem_b4_essence'`,
-		`INSERT OR IGNORE INTO memory_cluster_members(cluster_id,entry_id,ordinal)
-		 SELECT 'capsule:fictional_t0', id, 5 FROM entries WHERE id='mem_b4_writing_scale'`,
-		`INSERT OR IGNORE INTO memory_cluster_members(cluster_id,entry_id,ordinal)
-		 SELECT 'capsule:fictional_t0_compact', id, 1 FROM entries WHERE id='mem_b4_writing_card'`,
-		`INSERT OR IGNORE INTO memory_cluster_members(cluster_id,entry_id,ordinal)
-		 SELECT 'capsule:fictional_t0_compact', id, 2 FROM entries WHERE id='mem_b4_writing_boundary'`,
-		`INSERT OR IGNORE INTO memory_cluster_members(cluster_id,entry_id,ordinal)
-		 SELECT 'capsule:fictional_t0_compact', id, 4 FROM entries WHERE id='mem_b4_essence'`,
+		// Owner and scope partitions. Unknown ownership is isolated, never
+		// guessed from text or session strings.
+		`CREATE TABLE IF NOT EXISTS memory_domains (
+			domain_id TEXT PRIMARY KEY,
+			owner_principal_id TEXT NOT NULL DEFAULT '',
+			scope_key TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'active',
+			policy_epoch INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS memory_actor_bindings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			canonical_actor TEXT NOT NULL,
+			owner_principal_id TEXT NOT NULL,
+			channel_scope TEXT NOT NULL DEFAULT '',
+			binding_revision INTEGER NOT NULL DEFAULT 1,
+			revoked INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(canonical_actor, owner_principal_id))`,
+		`CREATE INDEX IF NOT EXISTS ix_actor_bindings_owner ON memory_actor_bindings(owner_principal_id, revoked)`,
+
+		// Processing grants bind purpose + recipient, not just "cloud allowed".
+		`CREATE TABLE IF NOT EXISTS memory_processing_grants (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			owner_principal_id TEXT NOT NULL DEFAULT '',
+			domain_id TEXT NOT NULL DEFAULT '',
+			purpose TEXT NOT NULL,
+			recipient_ref TEXT NOT NULL,
+			data_scope TEXT NOT NULL DEFAULT 'long_term',
+			policy_revision INTEGER NOT NULL DEFAULT 0,
+			revoked INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE(owner_principal_id, domain_id, purpose, recipient_ref))`,
+
+		// Logical message identity shared by JSONL and Seahorse.
+		`CREATE TABLE IF NOT EXISTS memory_origin_events (
+			event_id TEXT PRIMARY KEY,
+			origin_revision INTEGER NOT NULL DEFAULT 1,
+			source_backend TEXT NOT NULL DEFAULT 'jsonl',
+			source_locator TEXT NOT NULL DEFAULT '',
+			session_key TEXT NOT NULL DEFAULT '',
+			message_id TEXT NOT NULL DEFAULT '',
+			role TEXT NOT NULL DEFAULT '',
+			available INTEGER NOT NULL DEFAULT 1,
+			event_at INTEGER,
+			capture_policy_version INTEGER NOT NULL DEFAULT 1,
+			domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned',
+			created_at INTEGER NOT NULL)`,
+
+		// Reverse dependencies keep derived views revocable.
+		`CREATE TABLE IF NOT EXISTS memory_dependencies (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			parent_kind TEXT NOT NULL,
+			parent_id TEXT NOT NULL,
+			parent_revision INTEGER NOT NULL DEFAULT 0,
+			child_kind TEXT NOT NULL,
+			child_id TEXT NOT NULL,
+			dependency_type TEXT NOT NULL DEFAULT 'derived_from',
+			created_at INTEGER NOT NULL,
+			UNIQUE(parent_kind, parent_id, child_kind, child_id, dependency_type))`,
+
+		// Durable job queue for extraction, summary and cleanup work.
+		`CREATE TABLE IF NOT EXISTS memory_jobs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			job_id TEXT NOT NULL UNIQUE,
+			job_kind TEXT NOT NULL,
+			input_fingerprint TEXT NOT NULL DEFAULT '',
+			generation INTEGER NOT NULL DEFAULT 0,
+			policy_revision INTEGER NOT NULL DEFAULT 0,
+			lease_owner TEXT NOT NULL DEFAULT '',
+			lease_until INTEGER,
+			state TEXT NOT NULL DEFAULT 'pending',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			next_run_at INTEGER,
+			priority INTEGER NOT NULL DEFAULT 5,
+			last_error TEXT NOT NULL DEFAULT '',
+			payload TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL)`,
+
+		// One-shot approval plans: the model can request, only the owner approves.
+		`CREATE TABLE IF NOT EXISTS memory_change_plans (
+			plan_id TEXT PRIMARY KEY,
+			action TEXT NOT NULL,
+			target_kind TEXT NOT NULL DEFAULT 'entry',
+			target_id TEXT NOT NULL DEFAULT '',
+			expected_revision INTEGER NOT NULL DEFAULT 0,
+			params_digest TEXT NOT NULL DEFAULT '',
+			payload TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			approved_by TEXT NOT NULL DEFAULT '',
+			expires_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			executed_at INTEGER)`,
+
+		`CREATE TABLE IF NOT EXISTS memory_commitments (
+			id TEXT PRIMARY KEY,
+			domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned',
+			text TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'proposed',
+			due_at INTEGER,
+			due_timezone TEXT NOT NULL DEFAULT '',
+			fulfilled_by TEXT NOT NULL DEFAULT '',
+			source_event_id TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL)`,
+
+		`CREATE TABLE IF NOT EXISTS memory_recalls (
+			id TEXT PRIMARY KEY,
+			domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned',
+			topic TEXT NOT NULL DEFAULT '',
+			entry_ids TEXT NOT NULL DEFAULT '',
+			target_ref TEXT NOT NULL DEFAULT '',
+			dedup_key TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'candidate',
+			trigger_kind TEXT NOT NULL DEFAULT 'commitment',
+			scheduled_at INTEGER,
+			sent_at INTEGER,
+			created_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS memory_recall_feedback (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			recall_id TEXT NOT NULL,
+			feedback TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (recall_id) REFERENCES memory_recalls(id) ON DELETE CASCADE)`,
 	}
-	if !fts.available {
-		return stmts
-	}
-	return append(stmts,
-		`CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
-			subject, predicate, facet, value, text, tokenize="`+fts.tokenizer+`")`,
-		`CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
-			INSERT INTO entries_fts(rowid,subject,predicate,facet,value,text)
-			VALUES (new.rowid,new.subject,new.predicate,new.facet,new.value,new.text);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
-			DELETE FROM entries_fts WHERE rowid = old.rowid;
-		END`,
-		// Only content columns: flushUsage updating use_count must not rebuild.
-		`CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE OF text,subject,predicate,facet,value ON entries BEGIN
-			DELETE FROM entries_fts WHERE rowid = old.rowid;
-			INSERT INTO entries_fts(rowid,subject,predicate,facet,value,text)
-			VALUES (new.rowid,new.subject,new.predicate,new.facet,new.value,new.text);
-		END`,
-		`INSERT OR IGNORE INTO entries_fts(rowid,subject,predicate,facet,value,text)
-		 SELECT rowid,subject,predicate,facet,value,text FROM entries`,
-	)
 }
 
 // MigrationStatus reports whether the database still needs schema or data
@@ -624,15 +878,14 @@ func (s *Store) MigrationStatus(ctx context.Context) (MigrationStatus, error) {
 	defer s.mu.Unlock()
 
 	version := s.schemaVersionLocked(ctx)
-	planV2 := s.planV2(ctx)
 	tokenizer := s.metaValueLocked(ctx, "fts_tokenizer")
 	fts := ftsPlan{available: tokenizer != "none", tokenizer: tokenizer}
-	planV3 := s.planV3Columns(ctx)
+	plan := s.planV4(ctx)
 
 	st := MigrationStatus{
 		SchemaVersion:        version,
 		CurrentVersion:       CurrentSchemaVersion,
-		NeedsSchemaMigration: version < CurrentSchemaVersion || !planV2.complete() || !s.v3CompleteLocked(ctx, fts) || !planV3.have["pinned_core"],
+		NeedsSchemaMigration: version != CurrentSchemaVersion || !plan.complete() || !s.ftsCompleteLocked(ctx, fts),
 		DBPath:               s.path,
 		Backup:               s.metaValueLocked(ctx, "last_migration_backup"),
 		FTSTokenizer:         tokenizer,
@@ -657,6 +910,18 @@ func (s *Store) MigrationStatus(ctx context.Context) (MigrationStatus, error) {
 	if s.tableExistsLocked(ctx, "entries_fts") {
 		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries_fts`).Scan(&st.FTSRows)
 	}
+	if s.tableExistsLocked(ctx, "memory_domains") {
+		st.Domains, _ = s.countLocked(ctx, "memory_domains")
+	}
+	if s.tableExistsLocked(ctx, "memory_origin_events") {
+		st.OriginEvents, _ = s.countLocked(ctx, "memory_origin_events")
+	}
+	if s.tableExistsLocked(ctx, "memory_jobs") {
+		st.Jobs, _ = s.countLocked(ctx, "memory_jobs")
+	}
+	if s.tableExistsLocked(ctx, "memory_dependencies") {
+		st.Dependencies, _ = s.countLocked(ctx, "memory_dependencies")
+	}
 	if info, err := os.Stat(s.path); err == nil {
 		st.DBSize = info.Size()
 	}
@@ -671,9 +936,8 @@ func (s *Store) countLocked(ctx context.Context, table string) (int, error) {
 	return n, err
 }
 
-// ApplyMigration upgrades v1/v2 databases to v3 and applies the idempotent
-// data repairs. It never deletes entries and never changes status except for
-// the explicit birthday restore.
+// ApplyMigration upgrades a v3 database to v4. It is the `picoclaw memory
+// migrate` entry point and never deletes entries.
 func (s *Store) ApplyMigration(ctx context.Context) (MigrationReport, error) {
 	previous := s.openedSchema
 	if previous == 0 {
@@ -686,164 +950,43 @@ func (s *Store) ApplyMigration(ctx context.Context) (MigrationReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	backup, err := s.backupWithRotation(ctx, "repair")
-	if err != nil {
-		return MigrationReport{}, err
+	// `memory migrate` is an explicit maintenance command: it always leaves a
+	// VACUUM INTO snapshot, even when the schema was already current, so an
+	// operator has a rollback point for the data repairs in the same command.
+	if s.metaValueLocked(ctx, "last_migration_backup") == "" {
+		backup, err := s.backupWithRotation(ctx, "migrate")
+		if err != nil {
+			return MigrationReport{}, err
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT INTO meta(key,value) VALUES('last_migration_backup',?)
+			 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, backup); err != nil {
+			return MigrationReport{}, err
+		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return MigrationReport{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
 
 	report := MigrationReport{PreviousSchemaVersion: previous}
-	now := time.Now().UnixMilli()
-
-	if err := s.repairDataLocked(ctx, tx, now, &report); err != nil {
-		return MigrationReport{}, err
-	}
-
-	if err := s.setMetaLocked(ctx, tx, "v3_repair_at", fmt.Sprintf("%d", now)); err != nil {
-		return MigrationReport{}, err
-	}
-	if err := s.setMetaLocked(ctx, tx, "last_migration_backup", backup); err != nil {
-		return MigrationReport{}, err
-	}
-	if err := s.setMetaLocked(ctx, tx, "last_migration_at", fmt.Sprintf("%d", now)); err != nil {
-		return MigrationReport{}, err
-	}
-	if err := s.bumpRevision(ctx, tx); err != nil {
-		return MigrationReport{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return MigrationReport{}, err
-	}
-
 	report.SchemaVersion = s.schemaVersionLocked(ctx)
-	report.Backup = backup
+	report.Backup = s.metaValueLocked(ctx, "last_migration_backup")
 	report.FTSTokenizer = s.metaValueLocked(ctx, "fts_tokenizer")
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries`).Scan(&report.Total)
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries WHERE status='active'`).Scan(&report.Active)
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM entries WHERE TRIM(predicate)=''`).Scan(&report.EmptyPredicate)
 	if report.FTSTokenizer != "none" {
 		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries_fts`).Scan(&report.FTSRows)
 	}
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM entries WHERE domain_id <> 'legacy_unassigned'`).Scan(&report.EntriesWithDomain)
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM entries WHERE domain_id = 'legacy_unassigned'`).Scan(&report.SourcesRebuilt)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM memory_domains`).Scan(&report.DomainsCreated)
 	return report, nil
 }
 
-// repairDataLocked applies the idempotent v3 data repairs (R1-R4) and records
-// the orphan counts produced by the schema migration.
-func (s *Store) repairDataLocked(ctx context.Context, tx *sql.Tx, now int64, report *MigrationReport) error {
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM entries WHERE TRIM(predicate)=''`).Scan(&report.EmptyPredicate); err != nil {
-		return err
-	}
-
-	for id, mapping := range relationshipFacetMappings {
-		res, err := tx.ExecContext(ctx,
-			`UPDATE entries SET predicate=?, facet=?, updated_at=?
-			 WHERE id=? AND status='active'
-			   AND (TRIM(predicate)='' OR predicate='待分类' OR TRIM(facet)='')`,
-			mapping.predicate, mapping.facet, now, id)
-		if err != nil {
-			return err
-		}
-		n, _ := res.RowsAffected()
-		report.MappedRelationships += int(n)
-	}
-	for id, mapping := range v3PredicateMappings {
-		res, err := tx.ExecContext(ctx,
-			`UPDATE entries SET predicate=?, facet=?, updated_at=?
-			 WHERE id=? AND predicate='待分类'`,
-			mapping.predicate, mapping.facet, now, id)
-		if err != nil {
-			return err
-		}
-		n, _ := res.RowsAffected()
-		report.MappedPredicates += int(n)
-	}
-	res, err := tx.ExecContext(ctx,
-		`UPDATE entries SET predicate='待分类', updated_at=? WHERE TRIM(predicate)=''`, now)
-	if err != nil {
-		return err
-	}
-	updated, _ := res.RowsAffected()
-	report.UpdatedPredicates = int(updated) + report.MappedRelationships + report.MappedPredicates
-
-	// R2: reclassify dialogue that was stored as a real profile fact.
-	res, err = tx.ExecContext(ctx,
-		`UPDATE entries SET realm='fictional', layer='procedural', audience='private',
-		 predicate='场景', facet='开局宣告台词·演员台词', importance=0.55, updated_at=?
-		 WHERE id=? AND realm='real' AND layer='profile'`, now, v3PollutionEntry)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		report.Reclassified = int(n)
-		if _, err := tx.ExecContext(ctx,
-			`INSERT OR IGNORE INTO sources(entry_id,source_type,source_id,session_key,confidence,user_confirmed,created_at)
-			 VALUES(?,'reclassified','repair_v3','',1.0,1,?)`, v3PollutionEntry, now); err != nil {
-			return err
-		}
-	}
-
-	// R3: restore the birthday entry. The date is derived from the text, never
-	// hardcoded in the repository.
-	res, err = tx.ExecContext(ctx,
-		`UPDATE entries SET status='active', predicate='birthday', facet='日期',
-		 value=CASE WHEN instr(text,'是')>0 THEN substr(text, instr(text,'是')+1) ELSE value END,
-		 updated_at=? WHERE id=? AND status='archived'`, now, v3BirthdayEntry)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		report.Restored = int(n)
-	}
-
-	// R4: every entry gets at least one evidence source.
-	res, err = tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO sources(entry_id,source_type,source_id,session_key,confidence,user_confirmed,created_at)
-		 SELECT e.id,'imported','b4_batch_consolidation_20261031','',0.7,0,e.created_at
-		 FROM entries e
-		 WHERE e.id LIKE 'mem_b4_%'
-		   AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.entry_id=e.id)`)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		report.BackfilledSources = int(n)
-	}
-	res, err = tx.ExecContext(ctx,
-		`INSERT OR IGNORE INTO sources(entry_id,source_type,source_id,session_key,confidence,user_confirmed,created_at)
-		 SELECT ?, 'manual', 'manual_edit_20261031', '', 1.0, 1, ?
-		 WHERE EXISTS (SELECT 1 FROM entries WHERE id=?)`, v3ManualSourceEntry, now, v3ManualSourceEntry)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		report.BackfilledSources++
-	}
-
-	for key, dst := range map[string]*int{
-		"v3_dropped_orphan_sources":    &report.DroppedOrphanSources,
-		"v3_dropped_orphan_supersedes": &report.DroppedOrphanSupersedes,
-	} {
-		var raw string
-		if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, key).Scan(&raw); err == nil {
-			_, _ = fmt.Sscanf(raw, "%d", dst)
-		}
-	}
-
-	return nil
-}
-
-// ApplyV2Migration is kept for source compatibility. It now runs the full
-// v1 → v2 → v3 migration chain.
-func (s *Store) ApplyV2Migration(ctx context.Context) (MigrationReport, error) {
-	return s.ApplyMigration(ctx)
-}
-
-// RepairPreviewData reports how many rows the idempotent data repair would
-// touch. It does not write anything.
+// RepairPreviewData reports how many rows a v4 self-heal would touch. It does
+// not write anything. The v3 hard-coded data repairs are gone with the v3
+// migration chain.
 func (s *Store) RepairPreviewData(ctx context.Context) (map[string]int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -851,9 +994,9 @@ func (s *Store) RepairPreviewData(ctx context.Context) (map[string]int, error) {
 	queries := map[string]string{
 		"empty_predicate":      `SELECT COUNT(*) FROM entries WHERE TRIM(predicate)=''`,
 		"uncategorized_active": `SELECT COUNT(*) FROM entries WHERE status='active' AND predicate='待分类'`,
-		"pollution_real":       `SELECT COUNT(*) FROM entries WHERE id='` + v3PollutionEntry + `' AND realm='real' AND layer='profile'`,
-		"birthday_archived":    `SELECT COUNT(*) FROM entries WHERE id='` + v3BirthdayEntry + `' AND status='archived'`,
 		"unsourced":            `SELECT COUNT(*) FROM entries e WHERE NOT EXISTS (SELECT 1 FROM sources s WHERE s.entry_id=e.id)`,
+		"legacy_unassigned":    `SELECT COUNT(*) FROM entries WHERE domain_id='legacy_unassigned'`,
+		"stale_schema":         `SELECT COUNT(*) FROM meta WHERE key='schema_version' AND value <> '4'`,
 	}
 	for key, q := range queries {
 		var n int
@@ -865,36 +1008,32 @@ func (s *Store) RepairPreviewData(ctx context.Context) (map[string]int, error) {
 	return out, nil
 }
 
-// RepairData applies only the idempotent data repairs, without a schema
-// upgrade. It is the `picoclaw memory repair` entry point.
+// RepairData re-runs the idempotent v4 segment: it heals missing columns,
+// tables, indexes and the FTS projection without deleting data.
 func (s *Store) RepairData(ctx context.Context) (MigrationReport, error) {
+	previous := s.schemaVersionLocked(ctx)
+	report := MigrationReport{PreviousSchemaVersion: previous}
+	if err := s.migrateSchema(ctx); err != nil {
+		return MigrationReport{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	backup, err := s.backupWithRotation(ctx, "repair")
 	if err != nil {
 		return MigrationReport{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return MigrationReport{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	now := time.Now().UnixMilli()
-	report := MigrationReport{PreviousSchemaVersion: s.schemaVersionLocked(ctx), Backup: backup}
-	if err := s.repairDataLocked(ctx, tx, now, &report); err != nil {
-		return MigrationReport{}, err
-	}
-	if err := s.setMetaLocked(ctx, tx, "last_migration_backup", backup); err != nil {
-		return MigrationReport{}, err
-	}
-	if err := s.bumpRevision(ctx, tx); err != nil {
-		return MigrationReport{}, err
-	}
-	if err := tx.Commit(); err != nil {
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO meta(key,value) VALUES('last_migration_backup',?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, backup); err != nil {
 		return MigrationReport{}, err
 	}
 	report.SchemaVersion = s.schemaVersionLocked(ctx)
+	report.Backup = backup
+	report.FTSTokenizer = s.metaValueLocked(ctx, "fts_tokenizer")
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries`).Scan(&report.Total)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries WHERE status='active'`).Scan(&report.Active)
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM entries WHERE domain_id = 'legacy_unassigned'`).Scan(&report.SourcesRebuilt)
 	return report, nil
 }
 

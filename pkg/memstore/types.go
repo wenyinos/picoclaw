@@ -72,6 +72,29 @@ const (
 	RelNextScene    = "next_scene"
 )
 
+// Domain and governance constants added in schema v4.
+const (
+	// DomainLegacyUnassigned isolates data whose owner was never claimed.
+	// Migration never guesses ownership from scope, session or text.
+	DomainLegacyUnassigned = "legacy_unassigned"
+
+	// EvidenceStatus is separate from entry status: it describes whether the
+	// collected evidence currently supports the fact.
+	EvidenceSupported   = "supported"
+	EvidenceConflicted  = "conflicted"
+	EvidenceUnsupported = "unsupported"
+
+	// Freshness is a usage hint, not a new lifecycle state.
+	FreshnessCurrent = "current"
+	FreshnessStale   = "stale"
+	FreshnessUnknown = "unknown"
+
+	// Sensitivity grades how carefully an entry may be used and shared.
+	SensitivityNormal   = "normal"
+	SensitivitySensitive = "sensitive"
+	SensitivitySecret   = "secret"
+)
+
 // Config controls the memory subsystem. It is copied from config.MemoryConfig.
 type Config struct {
 	Enabled               bool
@@ -137,6 +160,18 @@ type Entry struct {
 	ValidFrom          *int64 `json:"valid_from,omitempty"`
 	ValidTo            *int64 `json:"valid_to,omitempty"`
 	PinnedCore         bool   `json:"pinned_core,omitempty"`
+
+	// Schema v4 governance fields.
+	DomainID       string `json:"domain_id,omitempty"`
+	RowRevision    int64  `json:"row_revision,omitempty"`
+	ArchivedFrom   string `json:"archived_from,omitempty"`
+	EventStart     *int64 `json:"event_start,omitempty"`
+	EventEnd       *int64 `json:"event_end,omitempty"`
+	Sensitivity    string `json:"sensitivity,omitempty"`
+	Qualifiers     string `json:"qualifiers,omitempty"`
+	QualifiersHash string `json:"qualifiers_hash,omitempty"`
+	EvidenceStatus string `json:"evidence_status,omitempty"`
+	Freshness      string `json:"freshness,omitempty"`
 }
 
 // Source records where a memory came from. It is an evidence record, not just
@@ -155,6 +190,12 @@ type Source struct {
 	Confidence      float64 `json:"confidence"`
 	UserConfirmed   bool    `json:"user_confirmed"`
 	CreatedAt       int64   `json:"created_at"`
+
+	// Schema v4 origin identity.
+	OriginEventID       string `json:"origin_event_id,omitempty"`
+	OriginRevision      int64  `json:"origin_revision,omitempty"`
+	ConfirmationEventID string `json:"confirmation_event_id,omitempty"`
+	EvidenceRoot        string `json:"evidence_root,omitempty"`
 }
 
 // Relation is a typed edge between two memories.
@@ -168,15 +209,19 @@ type Relation struct {
 	CreatedAt    int64   `json:"created_at"`
 }
 
-// Cluster groups memories into a scene capsule.
+// Cluster groups memories into a scene capsule or a stage cluster.
 type Cluster struct {
-	ID        string `json:"id"`
-	Realm     string `json:"realm"`
-	Title     string `json:"title"`
-	Topic     string `json:"topic"`
-	Status    string `json:"status"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	ID         string `json:"id"`
+	Realm      string `json:"realm"`
+	Title      string `json:"title"`
+	Topic      string `json:"topic"`
+	Status     string `json:"status"`
+	CreatedAt  int64  `json:"created_at"`
+	UpdatedAt  int64  `json:"updated_at"`
+	DomainID   string `json:"domain_id,omitempty"`
+	Generation int    `json:"generation,omitempty"`
+	StageStart *int64 `json:"stage_start,omitempty"`
+	StageEnd   *int64 `json:"stage_end,omitempty"`
 }
 
 // CapsuleItem is one memory rendered inside a scene capsule.
@@ -208,6 +253,10 @@ type OperationLog struct {
 	Reason             string `json:"reason,omitempty"`
 	AffectedCount      int    `json:"affected_count"`
 	CreatedAt          int64  `json:"created_at"`
+	RequestID          string `json:"request_id,omitempty"`
+	ActorRef           string `json:"actor_ref,omitempty"`
+	ReasonCode         string `json:"reason_code,omitempty"`
+	PolicyRevision     int64  `json:"policy_revision,omitempty"`
 }
 
 // InspectResult is the evidence chain for one memory.
@@ -222,13 +271,16 @@ type InspectResult struct {
 
 // ForgetPreview reports what a hard delete would remove.
 type ForgetPreview struct {
-	EntryID     string   `json:"entry_id"`
-	ContentHash string   `json:"content_hash"`
-	Sources     int      `json:"sources"`
-	Relations   int      `json:"relations"`
-	ClusterIDs  []string `json:"cluster_ids"`
-	Summaries   int      `json:"summaries"`
-	AlreadyGone bool     `json:"already_gone"`
+	EntryID         string   `json:"entry_id"`
+	ContentHash     string   `json:"content_hash"`
+	Sources         int      `json:"sources"`
+	Relations       int      `json:"relations"`
+	ClusterIDs      []string `json:"cluster_ids"`
+	Summaries       int      `json:"summaries"`
+	AlreadyGone     bool     `json:"already_gone"`
+	RelationshipKeys []string `json:"relationship_keys,omitempty"`
+	LedgerSeq       int64    `json:"ledger_seq,omitempty"`
+	RequestID       string   `json:"request_id,omitempty"`
 }
 
 // FixedUsage accounts for the fixed prompt block and the boundary block.
@@ -281,6 +333,20 @@ type AddInput struct {
 	// Force allows Correct to replace a pinned_core entry. Automatic
 	// extraction never sets it.
 	Force bool
+
+	// Schema v4 fields. DomainID is the permission partition; an empty value
+	// falls back to DomainLegacyUnassigned so unclaimed data stays isolated.
+	DomainID            string
+	EventStart          *int64
+	EventEnd            *int64
+	Sensitivity         string
+	Qualifiers          string
+	EvidenceStatus      string
+	Freshness           string
+	OriginEventID       string
+	OriginRevision      int64
+	ConfirmationEventID string
+	EvidenceRoot        string
 }
 
 // AddResult reports how a write was resolved.
@@ -305,6 +371,19 @@ type SearchOptions struct {
 	Limit           int
 	Offset          int
 	IncludeFic      bool
+	// DomainID restricts reads to one permission partition. Empty means the
+	// caller has no domain binding and reads fall back to the isolated legacy
+	// domain instead of the whole database.
+	DomainID string
+	// AllowFictional lets an internal maintenance call include fictional rows.
+	AllowFictional bool
+	// AllLayers lets the memory tool search every layer (profile, boundary,
+	// persona) while keeping domain/audience restrictions. Prompt retrieval
+	// leaves it false so injection stays focused.
+	AllLayers bool
+	// ChatKindHint lets a caller declare a shared chat (group/public) without
+	// a channel name; private memory is then filtered in SQL.
+	ChatKindHint string
 }
 
 // Overview is the dashboard payload.
@@ -326,6 +405,10 @@ type RelationshipState struct {
 	ValidFrom  int64   `json:"valid_from"`
 	Confidence float64 `json:"confidence"`
 	ExpiresAt  *int64  `json:"expires_at,omitempty"`
+	DomainID   string  `json:"domain_id,omitempty"`
+	Realm      string  `json:"realm,omitempty"`
+	Audience   string  `json:"audience,omitempty"`
+	SourceEventID string `json:"source_event_id,omitempty"`
 }
 
 // RelationshipHistory is one archived version of a relationship attribute.
@@ -336,6 +419,10 @@ type RelationshipHistory struct {
 	ValidTo    int64   `json:"valid_to"`
 	Confidence float64 `json:"confidence"`
 	UpdatedAt  int64   `json:"updated_at"`
+	DomainID   string  `json:"domain_id,omitempty"`
+	Realm      string  `json:"realm,omitempty"`
+	Audience   string  `json:"audience,omitempty"`
+	SourceEventID string `json:"source_event_id,omitempty"`
 }
 
 // Persona is a versioned character definition.

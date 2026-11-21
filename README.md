@@ -25,7 +25,7 @@
 
 PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home server, or a $10 board. It connects to the chat apps and model providers you already use, executes tools, and keeps a workspace you own.
 
-**0.5 is built around long-term memory and continuity; 0.5.10 adds memory V3.** Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation. The result is an assistant that can maintain a relationship over months without turning its prompt into an ever-growing transcript.
+**0.7 adds the memory V4 foundation: ownership domains, an independent forget ledger, and evidence-bound summaries.** Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation. The result is an assistant that can maintain a relationship over months without turning its prompt into an ever-growing transcript.
 
 ### Memory that lasts
 
@@ -33,12 +33,15 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 - **Layered memory**: user profile, relationship state (names, stage, anniversaries, boundaries), episodic events, procedural knowledge, and versioned personas.
 - **Real vs. fictional isolation**: role-play and story settings are stored separately and are never mixed into the user's real profile. A write firewall keeps dialogue and setting documents out of `real/profile`.
 - **Human review queue**: uncertain memories wait in `pending_review` and are not injected until approved.
-- **Governance loop**: `inspect / confirm / correct / archive / restore / forget`. Forget cascades through sources, relations and capsule members, and a content hash blocks the same sentence from being re-extracted.
+- **Governance loop**: `inspect / confirm / correct / archive / restore / forget`. Content changes create a new version, pinned core memories refuse silent overwrites, and forgetting also removes the relationship-state copies (nicknames, birthdays) that feed the prompt block.
+- **Forget ledger**: `forget` journals the obligation to an independent `forget-ledger.db` before touching the database. Restoring an older backup does not resurrect forgotten content; `replay-forget` matches versioned HMACs.
+- **Permission domains**: entries carry a `domain_id`; dedupe, auto-replace and capsule reads never merge different domains. Unknown legacy rows stay in `legacy_unassigned` until an owner claims them.
+- **Evidence-bound summaries**: manual topic/stage clusters, one claim per source, and invalidate-on-change with a generation counter. Summaries are revocable views, never authoritative facts.
 - **Time semantics**: today/yesterday/last week/last summer are parsed deterministically into `date / range / approximate / planned`; approximate phrases never get a fabricated day.
-- **Hybrid retrieval**: anchor (facet/predicate/title), FTS5, LIKE, temporal overlap, and one-hop relation expansion. Two-character Chinese queries fall back to LIKE instead of silently missing.
-- **Scene capsules**: `load_capsule` returns the T0 writing rules in one call (full or compact); fictional capsules return empty for public channels.
+- **Hybrid retrieval**: anchor (facet/predicate/title), FTS5, LIKE, temporal overlap, and one-hop relation expansion. Visibility is applied in SQL before `LIMIT`, so an invisible row cannot starve a visible one.
+- **Scene capsules**: `load_capsule` returns the T0 writing rules in one call (full or compact); capsules use the real request channel and return empty for public chats.
 - **Real budget accounting**: fixed, boundary and retrieval blocks are counted separately, and `memory audit` prints the measured tokens.
-- **Schema v3 migration**: one-click upgrade from `/memory` with a `VACUUM INTO` backup. v1 databases go through v2 to v3 in the same transaction; re-running is safe.
+- **Schema v4 migration**: one segment from v3 to v4 with a `VACUUM INTO` backup. Databases older than v3 must be upgraded with 0.6.x first; see [Memory schema v4](docs/reference/memory-schema-v4.md).
 - **Private-channel filtering**: intimate memories are only injected into the channels you mark as private.
 
 ### A dashboard for the relationship

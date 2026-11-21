@@ -16,7 +16,9 @@ type ftsHit struct {
 // buildFTSQuery splits a query into a MATCH phrase and LIKE terms. FTS5
 // trigram needs at least three runes, so one- and two-character Chinese
 // queries (生日, 海边, 同意) must go through LIKE instead of silently
-// returning zero hits.
+// returning zero hits. Long queries keep a LIKE fallback too: when the FTS
+// index is missing or recall is thin, an exact-phrase LIKE scan still finds
+// the memory instead of returning nothing (B09).
 func buildFTSQuery(q string) (string, []string) {
 	q = strings.TrimSpace(strings.NewReplacer(`"`, " ", `'`, " ").Replace(q))
 	n := utf8.RuneCountInString(q)
@@ -26,15 +28,24 @@ func buildFTSQuery(q string) (string, []string) {
 	if n < 3 {
 		return "", []string{q}
 	}
-	return `"` + q + `"`, nil
+	// Cap the fallback term so a pasted paragraph does not turn into a
+	// pathological LIKE scan; short long-queries (e.g. a full sentence) keep
+	// the entire phrase.
+	termLimit := 40
+	term := q
+	if n > termLimit {
+		term = string([]rune(q)[:termLimit])
+	}
+	return `"` + q + `"`, []string{term}
 }
 
 func (s *Store) ftsTableExists(ctx context.Context) bool {
 	return s.tableExistsLocked(ctx, "entries_fts")
 }
 
-// searchFTS runs one MATCH query and returns rowid-aligned hits.
-func (s *Store) searchFTS(ctx context.Context, query string, limit int) ([]ftsHit, error) {
+// searchFTS runs one MATCH query and returns rowid-aligned hits. filter is an
+// extra SQL predicate applied inside the query, so LIMIT counts visible rows.
+func (s *Store) searchFTS(ctx context.Context, query string, limit int, filter string, filterArgs []any) ([]ftsHit, error) {
 	match, _ := buildFTSQuery(query)
 	if match == "" {
 		return nil, nil
@@ -42,12 +53,18 @@ func (s *Store) searchFTS(ctx context.Context, query string, limit int) ([]ftsHi
 	if limit <= 0 {
 		limit = 50
 	}
+	where := `entries_fts MATCH ? AND e.status='active'`
+	if strings.TrimSpace(filter) != "" {
+		where += ` AND ` + filter
+	}
+	args := append([]any{match}, filterArgs...)
+	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.id, bm25(entries_fts) AS rank
 		 FROM entries_fts f
 		 JOIN entries e ON e.rowid = f.rowid
-		 WHERE entries_fts MATCH ? AND e.status='active'
-		 ORDER BY bm25(entries_fts) LIMIT ?`, match, limit)
+		 WHERE `+where+`
+		 ORDER BY bm25(entries_fts) LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +83,9 @@ func (s *Store) searchFTS(ctx context.Context, query string, limit int) ([]ftsHi
 }
 
 // searchLike is the fallback channel for short queries and for FTS builds
-// where the tokenizer degrades to whole-word matching.
-func (s *Store) searchLike(ctx context.Context, term string, limit int) ([]string, error) {
+// where the tokenizer degrades to whole-word matching. filter is applied in
+// SQL so the LIMIT cannot be consumed by invisible rows (B07).
+func (s *Store) searchLike(ctx context.Context, term string, limit int, filter string, filterArgs []any) ([]string, error) {
 	term = strings.TrimSpace(term)
 	if term == "" {
 		return nil, nil
@@ -76,12 +94,18 @@ func (s *Store) searchLike(ctx context.Context, term string, limit int) ([]strin
 		limit = 50
 	}
 	like := "%" + term + "%"
+	where := `status='active'
+		   AND (text LIKE ? OR value LIKE ? OR subject LIKE ? OR predicate LIKE ? OR facet LIKE ?)`
+	if strings.TrimSpace(filter) != "" {
+		where += ` AND ` + filter
+	}
+	args := []any{like, like, like, like, like}
+	args = append(args, filterArgs...)
+	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id FROM entries
-		 WHERE status='active'
-		   AND (text LIKE ? OR value LIKE ? OR subject LIKE ? OR predicate LIKE ? OR facet LIKE ?)
-		 ORDER BY importance DESC, updated_at DESC LIMIT ?`,
-		like, like, like, like, like, limit)
+		 WHERE `+where+`
+		 ORDER BY importance DESC, updated_at DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

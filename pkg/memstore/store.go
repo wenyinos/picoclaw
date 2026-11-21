@@ -20,6 +20,8 @@ import (
 type Store struct {
 	db             *sql.DB
 	path           string
+	ledger         *ForgetLedger
+	ledgerPath     string
 	mu             sync.Mutex
 	revision       atomic.Int64
 	usageMu        sync.Mutex
@@ -28,6 +30,20 @@ type Store struct {
 	usageFlushing  bool
 	usageWG        sync.WaitGroup
 	openedSchema   int
+	clock          func() int64
+}
+
+// SetClock installs a deterministic clock for tests. Call it before concurrent
+// use: the field is read without a lock on hot paths.
+func (s *Store) SetClock(fn func() int64) { s.clock = fn }
+
+// now is the single clock used by TTL and event-time logic. Tests override it
+// so behaviours never depend on the wall clock of the test host.
+func (s *Store) now() int64 {
+	if s.clock != nil {
+		return s.clock()
+	}
+	return time.Now().UnixMilli()
 }
 
 var schemaStatements = []string{
@@ -63,21 +79,56 @@ var schemaStatements = []string{
 		updated_at INTEGER NOT NULL,
 		last_used_at INTEGER,
 		use_count INTEGER NOT NULL DEFAULT 0,
-		attributes TEXT NOT NULL DEFAULT '{}'
+		attributes TEXT NOT NULL DEFAULT '{}',
+		event_time_precision TEXT NOT NULL DEFAULT 'unknown',
+		event_timezone TEXT NOT NULL DEFAULT '',
+		event_time_source TEXT NOT NULL DEFAULT '',
+		valid_from INTEGER,
+		valid_to INTEGER,
+		pinned_core INTEGER NOT NULL DEFAULT 0,
+		domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned',
+		row_revision INTEGER NOT NULL DEFAULT 1,
+		archived_from TEXT NOT NULL DEFAULT '',
+		event_start INTEGER,
+		event_end INTEGER,
+		sensitivity TEXT NOT NULL DEFAULT 'normal',
+		qualifiers TEXT NOT NULL DEFAULT '',
+		qualifiers_hash TEXT NOT NULL DEFAULT '',
+		evidence_status TEXT NOT NULL DEFAULT 'supported',
+		freshness TEXT NOT NULL DEFAULT 'unknown'
 	)`,
-	`CREATE UNIQUE INDEX IF NOT EXISTS ux_entries_hash ON entries(content_hash) WHERE status='active'`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS ux_entries_hash ON entries(domain_id, content_hash) WHERE status='active'`,
 	`CREATE INDEX IF NOT EXISTS ix_entries_key ON entries(realm, subject, predicate, status)`,
 	`CREATE INDEX IF NOT EXISTS ix_entries_inject ON entries(status, realm, layer, importance DESC)`,
 	`CREATE INDEX IF NOT EXISTS ix_entries_expire ON entries(status, expires_at)`,
 	`CREATE INDEX IF NOT EXISTS ix_entries_event ON entries(layer, event_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS ix_entries_facet ON entries(realm, subject, predicate, facet, status)`,
+	`CREATE INDEX IF NOT EXISTS ix_entries_valid ON entries(status, realm, valid_from, valid_to)`,
+	`CREATE INDEX IF NOT EXISTS ix_entries_pinned ON entries(status, pinned_core) WHERE pinned_core=1`,
 	`CREATE TABLE IF NOT EXISTS sources (
-		entry_id TEXT NOT NULL,
-		source_type TEXT NOT NULL,
-		source_id TEXT NOT NULL DEFAULT '',
-		session_key TEXT NOT NULL DEFAULT '',
-		created_at INTEGER NOT NULL,
-		PRIMARY KEY (entry_id, source_type, source_id, session_key)
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		entry_id         TEXT NOT NULL,
+		conversation_id  TEXT NOT NULL DEFAULT '',
+		session_key      TEXT NOT NULL DEFAULT '',
+		message_id       INTEGER,
+		source_id        TEXT NOT NULL DEFAULT '',
+		source_type      TEXT NOT NULL DEFAULT 'explicit',
+		evidence_text    TEXT NOT NULL DEFAULT '',
+		extraction_model TEXT NOT NULL DEFAULT '',
+		prompt_version   TEXT NOT NULL DEFAULT '',
+		confidence       REAL NOT NULL DEFAULT 1.0,
+		user_confirmed   INTEGER NOT NULL DEFAULT 0,
+		origin_event_id  TEXT NOT NULL DEFAULT '',
+		origin_revision  INTEGER NOT NULL DEFAULT 1,
+		confirmation_event_id TEXT NOT NULL DEFAULT '',
+		evidence_root    TEXT NOT NULL DEFAULT '',
+		created_at       INTEGER NOT NULL,
+		UNIQUE(entry_id, source_type, source_id, session_key, origin_event_id),
+		FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
 	)`,
+	`CREATE INDEX IF NOT EXISTS ix_sources_entry ON sources(entry_id)`,
+	`CREATE INDEX IF NOT EXISTS ix_sources_message ON sources(message_id) WHERE message_id IS NOT NULL`,
+	`CREATE INDEX IF NOT EXISTS ix_sources_session ON sources(session_key) WHERE session_key <> ''`,
 	`CREATE TABLE IF NOT EXISTS supersedes (
 		entry_id TEXT NOT NULL,
 		superseded_id TEXT NOT NULL,
@@ -91,7 +142,11 @@ var schemaStatements = []string{
 		valid_to INTEGER,
 		confidence REAL NOT NULL DEFAULT 0.8,
 		updated_at INTEGER NOT NULL,
-		expires_at INTEGER
+		expires_at INTEGER,
+		domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned',
+		realm TEXT NOT NULL DEFAULT '',
+		audience TEXT NOT NULL DEFAULT '',
+		source_event_id TEXT NOT NULL DEFAULT ''
 	)`,
 	`CREATE TABLE IF NOT EXISTS relationship_state_history (
 		key TEXT NOT NULL,
@@ -100,6 +155,10 @@ var schemaStatements = []string{
 		valid_to INTEGER NOT NULL,
 		confidence REAL NOT NULL,
 		updated_at INTEGER NOT NULL,
+		domain_id TEXT NOT NULL DEFAULT 'legacy_unassigned',
+		realm TEXT NOT NULL DEFAULT '',
+		audience TEXT NOT NULL DEFAULT '',
+		source_event_id TEXT NOT NULL DEFAULT '',
 		PRIMARY KEY (key, valid_from)
 	)`,
 	`CREATE TABLE IF NOT EXISTS personas (
@@ -155,6 +214,13 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// Forgetting must be journaled before the main database changes. If the
+	// ledger cannot be opened, the memory service fails closed instead of
+	// offering destructive writes without a durable obligation.
+	if err := s.ensureLedger(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("memstore: forget ledger: %w", err)
+	}
 	return s, nil
 }
 
@@ -162,6 +228,13 @@ func (s *Store) loadRevision() error {
 	var raw string
 	err := s.db.QueryRow(`SELECT value FROM meta WHERE key='revision'`).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
+		// A database with rows but no meta predates v3. This build only
+		// migrates v3 → v4, so refuse instead of stamping it as current.
+		var legacyRows int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM entries`).Scan(&legacyRows); err == nil && legacyRows > 0 {
+			return fmt.Errorf(
+				"memstore: database %s has entries but no schema metadata; it predates v3 and must be upgraded with a 0.6.x build first", s.path)
+		}
 		if _, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES('revision','0'),('schema_version',?)`,
 			fmt.Sprintf("%d", CurrentSchemaVersion)); err != nil {
 			return fmt.Errorf("memstore: init meta: %w", err)
@@ -186,6 +259,9 @@ func (s *Store) Close() error {
 	s.usageWG.Wait()
 	s.flushUsage(context.Background())
 	_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	if s.ledger != nil {
+		_ = s.ledger.Close()
+	}
 	return s.db.Close()
 }
 
@@ -213,7 +289,9 @@ var entryColumns = `id, realm, layer, scope, audience, subject, predicate, facet
 	normalized, content_hash, simhash, template_key, cluster_id, occurrences,
 	importance, emotional_weight, valence, confidence, status, event_at, expires_at,
 	created_at, updated_at, last_used_at, use_count, attributes,
-	event_time_precision, event_timezone, event_time_source, valid_from, valid_to, pinned_core`
+	event_time_precision, event_timezone, event_time_source, valid_from, valid_to, pinned_core,
+	domain_id, row_revision, archived_from, event_start, event_end, sensitivity,
+	qualifiers, qualifiers_hash, evidence_status, freshness`
 
 // entryPlaceholders is derived from entryColumns so the INSERT can never drift
 // out of sync with the SELECT list (the old hardcoded 28 "?" bug).
@@ -230,6 +308,7 @@ func scanEntry(row scanner) (Entry, error) {
 	var e Entry
 	var simhash int64
 	var eventAt, expiresAt, lastUsed, validFrom, validTo sql.NullInt64
+	var eventStart, eventEnd sql.NullInt64
 	var pinned int
 	var attrs string
 	err := row.Scan(
@@ -240,6 +319,8 @@ func scanEntry(row scanner) (Entry, error) {
 		&lastUsed, &e.UseCount, &attrs,
 		&e.EventTimePrecision, &e.EventTimezone, &e.EventTimeSource,
 		&validFrom, &validTo, &pinned,
+		&e.DomainID, &e.RowRevision, &e.ArchivedFrom, &eventStart, &eventEnd,
+		&e.Sensitivity, &e.Qualifiers, &e.QualifiersHash, &e.EvidenceStatus, &e.Freshness,
 	)
 	if err != nil {
 		return Entry{}, err
@@ -265,6 +346,14 @@ func scanEntry(row scanner) (Entry, error) {
 		v := validTo.Int64
 		e.ValidTo = &v
 	}
+	if eventStart.Valid {
+		v := eventStart.Int64
+		e.EventStart = &v
+	}
+	if eventEnd.Valid {
+		v := eventEnd.Int64
+		e.EventEnd = &v
+	}
 	e.PinnedCore = pinned == 1
 	e.Attributes = map[string]any{}
 	_ = json.Unmarshal([]byte(attrs), &e.Attributes)
@@ -285,6 +374,18 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	}
 	if in.Audience == "" {
 		in.Audience = "all"
+	}
+	if strings.TrimSpace(in.DomainID) == "" {
+		in.DomainID = DomainLegacyUnassigned
+	}
+	if strings.TrimSpace(in.Sensitivity) == "" {
+		in.Sensitivity = "normal"
+	}
+	if strings.TrimSpace(in.EvidenceStatus) == "" {
+		in.EvidenceStatus = EvidenceSupported
+	}
+	if strings.TrimSpace(in.Freshness) == "" {
+		in.Freshness = FreshnessUnknown
 	}
 	if in.Confidence <= 0 {
 		in.Confidence = 0.7
@@ -314,29 +415,37 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	// 0. forget tombstone: a forgotten sentence must not come back just because
-	// the next turn extracts the same words again.
+	// the next turn extracts the same words again. The independent ledger is
+	// checked too, so a restored backup cannot re-learn it either.
 	if !in.BypassForgetTombstone {
 		var forgotten int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM memory_operations WHERE operation='forget' AND content_hash=?`,
+			`SELECT COUNT(*) FROM memory_operations WHERE operation IN ('forget','replay_forget') AND content_hash=?`,
 			hash).Scan(&forgotten); err != nil {
 			return nil, err
 		}
 		if forgotten > 0 {
 			return &AddResult{Action: "blocked_forget"}, nil
 		}
+		if s.ledger != nil {
+			digest, _, _ := s.ledger.Digest(in.Text)
+			if ok, _ := s.ledger.HasDigest(ctx, digest); ok {
+				return &AddResult{Action: "blocked_forget"}, nil
+			}
+		}
 	}
 
-	// 1. exact duplicate, including pending/archived rows so repeated imports
-	// cannot create copies of the same memory. Explicit supersede skips the
-	// dedupe path: the caller asked for a new version even if the text is close.
+	// 1. exact duplicate within the same domain, including pending/archived
+	// rows so repeated imports cannot create copies of the same memory. The
+	// domain filter is what keeps identical text in another permission
+	// partition independent (FR-03/B03).
 	var existingID, existingStatus string
 	explicitSupersede := strings.TrimSpace(in.SupersedesID) != ""
 	if !explicitSupersede {
 		err = tx.QueryRowContext(ctx,
-			`SELECT id, status FROM entries WHERE content_hash=?
+			`SELECT id, status FROM entries WHERE content_hash=? AND domain_id=?
 		 ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'pending_review' THEN 1 ELSE 2 END
-		 LIMIT 1`, hash).Scan(&existingID, &existingStatus)
+		 LIMIT 1`, hash, in.DomainID).Scan(&existingID, &existingStatus)
 		if err == nil {
 			if err := mergeInto(ctx, tx, existingID, in, now); err != nil {
 				return nil, err
@@ -354,11 +463,11 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 			return nil, err
 		}
 
-		// 2. template fold
+		// 2. template fold, same domain only.
 		if in.TemplateKey != "" {
 			err = tx.QueryRowContext(ctx,
-				`SELECT id FROM entries WHERE template_key=? AND status IN ('active','pending_review') LIMIT 1`,
-				in.TemplateKey).Scan(&existingID)
+				`SELECT id FROM entries WHERE template_key=? AND domain_id=? AND status IN ('active','pending_review') LIMIT 1`,
+				in.TemplateKey, in.DomainID).Scan(&existingID)
 			if err == nil {
 				if err := mergeInto(ctx, tx, existingID, in, now); err != nil {
 					return nil, err
@@ -377,12 +486,12 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 			}
 		}
 
-		// 3. near duplicate within the same realm/layer
+		// 3. near duplicate within the same domain/realm/layer.
 		rows, err := tx.QueryContext(ctx,
 			`SELECT id, normalized, simhash FROM entries
-		 WHERE status IN ('active','pending_review') AND realm=? AND layer=?
+		 WHERE status IN ('active','pending_review') AND domain_id=? AND realm=? AND layer=?
 		 ORDER BY updated_at DESC LIMIT 300`,
-			in.Realm, in.Layer)
+			in.DomainID, in.Realm, in.Layer)
 		if err != nil {
 			return nil, err
 		}
@@ -469,6 +578,18 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		ValidFrom:          in.ValidFrom,
 		ValidTo:            in.ValidTo,
 		PinnedCore:         in.PinnedCore,
+
+		DomainID:       in.DomainID,
+		RowRevision:    1,
+		EventStart:     in.EventStart,
+		EventEnd:       in.EventEnd,
+		Sensitivity:    in.Sensitivity,
+		Qualifiers:     strings.TrimSpace(in.Qualifiers),
+		EvidenceStatus: in.EvidenceStatus,
+		Freshness:      in.Freshness,
+	}
+	if e.Qualifiers != "" {
+		e.QualifiersHash = ContentHash(Normalize(e.Qualifiers))
 	}
 	if e.Importance == 0 {
 		e.Importance = 0.5
@@ -485,7 +606,9 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		e.Status, e.EventAt, e.ExpiresAt, e.CreatedAt, e.UpdatedAt, e.LastUsedAt,
 		e.UseCount, string(attrs),
 		e.EventTimePrecision, e.EventTimezone, e.EventTimeSource,
-		e.ValidFrom, e.ValidTo, boolInt(e.PinnedCore)); err != nil {
+		e.ValidFrom, e.ValidTo, boolInt(e.PinnedCore),
+		e.DomainID, e.RowRevision, e.ArchivedFrom, e.EventStart, e.EventEnd,
+		e.Sensitivity, e.Qualifiers, e.QualifiersHash, e.EvidenceStatus, e.Freshness); err != nil {
 		return nil, err
 	}
 	if supersededID != "" {
@@ -565,9 +688,9 @@ func resolveSupersededID(ctx context.Context, tx *sql.Tx, in AddInput, now int64
 	var oldPinned int
 	err := tx.QueryRowContext(ctx,
 		`SELECT id, value, pinned_core FROM entries
-		 WHERE status='active' AND realm=? AND subject=? AND predicate=? AND facet=?
+		 WHERE status='active' AND domain_id=? AND realm=? AND subject=? AND predicate=? AND facet=?
 		 ORDER BY updated_at DESC LIMIT 1`,
-		in.Realm, in.Subject, in.Predicate, in.Facet).Scan(&oldID, &oldValue, &oldPinned)
+		in.DomainID, in.Realm, in.Subject, in.Predicate, in.Facet).Scan(&oldID, &oldValue, &oldPinned)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", nil
 	}
@@ -606,14 +729,20 @@ func insertSource(ctx context.Context, tx *sql.Tx, entryID string, in AddInput, 
 	if confidence <= 0 {
 		confidence = 0.8
 	}
+	originRevision := in.OriginRevision
+	if originRevision <= 0 {
+		originRevision = 1
+	}
 	_, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO sources(entry_id,conversation_id,session_key,message_id,
 			source_id,source_type,evidence_text,extraction_model,prompt_version,
-			confidence,user_confirmed,created_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+			confidence,user_confirmed,origin_event_id,origin_revision,
+			confirmation_event_id,evidence_root,created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		entryID, in.ConversationID, in.SessionKey, in.MessageID,
 		in.SourceID, sourceType, truncateRunes(strings.TrimSpace(in.EvidenceText), 120),
-		in.ModelID, in.PromptVersion, confidence, boolInt(in.SourceConfirmed), now)
+		in.ModelID, in.PromptVersion, confidence, boolInt(in.SourceConfirmed),
+		in.OriginEventID, originRevision, in.ConfirmationEventID, in.EvidenceRoot, now)
 	return err
 }
 
@@ -642,7 +771,8 @@ func (s *Store) Get(ctx context.Context, id string) (*Entry, error) {
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id,entry_id,conversation_id,session_key,message_id,source_id,source_type,
-		        evidence_text,extraction_model,prompt_version,confidence,user_confirmed,created_at
+		        evidence_text,extraction_model,prompt_version,confidence,user_confirmed,
+		        origin_event_id,origin_revision,confirmation_event_id,evidence_root,created_at
 		 FROM sources WHERE entry_id=? ORDER BY created_at`, id)
 	if err == nil {
 		defer rows.Close()
@@ -653,7 +783,9 @@ func (s *Store) Get(ctx context.Context, id string) (*Entry, error) {
 			if err := rows.Scan(
 				&src.ID, &src.EntryID, &src.ConversationID, &src.SessionKey, &messageID,
 				&src.SourceID, &src.SourceType, &src.EvidenceText, &src.ExtractionModel,
-				&src.PromptVersion, &src.Confidence, &confirmed, &src.CreatedAt,
+				&src.PromptVersion, &src.Confidence, &confirmed,
+				&src.OriginEventID, &src.OriginRevision, &src.ConfirmationEventID,
+				&src.EvidenceRoot, &src.CreatedAt,
 			); err == nil {
 				if messageID.Valid {
 					v := messageID.Int64
@@ -731,22 +863,54 @@ func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
 	return out, rows.Err()
 }
 
-// Update applies editable fields to an entry.
+// Update applies editable metadata to an entry. Content changes go through
+// Correct so a correction gets a version and its own evidence; pinned_core
+// entries refuse text/audience/status changes unless force is set (B02).
 func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, error) {
-	now := time.Now().UnixMilli()
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	old, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	textChanged := strings.TrimSpace(in.Text) != "" && strings.TrimSpace(in.Text) != old.Text
+	if old.PinnedCore && !in.Force {
+		switch {
+		case textChanged:
+			return nil, fmt.Errorf("memstore: entry %q is pinned_core; content changes need correct with force", id)
+		case in.Audience != "" && in.Audience != old.Audience:
+			return nil, fmt.Errorf("memstore: entry %q is pinned_core; audience changes need explicit approval", id)
+		case in.Scope != "" && in.Scope != old.Scope:
+			return nil, fmt.Errorf("memstore: entry %q is pinned_core; scope changes need explicit approval", id)
+		case in.ForceStatus != "" && in.ForceStatus != old.Status:
+			return nil, fmt.Errorf("memstore: entry %q is pinned_core; status changes need explicit approval", id)
+		}
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	sets := []string{"updated_at=?"}
+	sets := []string{"updated_at=?", "row_revision=row_revision+1"}
 	args := []any{now}
-	if strings.TrimSpace(in.Text) != "" {
+	if textChanged {
 		norm := Normalize(in.Text)
+		hash := ContentHash(norm)
+		var clash string
+		err := tx.QueryRowContext(ctx,
+			`SELECT id FROM entries WHERE domain_id=? AND content_hash=? AND id<>? AND status='active' LIMIT 1`,
+			old.DomainID, hash, id).Scan(&clash)
+		if err == nil {
+			return nil, fmt.Errorf("memstore: content already exists in this domain as %q", clash)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
 		sets = append(sets, "text=?", "normalized=?", "content_hash=?", "simhash=?")
-		args = append(args, strings.TrimSpace(in.Text), norm, ContentHash(norm), SimHash(norm))
+		args = append(args, strings.TrimSpace(in.Text), norm, hash, SimHash(norm))
 	}
 	if in.Realm != "" {
 		sets = append(sets, "realm=?")

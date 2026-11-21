@@ -54,6 +54,9 @@ func TestExtractMoodGoesToRelationshipStateOnly(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	at := time.Date(2026, 11, 2, 10, 0, 0, 0, time.Local)
+	// The TTL filter must use the same clock as the write, otherwise this
+	// test fails a day after the fixture date (G0-02).
+	s.SetClock(func() int64 { return at.UnixMilli() })
 	results, err := s.ExtractTurnAt(ctx, "今天好累", "", "s1", at, true)
 	if err != nil {
 		t.Fatal(err)

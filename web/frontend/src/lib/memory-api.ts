@@ -17,7 +17,113 @@ export interface MemoryEntry {
   created_at: number
   updated_at: number
   occurrences: number
-  sources?: { source_type: string; session_key?: string; created_at: number }[]
+  sources?: {
+    source_type: string
+    session_key?: string
+    created_at: number
+    evidence_text?: string
+    user_confirmed?: boolean
+  }[]
+  domain_id?: string
+  row_revision?: number
+  pinned_core?: boolean
+  sensitivity?: string
+  evidence_status?: string
+  freshness?: string
+  relationship_keys?: string[]
+}
+
+export interface MemoryForgetPreview {
+  entry_id: string
+  content_hash: string
+  sources: number
+  relations: number
+  cluster_ids?: string[]
+  summaries: number
+  already_gone: boolean
+  relationship_keys?: string[]
+  ledger_seq?: number
+  request_id?: string
+}
+
+export interface MemoryLedgerHealth {
+  available: boolean
+  path?: string
+  ledger_uuid?: string
+  key_id?: string
+  pending?: number
+  reason?: string
+}
+
+export interface MemoryDomain {
+  domain_id: string
+  owner_principal_id?: string
+  scope_key?: string
+  status: string
+  policy_epoch: number
+  created_at: number
+  updated_at: number
+}
+
+export interface MemorySummaryClaim {
+  claim_id: string
+  text: string
+  entry_ids: string[]
+}
+
+export interface MemorySummaryVersion {
+  id: number
+  cluster_id: string
+  domain_id?: string
+  version: number
+  generation: number
+  summary: string
+  claims?: MemorySummaryClaim[]
+  confidence: number
+  status: string
+  created_at: number
+}
+
+export interface MemoryCluster {
+  id: string
+  realm: string
+  title: string
+  topic?: string
+  status: string
+  created_at: number
+  updated_at: number
+  generation?: number
+}
+
+export interface MemoryCommitment {
+  id: string
+  domain_id?: string
+  text: string
+  status: string
+  due_at?: number
+  due_timezone?: string
+  revision: number
+  created_at: number
+  updated_at: number
+}
+
+export interface MemoryJob {
+  job_id: string
+  kind: string
+  state: string
+  attempts: number
+  priority: number
+  last_error?: string
+}
+
+export interface MemoryChangePlan {
+  plan_id: string
+  action: string
+  target_id: string
+  expected_revision: number
+  status: string
+  expires_at: number
+  created_at: number
 }
 
 export interface MemoryOverview {
@@ -70,6 +176,10 @@ export interface MemoryMigrationStatus {
   db_size: number
   backup?: string
   last_migration_at?: number
+  domains?: number
+  origin_events?: number
+  jobs?: number
+  dependencies?: number
 }
 
 export interface MemoryMigrationReport {
@@ -89,6 +199,9 @@ export interface MemoryMigrationReport {
   fts_rows: number
   fts_tokenizer: string
   backup: string
+  sources_rebuilt?: number
+  domains_created?: number
+  entries_with_domain?: number
 }
 
 export interface MemoryRepairFilter {
@@ -229,5 +342,83 @@ export const memoryApi = {
     request<Record<string, number>>("/api/memory/import", {
       method: "POST",
       body: JSON.stringify({ workspace }),
+    }),
+
+  // V4 governance and long-term understanding.
+  inspectEntry: (id: string) =>
+    request<{
+      entry: MemoryEntry
+      sources: MemoryEntry["sources"]
+      relations: unknown[]
+      operations: unknown[]
+      clusters: string[]
+    }>(`/api/memory/entries/${id}/inspect`),
+  correctEntry: (id: string, body: Record<string, unknown>) =>
+    request<{ action: string; entry?: MemoryEntry }>(
+      `/api/memory/entries/${id}/correct`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  forgetEntry: (id: string, dryRun = true) =>
+    request<MemoryForgetPreview>(
+      `/api/memory/entries/${id}/forget?dry_run=${dryRun ? "true" : "false"}`,
+      { method: "POST" },
+    ),
+  domains: () =>
+    request<{ domains: MemoryDomain[] }>("/api/memory/domains"),
+  ledgerHealth: () =>
+    request<MemoryLedgerHealth>("/api/memory/ledger/health"),
+  replayForget: () =>
+    request<{ removed: number }>("/api/memory/ledger/replay", {
+      method: "POST",
+    }),
+  clusters: () =>
+    request<{ clusters: MemoryCluster[] }>("/api/memory/clusters"),
+  createCluster: (body: Partial<MemoryCluster>) =>
+    request<MemoryCluster>("/api/memory/clusters", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  addClusterMembers: (id: string, entryIds: string[]) =>
+    request<{ added: number }>(`/api/memory/clusters/${id}/members`, {
+      method: "POST",
+      body: JSON.stringify({ entry_ids: entryIds }),
+    }),
+  generateSummary: (id: string) =>
+    request<MemorySummaryVersion>(`/api/memory/clusters/${id}/summaries`, {
+      method: "POST",
+    }),
+  summaries: (id: string) =>
+    request<{ summaries: MemorySummaryVersion[] }>(
+      `/api/memory/clusters/${id}/summaries`,
+    ),
+  summaryEvidence: (id: number) =>
+    request<{ entries: MemoryEntry[] }>(
+      `/api/memory/summaries/${id}/evidence`,
+    ),
+  commitments: (includeClosed = false) =>
+    request<{ commitments: MemoryCommitment[] }>(
+      `/api/memory/commitments?include_closed=${includeClosed}`,
+    ),
+  createCommitment: (body: Partial<MemoryCommitment>) =>
+    request<MemoryCommitment>("/api/memory/commitments", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  setCommitmentStatus: (id: string, status: string, evidence: string) =>
+    request<MemoryCommitment>(`/api/memory/commitments/${id}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status, evidence }),
+    }),
+  jobs: () =>
+    request<{ jobs: MemoryJob[]; stats: Record<string, number> }>(
+      "/api/memory/jobs",
+    ),
+  plans: (status = "pending") =>
+    request<{ plans: MemoryChangePlan[] }>(
+      `/api/memory/plans?status=${status}`,
+    ),
+  approvePlan: (id: string) =>
+    request<MemoryChangePlan>(`/api/memory/plans/${id}/approve`, {
+      method: "POST",
     }),
 }

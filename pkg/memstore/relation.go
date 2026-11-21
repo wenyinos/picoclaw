@@ -89,13 +89,38 @@ func (s *Store) ExpandOneHop(ctx context.Context, seeds []Entry, perSeed int, fi
 	for _, seed := range seeds {
 		seen[seed.ID] = true
 	}
+	domainID := strings.TrimSpace(filter.DomainID)
+	if domainID == "" {
+		domainID = DomainLegacyUnassigned
+	}
+	audience, audienceArgs := audienceSQLFor(filter.ChatKindHint, filter.Channel, filter.PrivateChannels)
 	var out []Entry
 	for _, seed := range seeds {
-		rows, err := s.db.QueryContext(ctx,
-			`SELECT target_id, relation_type, source_type
-			 FROM memory_relations
-			 WHERE source_id=? AND relation_type IN ('related_to','caused_by','influenced_by','fulfilled_by','next_scene','part_of')
-			 ORDER BY confidence DESC, created_at DESC LIMIT ?`, seed.ID, perSeed)
+		// Visibility is part of the edge query: taking the top N edges and
+		// filtering afterwards lets invisible neighbours starve the visible
+		// ones (B07/B10).
+		q := `SELECT r.target_id, r.relation_type, r.source_type
+		      FROM memory_relations r
+		      JOIN entries e ON e.id = r.target_id
+		      WHERE r.source_id=?
+		        AND r.relation_type IN ('related_to','caused_by','influenced_by','fulfilled_by','next_scene','part_of')
+		        AND e.status='active' AND e.realm <> 'unknown'
+		        AND e.domain_id=? AND ` + audience
+		args := []any{seed.ID, domainID}
+		args = append(args, audienceArgs...)
+		if filter.Realm != "" {
+			q += ` AND e.realm=?`
+			args = append(args, filter.Realm)
+		} else if !filter.IncludeFic {
+			q += ` AND e.realm IN ('real','work')`
+		}
+		if filter.Scope != "" {
+			q += ` AND e.scope=?`
+			args = append(args, filter.Scope)
+		}
+		q += ` ORDER BY r.confidence DESC, r.created_at DESC LIMIT ?`
+		args = append(args, perSeed)
+		rows, err := s.db.QueryContext(ctx, q, args...)
 		if err != nil {
 			return nil, err
 		}

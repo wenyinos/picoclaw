@@ -46,9 +46,9 @@ type scoredEntry struct {
 	pinned bool
 }
 
-// retrieveCandidates merges the four retrieval channels. Every channel runs
-// with status/realm/scope filters in SQL and the audience filter in Go before
-// scoring; there is no path that recalls first and filters later.
+// retrieveCandidates merges the four retrieval channels. Permission filters
+// (status/realm/scope/audience/domain) run in SQL before LIMIT, so an
+// invisible candidate can never crowd out a visible memory (B07).
 func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admin bool) ([]scoredEntry, error) {
 	where := []string{"1=1"}
 	args := []any{}
@@ -70,7 +70,7 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 	if opts.Layer != "" {
 		where = append(where, "layer=?")
 		args = append(args, opts.Layer)
-	} else if !admin {
+	} else if !admin && !opts.AllLayers {
 		where = append(where, "layer IN ('relationship','episodic','procedural')")
 	}
 	if opts.Predicate != "" {
@@ -89,15 +89,30 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		where = append(where, "audience=?")
 		args = append(args, opts.Audience)
 	}
+	if !admin {
+		// Empty domain is not "all domains": callers without an ownership
+		// binding read only the isolated legacy partition.
+		domainID := strings.TrimSpace(opts.DomainID)
+		if domainID == "" {
+			domainID = DomainLegacyUnassigned
+		}
+		where = append(where, "domain_id=?")
+		args = append(args, domainID)
+
+		audience, audienceArgs := audienceSQLFor(opts.ChatKindHint, opts.Channel, opts.PrivateChannels)
+		where = append(where, audience)
+		args = append(args, audienceArgs...)
+	}
 	base := strings.Join(where, " AND ")
 
 	byID := map[string]Entry{}
 	addEntry := func(e Entry) { byID[e.ID] = e }
+	temporalIDs := map[string]bool{}
 
-	// Channel 1: anchor. A small store is scanned directly; anchor hits are
-	// exact/contains matches on facet, predicate, subject and title.
+	// Channel 1: anchor. Visible rows are selected in SQL first; the limit is
+	// a scan guard, not a visibility cut.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+entryColumns+` FROM entries WHERE `+base+` ORDER BY updated_at DESC LIMIT 500`, args...)
+		`SELECT `+entryColumns+` FROM entries WHERE `+base+` ORDER BY updated_at DESC LIMIT 800`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -107,9 +122,6 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		if err != nil {
 			_ = rows.Close()
 			return nil, err
-		}
-		if !admin && !audienceAllowed(e.Audience, opts.Channel, opts.PrivateChannels) {
-			continue
 		}
 		addEntry(e)
 	}
@@ -123,7 +135,7 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		match, likeTerms := buildFTSQuery(opts.Query)
 		ftsHits := 0
 		if match != "" && s.ftsTableExists(ctx) {
-			hits, err := s.searchFTS(ctx, opts.Query, 100)
+			hits, err := s.searchFTS(ctx, opts.Query, 100, "", nil)
 			if err == nil {
 				ftsHits = len(hits)
 				for _, hit := range hits {
@@ -131,19 +143,17 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 						continue
 					}
 					if e, err := s.loadOne(ctx, hit.EntryID, base, args); err == nil {
-						if !admin && !audienceAllowed(e.Audience, opts.Channel, opts.PrivateChannels) {
-							continue
-						}
 						addEntry(*e)
 					}
 				}
 			}
 		}
-		// Channel 3: LIKE. Short queries always use it; longer queries fall
-		// back when FTS recall is thin.
+		// Channel 3: LIKE. Short queries always use it; longer queries keep a
+		// real fallback too (B09). The filter runs in SQL, so the LIMIT counts
+		// visible rows.
 		if len(likeTerms) > 0 || ftsHits < 5 {
 			for _, term := range likeTerms {
-				ids, err := s.searchLike(ctx, term, 100)
+				ids, err := s.searchLike(ctx, term, 100, "", nil)
 				if err != nil {
 					return nil, err
 				}
@@ -152,22 +162,21 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 						continue
 					}
 					if e, err := s.loadOne(ctx, id, base, args); err == nil {
-						if !admin && !audienceAllowed(e.Audience, opts.Channel, opts.PrivateChannels) {
-							continue
-						}
 						addEntry(*e)
 					}
 				}
 			}
 		}
-		// Channel 4: temporal overlap.
+		// Channel 4: temporal overlap. A pure time hit is a first-class
+		// relevance signal, not a keyword by-product (B08).
 		if hint := ParseRelativeTime(opts.Query, time.Now(), time.Local); hint != nil {
 			from, to := hintRange(hint)
 			if from != 0 && to > from {
 				tq := `SELECT ` + entryColumns + ` FROM entries WHERE ` + base + ` AND (
 					(event_at IS NOT NULL AND event_at >= ? AND event_at < ?)
+					OR (event_start IS NOT NULL AND event_start < ? AND COALESCE(event_end, ?) > ?)
 					OR (valid_from IS NOT NULL AND valid_from < ? AND COALESCE(valid_to, ?) > ?))`
-				targs := append(append([]any{}, args...), from, to, to, to, from)
+				targs := append(append([]any{}, args...), from, to, to, to, from, to, to, from)
 				trows, err := s.db.QueryContext(ctx, tq, targs...)
 				if err == nil {
 					for trows.Next() {
@@ -175,9 +184,8 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 						if err != nil {
 							break
 						}
-						if admin || audienceAllowed(e.Audience, opts.Channel, opts.PrivateChannels) {
-							addEntry(e)
-						}
+						addEntry(e)
+						temporalIDs[e.ID] = true
 					}
 					_ = trows.Close()
 				}
@@ -201,10 +209,14 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 			if facetSim := queryRelevance(queryNorm, Normalize(e.Predicate+" "+e.Facet)); facetSim > sim {
 				sim = facetSim
 			}
-			if sim <= 0 && anchor <= 0 {
+			if sim <= 0 && anchor <= 0 && !temporalIDs[e.ID] {
 				continue
 			}
-			score = sim*0.50 + anchor*0.15 + e.Importance*0.20 +
+			timeBoost := 0.0
+			if temporalIDs[e.ID] {
+				timeBoost = 0.25
+			}
+			score = sim*0.50 + anchor*0.15 + timeBoost + e.Importance*0.20 +
 				recencyScore(entryTime(e), now)*0.10 + e.EmotionalWeight*0.05
 		}
 		scored = append(scored, scoredEntry{entry: e, score: score, anchor: anchor, pinned: pinned})
@@ -368,21 +380,24 @@ func (s *Store) BuildFixedContext(
 	profile, _ := s.List(ctx, SearchOptions{
 		Status: StatusActive, Layer: LayerProfile, Limit: 40,
 	})
-	if len(profile) > 0 {
-		var b strings.Builder
-		b.WriteString("## 用户画像")
-		for _, e := range profile {
-			if e.Realm == RealmFictional && !injectFictional {
-				continue
-			}
-			if !audienceAllowed(e.Audience, channel, privateChannels) {
-				continue
-			}
-			b.WriteString("\n- " + strings.TrimSpace(e.Text))
+	now := s.now()
+	var profileLines []string
+	for _, e := range profile {
+		// TTL is a usage limit, not just an archive trigger (B08): an expired
+		// profile row must not be injected while it still exists.
+		if e.ExpiresAt != nil && *e.ExpiresAt <= now {
+			continue
 		}
-		if b.Len() > len("## 用户画像") {
-			parts = append(parts, b.String())
+		if e.Realm == RealmFictional && !injectFictional {
+			continue
 		}
+		if !audienceAllowed(e.Audience, channel, privateChannels) {
+			continue
+		}
+		profileLines = append(profileLines, "- "+strings.TrimSpace(e.Text))
+	}
+	if len(profileLines) > 0 {
+		parts = append(parts, "## 用户画像\n"+strings.Join(profileLines, "\n"))
 	}
 
 	base := trimToBudget(parts, budget, "# Memory\n\n")
@@ -468,9 +483,10 @@ func (s *Store) BuildRetrievalContext(
 		return ""
 	}
 	var lines []string
-	var usedIDs []string
+	used := map[string]bool{}
 	relationshipCount := 0
 	otherCount := 0
+	usedTokens := 0
 	for _, e := range entries {
 		if e.Realm == RealmFictional && !injectFictional {
 			continue
@@ -495,15 +511,19 @@ func (s *Store) BuildRetrievalContext(
 			text = truncateRunes(text, 600)
 		}
 		line := fmt.Sprintf("- [%s/%s] %s", e.Layer, e.Realm, text)
-		if len(lines) > 0 && EstimateTokens(strings.Join(lines, "\n"))+EstimateTokens(line) > budget {
+		cost := EstimateTokens(line) + EstimateTokens("\n")
+		if usedTokens+cost > budget {
 			break
 		}
 		lines = append(lines, line)
-		usedIDs = append(usedIDs, e.ID)
+		used[e.ID] = true
+		usedTokens += cost
 	}
 
 	// One-hop expansion adds shared-experience context that keyword search
-	// misses. It is additive and still respects the budget.
+	// misses. It shares the layer quotas and the ID set with the main pass:
+	// expansion can neither duplicate an injected entry nor exceed the total
+	// quota (B10).
 	if len(entries) > 0 {
 		seedCount := len(entries)
 		if seedCount > 3 {
@@ -515,19 +535,39 @@ func (s *Store) BuildRetrievalContext(
 			if relatedCount >= 3 {
 				break
 			}
+			if used[e.ID] {
+				continue
+			}
+			if e.Layer == LayerRelationship {
+				if relationshipCount >= 2 {
+					continue
+				}
+				relationshipCount++
+			} else {
+				if otherCount >= 6 {
+					continue
+				}
+				otherCount++
+			}
 			text := strings.TrimSpace(e.Text)
 			line := fmt.Sprintf("- [关联/%s] %s", e.Layer, text)
-			if EstimateTokens(strings.Join(lines, "\n"))+EstimateTokens(line) > budget {
+			cost := EstimateTokens(line) + EstimateTokens("\n")
+			if usedTokens+cost > budget {
 				break
 			}
 			lines = append(lines, line)
-			usedIDs = append(usedIDs, e.ID)
+			used[e.ID] = true
+			usedTokens += cost
 			relatedCount++
 		}
 	}
 
 	if len(lines) == 0 {
 		return ""
+	}
+	usedIDs := make([]string, 0, len(used))
+	for id := range used {
+		usedIDs = append(usedIDs, id)
 	}
 	s.RecordUsage(usedIDs)
 	return trimToBudget([]string{"## 相关记忆\n" + strings.Join(lines, "\n")}, budget, "# Memory\n\n")
@@ -549,7 +589,9 @@ func trimToBudget(parts []string, budget int, header string) string {
 	b.WriteString(header)
 	used := EstimateTokens(header)
 	for _, p := range parts {
-		cost := EstimateTokens(p)
+		// Separators are real characters in the final prompt: count them, or
+		// the rendered block drifts over the declared budget (B11).
+		cost := EstimateTokens(p) + EstimateTokens("\n\n")
 		if used+cost > budget {
 			// Keep a truncated prefix of the first oversized block.
 			if b.Len() == len(header) {
@@ -591,7 +633,33 @@ func audienceAllowed(audience, channel string, privateChannels []string) bool {
 	if strings.HasPrefix(audience, "channel:") {
 		return channel == strings.TrimPrefix(audience, "channel:")
 	}
-	return true
+	// Unknown audiences are not public by default; only an explicit shared
+	// marker passes.
+	return false
+}
+
+// audienceSQL is the SQL twin of audienceAllowed. It runs inside every
+// retrieval query so LIMIT counts visible rows (B07). Unknown audience values
+// fail closed: a typo must not expose a private memory.
+func audienceSQL(channel string, privateChannels []string) (string, []any) {
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return `(audience IN ('','all'))`, nil
+	}
+	if containsChannel(privateChannels, channel) {
+		return `(audience IN ('','all','private') OR audience = ?)`, []any{"channel:" + channel}
+	}
+	return `(audience IN ('','all') OR audience = ?)`, []any{"channel:" + channel}
+}
+
+// audienceSQLFor additionally respects the chat kind: a group or public chat
+// never reads private memory, even when the channel is configured private.
+func audienceSQLFor(chatKind, channel string, privateChannels []string) (string, []any) {
+	switch chatKind {
+	case ChatKindGroup, ChatKindPublic:
+		return `(audience IN ('','all'))`, nil
+	}
+	return audienceSQL(channel, privateChannels)
 }
 
 func containsChannel(list []string, channel string) bool {

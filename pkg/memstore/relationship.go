@@ -21,12 +21,24 @@ func scanPersona(row scanner) (Persona, error) {
 	return p, nil
 }
 
-// GetRelationship returns current (valid_to IS NULL, not expired) attributes.
+// GetRelationship returns current (valid_to IS NULL, not expired) attributes
+// for the legacy/maintenance view. Domain-scoped callers use
+// GetRelationshipForContext.
 func (s *Store) GetRelationship(ctx context.Context) ([]RelationshipState, error) {
-	now := time.Now().UnixMilli()
+	return s.GetRelationshipForContext(ctx, LegacyContext())
+}
+
+// GetRelationshipForContext returns the relationship rows visible to one
+// domain. Empty-domain legacy rows stay in the isolated legacy domain.
+func (s *Store) GetRelationshipForContext(ctx context.Context, mc MemoryContext) ([]RelationshipState, error) {
+	mc = mc.Normalize()
+	now := s.now()
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT key,value,valid_from,confidence,expires_at FROM relationship_state
-		 WHERE valid_to IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY key`, now)
+		`SELECT key,value,valid_from,confidence,expires_at,domain_id,realm,audience,source_event_id
+		 FROM relationship_state
+		 WHERE valid_to IS NULL AND (expires_at IS NULL OR expires_at > ?)
+		   AND (domain_id=? OR domain_id='')
+		 ORDER BY key`, now, mc.DomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +47,8 @@ func (s *Store) GetRelationship(ctx context.Context) ([]RelationshipState, error
 	for rows.Next() {
 		var r RelationshipState
 		var expires sql.NullInt64
-		if err := rows.Scan(&r.Key, &r.Value, &r.ValidFrom, &r.Confidence, &expires); err != nil {
+		if err := rows.Scan(&r.Key, &r.Value, &r.ValidFrom, &r.Confidence, &expires,
+			&r.DomainID, &r.Realm, &r.Audience, &r.SourceEventID); err != nil {
 			return nil, err
 		}
 		if expires.Valid {
@@ -60,18 +73,43 @@ func (s *Store) SetRelationshipWithTTL(
 	confidence float64,
 	expiresAt *int64,
 ) error {
-	key = trimSpace(key)
+	return s.SetRelationshipFull(ctx, RelationshipUpdate{
+		Key: key, Value: value, Confidence: confidence, ExpiresAt: expiresAt,
+	})
+}
+
+// RelationshipUpdate is one domain-scoped relationship write. SourceEventID
+// links the row to the memory it was derived from, which lets Forget remove
+// the copy together with the fact.
+type RelationshipUpdate struct {
+	Key           string
+	Value         string
+	Confidence    float64
+	ExpiresAt     *int64
+	DomainID      string
+	Realm         string
+	Audience      string
+	SourceEventID string
+	// ClearExpiry must be explicit: omitting ExpiresAt keeps the stored TTL
+	// (nil is not the same as "no expiry").
+	ClearExpiry bool
+}
+
+// SetRelationshipFull writes one relationship attribute with explicit domain
+// and provenance.
+func (s *Store) SetRelationshipFull(ctx context.Context, u RelationshipUpdate) error {
+	key := trimSpace(u.Key)
 	if key == "" {
 		return fmt.Errorf("memstore: empty relationship key")
 	}
+	confidence := u.Confidence
 	if confidence <= 0 || confidence > 1 {
 		confidence = 0.8
 	}
-	now := time.Now().UnixMilli()
-	var exp any
-	if expiresAt != nil {
-		exp = *expiresAt
+	if strings.TrimSpace(u.DomainID) == "" {
+		u.DomainID = DomainLegacyUnassigned
 	}
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -80,35 +118,56 @@ func (s *Store) SetRelationshipWithTTL(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var oldValue string
-	var oldValidFrom int64
+	var oldValue, oldRealm, oldAudience, oldSource string
+	var oldValidFrom, oldUpdated int64
 	var oldConfidence float64
-	var oldUpdated int64
 	var oldExpires sql.NullInt64
 	err = tx.QueryRowContext(ctx,
-		`SELECT value,valid_from,confidence,updated_at,expires_at
+		`SELECT value,valid_from,confidence,updated_at,expires_at,realm,audience,source_event_id
 		 FROM relationship_state WHERE key=? AND valid_to IS NULL`, key).
-		Scan(&oldValue, &oldValidFrom, &oldConfidence, &oldUpdated, &oldExpires)
+		Scan(&oldValue, &oldValidFrom, &oldConfidence, &oldUpdated, &oldExpires,
+			&oldRealm, &oldAudience, &oldSource)
 	if err == nil {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR REPLACE INTO relationship_state_history
-			 (key,value,valid_from,valid_to,confidence,updated_at)
-			 VALUES(?,?,?,?,?,?)`,
-			key, oldValue, oldValidFrom, now, oldConfidence, oldUpdated); err != nil {
+			 (key,value,valid_from,valid_to,confidence,updated_at,domain_id,realm,audience,source_event_id)
+			 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+			key, oldValue, oldValidFrom, now, oldConfidence, oldUpdated,
+			u.DomainID, oldRealm, oldAudience, oldSource); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 
+	var exp any
+	if u.ExpiresAt != nil {
+		exp = *u.ExpiresAt
+	}
+	// TTL tri-state: omitted keeps the stored expiry, clear removes it, a
+	// value sets it. The INSERT case uses exp directly because a new row has
+	// no previous TTL to preserve.
+	clearInt := 0
+	if u.ClearExpiry {
+		clearInt = 1
+	}
+	var expParam any
+	if u.ExpiresAt != nil {
+		expParam = *u.ExpiresAt
+	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO relationship_state(key,value,valid_from,valid_to,confidence,updated_at,expires_at)
-		 VALUES(?,?,?,NULL,?,?,?)
+		`INSERT INTO relationship_state
+		 (key,value,valid_from,valid_to,confidence,updated_at,expires_at,domain_id,realm,audience,source_event_id)
+		 VALUES(?,?,?,NULL,?,?,?,?,?,?,?)
 		 ON CONFLICT(key) DO UPDATE SET
 		   value=excluded.value, valid_from=excluded.valid_from, valid_to=NULL,
 		   confidence=excluded.confidence, updated_at=excluded.updated_at,
-		   expires_at=excluded.expires_at`,
-		key, trimSpace(value), now, confidence, now, exp); err != nil {
+		   expires_at=CASE WHEN ?=1 THEN NULL WHEN ? IS NOT NULL THEN ? ELSE relationship_state.expires_at END,
+		   domain_id=excluded.domain_id, realm=excluded.realm,
+		   audience=excluded.audience, source_event_id=excluded.source_event_id`,
+		key, trimSpace(u.Value), now, confidence, now, exp,
+		u.DomainID, u.Realm, u.Audience, u.SourceEventID,
+		clearInt, expParam, expParam); err != nil {
 		return err
 	}
 	if err := s.bumpRevision(ctx, tx); err != nil {

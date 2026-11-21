@@ -516,6 +516,11 @@ func DefaultConfig() *Config {
 			InjectFictional:       false,
 			ReviewRequired:        true,
 			EpisodicRetentionDays: 365,
+			// V4 defaults: capture stays conservative, external processing and
+			// proactive delivery remain off until the owner enables them.
+			SensitivityCapture:         "explicit_only",
+			ProactiveDailyLimit:        1,
+			ProactiveTopicCooldownDays: 7,
 		},
 		BuildInfo: BuildInfo{
 			Version:   Version,

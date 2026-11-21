@@ -67,6 +67,20 @@ type MemoryConfig struct {
 	InjectFictional       bool     `json:"inject_fictional"`
 	ReviewRequired        bool     `json:"review_required"`
 	EpisodicRetentionDays int      `json:"episodic_retention_days,omitempty"`
+
+	// V4 (schema 4) policy switches. All are opt-in: a missing field keeps the
+	// safe default, so an old config file never silently enables external
+	// processing or proactive delivery.
+	SensitivityCapture         string   `json:"sensitivity_capture,omitempty"` // off|explicit_only|on
+	LedgerPath                 string   `json:"ledger_path,omitempty"`
+	SummaryEnabled             bool     `json:"summary_enabled,omitempty"`
+	LLMExtractionEnabled       bool     `json:"llm_extraction_enabled,omitempty"`
+	SemanticRetrievalEnabled   bool     `json:"semantic_retrieval_enabled,omitempty"`
+	ProactiveRecallEnabled     bool     `json:"proactive_recall_enabled,omitempty"`
+	ProactiveDailyLimit        int      `json:"proactive_daily_limit,omitempty"`
+	ProactiveTopicCooldownDays int      `json:"proactive_topic_cooldown_days,omitempty"`
+	AllowedChatRecipients      []string `json:"allowed_chat_recipients,omitempty"`
+	AllowToolForwarding        bool     `json:"allow_tool_forwarding,omitempty"`
 }
 
 type EvolutionConfig struct {

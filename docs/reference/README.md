@@ -7,3 +7,4 @@ Reference docs for precise configuration, runtime behavior, and tool semantics.
 - [Scheduled Tasks and Cron Jobs](cron.md): schedule types, delivery modes, command gates, and storage.
 - [Config Schema Versioning Guide](config-versioning.md): config schema migration and compatibility notes.
 - [Dynamic Rate Limiting](rate-limiting.md): request throttling behavior for LLM providers.
+- [Memory Schema v4 Migration](memory-schema-v4.md): v3 → v4 upgrade, verification, rollback, and the forget ledger.
