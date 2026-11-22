@@ -1,5 +1,40 @@
 # 变更日志
 
+## v0.7.10
+
+### 安全与治理
+
+- **群聊/公开会话读取收紧贯穿提示词与模型工具**：固定画像、边界、关系状态、persona、检索块和 `memory` 工具统一按可信 chat kind 过滤；群聊在未排除渠道上也不再读取 `audience=private`。
+- **模型记忆工具统一走 `MemoryService`**：`add` / `search` / `inspect` / `confirm` / `correct` / `archive` / `restore` / `forget` 预览 / `update_state` 都携带可信 domain、channel 与 chat kind；群聊写入个人记忆或关系状态会被拒绝。
+- **秘密禁入下沉为存储层不变量**：`Store.Add` 直接拒绝密码、验证码、API Key、私钥等内容；工具、API、自动抽取、导入和 `Correct` 都不能绕过。
+- **补齐单 Provider 非流式主调用的发送点门禁**：主调用、fallback、重试与流式调用都会检查 `memory.allowed_chat_recipients`，未获授权返回不可重试的 `memory egress denied`。
+- **账本灾备与故障关闭**：迁移/修复备份同时保存 `VACUUM INTO` 主库与 `forget-ledger.db`，新增 `picoclaw memory ledger-verify --backup <path>`；已有 v4 库账本缺失或身份损坏时读取仍可用，但永久遗忘故障关闭，不再静默新建空身份。
+- **FTS/LIKE 权限先于 LIMIT**：status/domain/realm/audience 过滤进入 SQL 后再限制候选数，不可见记录不会挤掉合法命中。
+
+### 数据一致性
+
+- `Correct` 改为单事务：旧版本置为 superseded、新版本、supersede 边、操作日志与依赖摘要失效一起提交；新版本继承原条目的 domain、sensitivity 与 `pinned_core`。
+- 审批计划改为原子 claim，重复批准不会重复执行；失败落 `failed`；补齐 `set_relationship` 的创建与执行分支。
+- 摘要发布校验预期 `generation` 与 cluster 成员，证据写入真实 `source_id`；Correct、SetStatus 与权限/内容 Update 在同一事务内失效依赖摘要。
+- cleanup 对无 locator 或存在 `unavailable` 的任务标记 `blocked`，不再标记 `done`；gateway 启动时及每 5 分钟自动消费 `forget_cleanup`。
+- 导出改为分页遍历，不再被 `Store.List` 的 100 条上限截断。
+- 承诺创建拒绝直接进入 `fulfilled` / `cancelled` 终态。
+
+### 隐私
+
+- 数据目录 0700、主库 0600、备份目录 0700；debug 日志不再输出 system prompt、消息正文或工具参数原文，只记录长度与 SHA-256 前缀。
+
+### 前端与文档
+
+- 迁移页修正 legacy 隔离域、账本备份与重复迁移文案。
+- 文档同步账本备份/校验、群聊读取、cleanup partial 语义与 0.7.10 行为变化。
+
+### 升级
+
+- 无 Schema 变更（仍为 v4），无配置字段变更；覆盖二进制并重启即可。
+- 升级后首次启动会自动消费遗留 `forget_cleanup` 任务；无法核验的任务显示 `blocked`，需要人工处理。
+- 如果已有 v4 库缺少 `forget-ledger.db`，永久遗忘会故障关闭；请恢复与该库匹配的账本备份，并用 `picoclaw memory ledger-verify --backup <path>` 校验。不要用其他实例的账本替代。
+
 ## v0.7.4
 
 ### 修复

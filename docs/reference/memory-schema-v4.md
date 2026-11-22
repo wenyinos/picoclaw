@@ -46,7 +46,7 @@ counts before you confirm.
 
 The migration:
 
-1. Writes `memory/backups/memory.db.bak-<timestamp>` with `VACUUM INTO`.
+1. Writes `memory.db.bak-<timestamp>` and `forget-ledger.db.bak-<timestamp>` under `memory/backups/` with `VACUUM INTO`.
 2. Creates the v4 tables (`CREATE TABLE IF NOT EXISTS`).
 3. Adds v4 columns with guarded `ALTER TABLE` statements.
 4. Rebuilds `sources` field by field, preserving evidence text, model,
@@ -68,18 +68,24 @@ sqlite3 memory.db "PRAGMA integrity_check"                              # ok
 sqlite3 memory.db "SELECT COUNT(*) FROM entries"                        # unchanged
 sqlite3 memory.db "SELECT COUNT(*) FROM sources"                        # unchanged
 picoclaw memory inspect <entry-id>                                      # sources keep evidence_text
+picoclaw memory ledger-verify --backup memory/backups/forget-ledger.db.bak-<timestamp>  # match: true
 ```
+
+`ledger-verify` compares the backup UUID/key_id with the active ledger; a mismatch exits non-zero and must not be used for forget replay.
 
 ## Rollback
 
 - Application rollback means disabling the new capabilities, not downgrading
   the schema. A 0.6.x binary must not write a v4 database.
-- Data rollback is offline: restore the `VACUUM INTO` snapshot to a new path,
-  then replay the latest `forget-ledger.db`. Restoring the snapshot alone can
+- Data rollback is offline: restore the database snapshot to a new path, then
+  replay the latest `forget-ledger.db`. Restoring the snapshot alone can
   resurrect content that was forgotten after it was taken.
-- Keep `forget-ledger.db` and its HMAC key with the database. Losing the ledger
-  disables destructive memory operations instead of silently forgetting the
-  obligations.
+- Since 0.7.10, migration/repair backups include both the database and the
+  ledger snapshots. Restore them as a pair and verify with
+  `picoclaw memory ledger-verify --backup <ledger snapshot>`.
+- Keep `forget-ledger.db` and its HMAC key with the database. A missing ledger
+  or damaged identity disables destructive memory operations instead of silently
+  creating an empty ledger or dropping obligations.
 
 ## Failure handling
 
@@ -90,6 +96,7 @@ picoclaw memory inspect <entry-id>                                      # source
 | Interrupted migration | Transaction rolls back; next open retries |
 | Missing v4 table/column | Healed on next open by the same segment |
 | Missing ledger | Memory reads keep working; `forget` fails closed |
+| Damaged ledger identity | Memory reads keep working; `forget`/`replay-forget` fail closed; identity is not reset |
 | Journal written, main DB not cleaned | Ledger replay on startup |
 | Main DB restored from backup | `POST /api/memory/ledger/replay` or `picoclaw memory replay-forget` |
 

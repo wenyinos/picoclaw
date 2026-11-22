@@ -6,7 +6,7 @@ PicoClaw 使用 SQLite 保存长期记忆，替代旧的 `MEMORY.md` 自由文�
 
 - workspace 内部不保存本机绝对路径；记忆库、索引、导入报告和会话元数据都可随目录复制。
 - 配置里的 `agents.defaults.workspace` 可以写成相对路径 `"workspace"`，运行时按 `PICOCLAW_HOME` 解析。
-- 复制前停止进程并确保 WAL 已 checkpoint；只需保留 `memory/memory.db`。
+- 复制前停止进程并确保 WAL 已 checkpoint；需要保留 `memory/memory.db` 与 `memory/forget-ledger.db`（两者必须成对恢复）。
 - 复制后按运行服务的用户执行 `chown -R <user>:<group> workspace`。
 
 ## 目录
@@ -15,6 +15,8 @@ PicoClaw 使用 SQLite 保存长期记忆，替代旧的 `MEMORY.md` 自由文�
 workspace/
 ├── memory/
 │   ├── memory.db          # SQLite 主库（WAL）
+│   ├── forget-ledger.db   # 独立遗忘账本（HMAC 身份）
+│   ├── backups/           # VACUUM INTO 快照：主库 + 账本
 │   ├── MEMORY.md          # 可选导出，运行时不会读取
 │   └── import-report.md   # 一次性导入报告
 └── sessions/              # 原始会话历史，不变
@@ -40,8 +42,9 @@ workspace/
 - `budget_tokens`：固定块与检索块的总注入预算；`boundary` 在固定块预算之外单独拼接，不参与裁剪，但仍受 audience / 渠道可见性 / fictional 过滤。
 - `auto_extract`：每轮结束后用规则抽取候选记忆；群聊/公开会话不参与抽取。
 - `review_required`：新抽取的未知领域记忆进入待审核队列，不进入提示词。
-- `private_channel_exclusions`（0.7.3）：默认所有渠道都能读取 `audience=private` 的记忆；把不想读取的渠道加进排除列表即可，设置页提供默认全选的复选框。旧字段 `private_channels` 已废弃且不再读取。群聊/公开会话无论配置如何始终不可见。
+- `private_channel_exclusions`（0.7.3）：默认所有渠道都能读取 `audience=private` 的记忆；把不想读取的渠道加进排除列表即可，设置页提供默认全选的复选框。旧字段 `private_channels` 已废弃且不再读取。群聊/公开会话无论配置如何始终不可见（0.7.10 起提示词与工具路径同样强制执行）。
 - `inject_fictional`：是否把角色扮演/虚构记忆注入真实对话，默认关闭。
+- `allowed_chat_recipients`：非空时，每次实际 Provider 调用（主调用、fallback、重试、流式）都检查 `provider` 或 `provider/model`；未列入返回不可重试的 `memory egress denied`。空列表是兼容放行，不是严格默认拒绝。
 
 ## 记忆分类
 
@@ -90,6 +93,10 @@ schema v3 新增：
 
 `memory` 工具的 search 默认查全部 layer，支持 `realm` / `layer` / `predicate` / `facet` / `status` 过滤。0.7 起它使用真实请求渠道，与注入共用同一套可见性规则：`audience=private` 的记忆对所有未排除的渠道可见（`private_channel_exclusions`），群聊/公开会话永远不可见。提示词注入使用更窄的检索路径：只取 active 的 relationship / episodic / procedural，按相关性过滤，并继续执行 audience / 渠道 / fictional 隔离。relationship 条目单次最多注入 2 条，避免长关系设定挤掉事件和流程。
 
+0.7.10 起，`memory` 工具的写入、确认、纠正、归档/恢复、遗忘预览和关系状态更新统一经过 `MemoryService`，并携带可信 domain / channel / chat kind；群聊写入个人记忆或关系状态会被拒绝。密码、验证码、API Key、私钥在 `Store.Add` 层直接拒绝，工具、API、自动抽取和导入都不能绕过。
+
+FTS/LIKE 的 status/domain/realm/audience 过滤进入 SQL 后再应用候选上限；不可见记录不会先占满 100 条候选、再把合法记忆挤掉。
+
 两条路径共用混合候选集：
 
 1. **Anchor**：`facet`、`predicate`、`subject` 或首行 `【...】` 标题的精确/包含命中；pinned 条目命中锚点后无条件置顶。
@@ -116,13 +123,18 @@ schema v3 新增：
 
 其他保证：
 
-- 先写 `VACUUM INTO` 备份到 `memory/backups/`，只保留最新 2 份。
+- 先写 `VACUUM INTO` 备份到 `memory/backups/`：主库与 `forget-ledger.db` 各生成一份快照，各自只保留最新 2 份。
 - 重复执行安全；当前版本的库第二次运行报告零变更。
 - FTS5 在事务前探测；缺失的投影会重建，完全没有 FTS5 时记录 `none`，不会导致数据库打不开。
 - 缺失的 v4 表/列由同一段幂等逻辑自愈。
 - 已删除的 v3 数据修复（硬编码改判、生日恢复）不会重放；仍需这些修复的库请先运行 0.6.x。
 
-`forget-ledger.db` 与 `memory.db` 同目录、使用独立 HMAC 密钥，必须随数据库一起备份；账本丢失时破坏性记忆操作按故障关闭处理，不会静默丢掉遗忘义务。
+`forget-ledger.db` 与 `memory.db` 同目录、使用独立 HMAC 密钥。0.7.10 起：
+
+- 迁移/修复备份会同时保存主库与账本快照；恢复时必须成对使用。
+- 已有 v4 库的账本缺失、key 损坏或身份字段不完整时，读取仍可用，但 `forget` / `replay-forget` 故障关闭，不会静默创建新账本或重置身份。
+- 全新数据库和 v3 → v4 迁移允许创建第一份账本。
+- 恢复后用 `picoclaw memory ledger-verify --backup <账本快照>` 校验 UUID/key_id 是否匹配当前库；不一致时返回非零退出码，不能继续用它重放遗忘。
 
 可以在 `/memory` 的“数据库迁移”页一键执行，也可以运行：
 
@@ -137,7 +149,7 @@ picoclaw memory migrate
 启动 launcher 后打开 `/memory`：
 
 - 概览：条目统计、数据库大小、关系状态、归档操作。
-- 数据库迁移：查看 schema 版本、空 predicate、relationship 数量、pinned 核心、关系边、FTS 行数与 tokenizer，并一键备份迁移；同一个按钮覆盖 v1 / v2 → v3。
+- 数据库迁移：查看 schema 版本、空 predicate、relationship 数量、pinned 核心、关系边、FTS 行数与 tokenizer，并一键备份迁移；当前按钮执行 v3 → v4。
 - 记忆库：服务端分页（每页 100 条）、搜索、筛选、编辑、归档、恢复；表格固定列宽，详情面板独立滚动。
 - 审核：确认真实记忆 / 标记虚构 / 标记工作 / 忽略。
 - 关系与人格：称呼、阶段、纪念日、边界、人设版本；人设可设置 realm / audience / scope。
@@ -153,6 +165,8 @@ picoclaw memory inspect <id>
 picoclaw memory rebuild-fts
 picoclaw memory forget <id> [--yes]
 picoclaw memory replay-forget
+picoclaw memory cleanup          # 消费 forget_cleanup；gateway 启动时也会自动运行
+picoclaw memory ledger-verify --backup <账本快照>
 picoclaw memory capsule --preset t0_compact
 picoclaw memory import --from /path/to/old-workspace
 picoclaw memory audit
@@ -162,7 +176,17 @@ picoclaw memory export --out memories.jsonl
 picoclaw memory render   # 可选 Markdown 导出，不会被运行时读回
 ```
 
-`memory import` 是唯一会读取旧 `MEMORY.md` 的命令；运行时不读取。`memory forget` 不带 `--yes` 时只预览；`memory replay-forget` 用于从旧备份恢复后重新应用遗忘墓碑。
+`memory import` 是唯一会读取旧 `MEMORY.md` 的命令；运行时不读取。`memory forget` 不带 `--yes` 时只预览；`memory replay-forget` 用于从旧备份恢复后重新应用遗忘墓碑。`memory cleanup` 对 JSONL 做精确 HMAC 匹配；无 locator 或无法核验的任务会保持 `blocked`，不会以 `done` 表示完整清除。
+
+## 0.7.10 安全修复
+
+- 群聊/公开会话在提示词、检索块和 `memory` 工具中都不再读取 `audience=private`；关系状态与 persona 同样过滤。
+- 模型工具统一经过 `MemoryService`；群聊写入、秘密写入和模型自批永久遗忘都被拒绝。
+- 单 Provider 非流式主调用补齐发送点门禁；每次真实 Provider 调用都检查 `allowed_chat_recipients`。
+- 账本缺失/损坏不再静默新建；迁移/修复备份同时保存账本，并提供 `ledger-verify`。
+- `Correct` 单事务并继承 domain/sensitivity/pinned；摘要发布校验 generation/成员并在写入时失效依赖摘要。
+- cleanup 的 partial 任务标记 `blocked`；gateway 启动与每 5 分钟自动消费。
+- 数据目录 0700、主库/备份 0600，debug 日志不再输出记忆正文。
 
 ## 迁移到 0.7.0
 

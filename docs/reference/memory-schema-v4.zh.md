@@ -43,7 +43,7 @@ picoclaw memory migrate
 
 迁移步骤：
 
-1. `VACUUM INTO` 备份到 `memory/backups/memory.db.bak-<时间戳>`。
+1. `VACUUM INTO` 备份到 `memory/backups/`：主库 `memory.db.bak-<时间戳>` 与账本 `forget-ledger.db.bak-<时间戳>` 各一份。
 2. 创建 v4 新表（`CREATE TABLE IF NOT EXISTS`）。
 3. 用带守卫的 `ALTER TABLE` 补齐 v4 列。
 4. 逐字段重建 `sources`：证据原文、模型、确认标志、`message_id`、置信度全部保留；
@@ -63,15 +63,20 @@ sqlite3 memory.db "PRAGMA integrity_check"                              # ok
 sqlite3 memory.db "SELECT COUNT(*) FROM entries"                        # 与迁移前一致
 sqlite3 memory.db "SELECT COUNT(*) FROM sources"                        # 与迁移前一致
 picoclaw memory inspect <entry-id>                                      # sources 仍有 evidence_text
+picoclaw memory ledger-verify --backup memory/backups/forget-ledger.db.bak-<时间戳>  # match: true
 ```
+
+`ledger-verify` 比对备份与当前账本的 UUID/key_id；不一致时返回非零退出码，不能用于重放遗忘。
 
 ## 回滚
 
 - 应用回滚指关闭新能力，不是降级 schema。0.6.x 二进制禁止写 v4 数据库。
-- 数据回滚必须离线：把快照恢复到新路径，再重放最新 `forget-ledger.db`。
+- 数据回滚必须离线：把主库快照恢复到新路径，再重放最新 `forget-ledger.db`。
   只恢复快照会让快照之后遗忘的内容复活。
-- `forget-ledger.db` 及其 HMAC 密钥必须与数据库一起备份；账本丢失时破坏性
-  记忆操作按故障关闭处理，不会静默丢掉遗忘义务。
+- 0.7.10 起迁移/修复生成的备份同时包含主库与账本快照；两者必须成对恢复，并用
+  `picoclaw memory ledger-verify --backup <账本快照>` 校验身份。
+- `forget-ledger.db` 及其 HMAC 密钥必须与数据库一起备份；账本缺失或身份损坏时
+  破坏性记忆操作按故障关闭处理，不会静默新建空账本或丢掉遗忘义务。
 
 ## 故障处理
 
@@ -82,6 +87,7 @@ picoclaw memory inspect <entry-id>                                      # source
 | 迁移中断 | 事务回滚，下次打开重试 |
 | 缺 v4 表/列 | 下次打开由同一段自愈 |
 | 账本缺失 | 记忆读取可用，`forget` 故障关闭 |
+| 账本身份损坏 | 记忆读取可用，`forget`/`replay-forget` 故障关闭，不重置身份 |
 | 账本已写、主库未清理 | 启动时按账本重放 |
 | 主库恢复自旧备份 | `POST /api/memory/ledger/replay` 或 `picoclaw memory replay-forget` |
 

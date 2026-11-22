@@ -6,7 +6,7 @@ PicoClaw stores long-term memory in SQLite instead of a free-form `MEMORY.md`. T
 
 - The workspace contains no machine-specific absolute paths.
 - `agents.defaults.workspace` may be relative (`"workspace"`); it is resolved against `PICOCLAW_HOME`.
-- Stop the process and checkpoint the WAL before copying. Only `memory/memory.db` is required.
+- Stop the process and checkpoint the WAL before copying. Keep `memory/memory.db` and `memory/forget-ledger.db` together; they must be restored as a pair.
 - After copying, run `chown -R <user>:<group> workspace` for the service account.
 
 ## Directory layout
@@ -15,6 +15,8 @@ PicoClaw stores long-term memory in SQLite instead of a free-form `MEMORY.md`. T
 workspace/
 ├── memory/
 │   ├── memory.db          # SQLite database (WAL)
+│   ├── forget-ledger.db   # independent forget ledger (HMAC identity)
+│   ├── backups/           # VACUUM INTO snapshots: database + ledger
 │   ├── MEMORY.md          # optional export (never read at runtime)
 │   └── import-report.md   # one-shot import report
 └── sessions/              # raw session history, unchanged
@@ -40,8 +42,9 @@ workspace/
 - `budget_tokens`: total injection budget for fixed and retrieved blocks. `boundary` rules are appended outside the fixed-block budget; they are not trimmed by it, but still obey audience, channel-visibility, and fictional filtering.
 - `auto_extract`: run rule-based extraction after each turn. Group/public chats are skipped: shared conversation never enters the personal profile.
 - `review_required`: uncertain memories enter `pending_review` and are not injected.
-- `private_channel_exclusions` (0.7.3): every channel reads `audience=private` memories by default; add the channels you want to opt out. The settings page renders this as checkboxes, checked by default. The old `private_channels` field is no longer read. Group/public chats stay invisible regardless of this setting.
+- `private_channel_exclusions` (0.7.3): every channel reads `audience=private` memories by default; add the channels you want to opt out. The settings page renders this as checkboxes, checked by default. The old `private_channels` field is no longer read. Group/public chats stay invisible regardless of this setting; since 0.7.10 the prompt and tool paths enforce this as well.
 - `inject_fictional`: whether role-play memories may enter real conversations (off by default).
+- `allowed_chat_recipients`: when non-empty, every actual provider call (primary, fallback, retry, streaming) must match a listed `provider` or `provider/model`; otherwise it returns the non-retryable `memory egress denied`. An empty list is compatibility mode, not strict default-deny.
 
 ## Memory model
 
@@ -90,6 +93,8 @@ Writes are processed in order:
 
 The `memory` tool's search covers all layers by default and supports `realm` / `layer` / `predicate` / `facet` / `status` filters. Since 0.7 it uses the real request channel and the same visibility rules as injection: private memories are visible in every channel that is not excluded (`private_channel_exclusions`), and never in group/public chats. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures.
 
+Since 0.7.10, all `memory` tool writes, confirmation, correction, archive/restore, forget preview and relationship-state updates go through `MemoryService` with the trusted domain, channel and chat kind. Group chats cannot write personal memories or relationship state. Passwords, verification codes, API keys and private keys are rejected at the `Store.Add` layer, so tools, APIs, extraction and imports cannot bypass the rule. FTS/LIKE apply the status/domain/realm/audience filter in SQL before the candidate limit, so invisible rows cannot crowd out a valid match.
+
 Both paths share the hybrid candidate set:
 
 1. **Anchor** — exact/contains match on `facet`, `predicate`, `subject`, or a first-line `【...】` title. A pinned entry that hits an anchor is sorted first unconditionally.
@@ -116,13 +121,18 @@ The migration is one guarded segment:
 
 Other guarantees:
 
-- A `VACUUM INTO` backup is written to `memory/backups/`; the newest two are kept.
+- `VACUUM INTO` backups are written to `memory/backups/`: one snapshot of the database and one of `forget-ledger.db`, keeping the newest two of each.
 - Re-running is safe and reports zero changes on a current database.
 - FTS5 is probed before the transaction; a missing projection is rebuilt, and a build without FTS5 records `none` instead of failing to open.
 - Missing v4 tables/columns are healed by the same idempotent segment.
 - The removed v3 data repairs (hard-coded reclassification, birthday restore) are not replayed; run 0.6.x if a database still needs them.
 
-`forget-ledger.db` lives next to `memory.db`, uses its own HMAC key, and must be backed up with the database. Losing the ledger disables destructive memory operations instead of silently dropping obligations.
+`forget-ledger.db` lives next to `memory.db` and uses its own HMAC key. Since 0.7.10:
+
+- Migration/repair backups include both the database and the ledger; restore them as a pair.
+- A v4 database whose ledger is missing, whose key is damaged, or whose identity fields are incomplete stays readable, but `forget` / `replay-forget` fail closed. No empty ledger or new identity is created silently.
+- A brand-new database and a v3 → v4 migration may create their first ledger.
+- After restoring, verify the pair with `picoclaw memory ledger-verify --backup <ledger snapshot>`; a UUID/key_id mismatch exits non-zero and must not be used for replay.
 
 Run it from `/memory` → “Database migration” or:
 
@@ -137,7 +147,7 @@ Full procedure: [Memory schema v4](../reference/memory-schema-v4.md).
 Open `/memory` in the launcher:
 
 - Overview: counts, database size, relationship state, archival action.
-- Database migration: schema version, empty predicates, relationship count, pinned core, relation edges, FTS rows and tokenizer, one-click backup and migration. The same button handles v1 / v2 → v3.
+- Database migration: schema version, empty predicates, relationship count, pinned core, relation edges, FTS rows and tokenizer, one-click backup and migration. The button performs v3 → v4.
 - Memory library: server-side pagination (100 per page), search, filter, edit, archive, restore; fixed table columns and an independently scrollable detail panel.
 - Review: confirm real, mark fictional, mark work, ignore.
 - Relationship and persona: names, stage, anniversaries, boundaries, persona versions; persona realm / audience / scope.
@@ -153,6 +163,8 @@ picoclaw memory inspect <id>
 picoclaw memory rebuild-fts
 picoclaw memory forget <id> [--yes]
 picoclaw memory replay-forget
+picoclaw memory cleanup          # drains forget_cleanup; gateway also runs it at startup
+picoclaw memory ledger-verify --backup <ledger snapshot>
 picoclaw memory capsule --preset t0_compact
 picoclaw memory import --from /path/to/old-workspace
 picoclaw memory audit
@@ -162,7 +174,17 @@ picoclaw memory export --out memories.jsonl
 picoclaw memory render   # optional Markdown export, never read back
 ```
 
-`memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does. `memory forget` without `--yes` is a dry run. `memory replay-forget` re-applies forget tombstones after restoring an older backup.
+`memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does. `memory forget` without `--yes` is a dry run. `memory replay-forget` re-applies forget tombstones after restoring an older backup. `memory cleanup` performs exact HMAC matching against JSONL; a job with no locator or unverifiable content stays `blocked` instead of claiming a complete erase.
+
+## 0.7.10 security fixes
+
+- Group/public chats no longer read `audience=private` memory through prompts, retrieval blocks, relationship state, personas or the `memory` tool.
+- All model tool writes go through `MemoryService`; shared chats, secrets and model self-approved forget are rejected.
+- The single-provider non-streaming call now passes the recipient gate; every real provider call checks `allowed_chat_recipients`.
+- A missing or damaged ledger is no longer silently recreated; migration/repair backups include the ledger and `ledger-verify` checks identity.
+- `Correct` is one transaction and inherits domain/sensitivity/pinned; summary publication checks generation/membership and invalidates dependents on write.
+- Partial cleanup jobs are marked `blocked`; the gateway drains them at startup and every five minutes.
+- Data directories are 0700, database/backup files 0600, and debug logs no longer contain memory text.
 
 ## Migrating to 0.7.0+
 
