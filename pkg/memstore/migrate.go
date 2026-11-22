@@ -151,14 +151,20 @@ func (s *Store) tableSQLLocked(ctx context.Context, table string) string {
 	return sqlText
 }
 
-// backupWithRotation writes a VACUUM INTO snapshot under memory/backups and
-// keeps only the newest two files.
+// backupWithRotation writes a VACUUM INTO snapshot under memory/backups,
+// including the independent forget ledger, and keeps only the newest two
+// snapshots of each. The ledger is part of the recovery contract: restoring an
+// old database without its newest ledger can resurrect forgotten content.
 func (s *Store) backupWithRotation(ctx context.Context, label string) (string, error) {
 	dir := filepath.Join(filepath.Dir(s.path), "backups")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	dst := filepath.Join(dir, "memory.db.bak-"+time.Now().Format("20060102-150405"))
+	if s.ledger == nil {
+		return "", fmt.Errorf("memstore: backup requires a healthy forget ledger: %v", s.ledgerErr)
+	}
+	stamp := time.Now().Format("20060102-150405")
+	dst := filepath.Join(dir, "memory.db.bak-"+stamp)
 	for i := 1; ; i++ {
 		if _, err := os.Stat(dst); os.IsNotExist(err) {
 			break
@@ -169,16 +175,29 @@ func (s *Store) backupWithRotation(ctx context.Context, label string) (string, e
 		return "", fmt.Errorf("backup %s: %w", label, err)
 	}
 	_ = os.Chmod(dst, 0o600)
+
+	ledgerDst := filepath.Join(dir, "forget-ledger.db.bak-"+stamp)
+	for i := 1; ; i++ {
+		if _, err := os.Stat(ledgerDst); os.IsNotExist(err) {
+			break
+		}
+		ledgerDst = fmt.Sprintf("%s-%d", ledgerDst, i)
+	}
+	if err := s.ledger.BackupTo(ctx, ledgerDst); err != nil {
+		return "", fmt.Errorf("backup ledger: %w", err)
+	}
 	s.rotateBackups(dir, 2)
 	return dst, nil
 }
 
 func (s *Store) rotateBackups(dir string, keep int) {
-	files, _ := filepath.Glob(filepath.Join(dir, "memory.db.bak-*"))
-	sort.Sort(sort.Reverse(sort.StringSlice(files)))
-	for i, f := range files {
-		if i >= keep {
-			_ = os.Remove(f)
+	for _, pattern := range []string{"memory.db.bak-*", "forget-ledger.db.bak-*"} {
+		files, _ := filepath.Glob(filepath.Join(dir, pattern))
+		sort.Sort(sort.Reverse(sort.StringSlice(files)))
+		for i, f := range files {
+			if i >= keep {
+				_ = os.Remove(f)
+			}
 		}
 	}
 }

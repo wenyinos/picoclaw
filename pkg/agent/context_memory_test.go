@@ -82,6 +82,58 @@ func TestContextBuilder_LongTermMemoryInjectionAndCacheInvalidation(t *testing.T
 	}
 }
 
+func TestContextBuilder_GroupChatDoesNotInjectPrivateMemory(t *testing.T) {
+	workspace := t.TempDir()
+	store, err := memstore.Open(filepath.Join(workspace, "memory", "memory.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	if _, err := store.UpsertPersona(ctx, "default", "Pico", "PRIVATE_PERSONA", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRelationship(ctx, "ai_name", "PRIVATE_RELATION", 0.9); err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range []memstore.AddInput{
+		{Text: "PRIVATE_PROFILE 画像", Layer: memstore.LayerProfile, Audience: "private"},
+		{Text: "PUBLIC_PROFILE 画像", Layer: memstore.LayerProfile, Audience: "all"},
+		{Text: "PRIVATE_BOUNDARY", Layer: memstore.LayerBoundary, Audience: "private"},
+		{Text: "PUBLIC_BOUNDARY", Layer: memstore.LayerBoundary, Audience: "all"},
+		{Text: "PRIVATE_RETRIEVAL 画像", Layer: memstore.LayerEpisodic, Audience: "private"},
+		{Text: "PUBLIC_RETRIEVAL 画像", Layer: memstore.LayerEpisodic, Audience: "all"},
+	} {
+		if _, err := store.Add(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cb := NewContextBuilder(workspace).WithLongTermMemory(store, config.MemoryConfig{
+		Enabled: true, BudgetTokens: 1200,
+	})
+	msgs := cb.BuildMessagesFromPrompt(PromptBuildRequest{
+		CurrentMessage: "画像", Channel: "pico", ChatID: "chat1", ChatKind: "group",
+	})
+	if len(msgs) == 0 {
+		t.Fatal("no messages built")
+	}
+	system := msgs[0].Content
+	for _, marker := range []string{
+		"PRIVATE_PERSONA", "PRIVATE_RELATION", "PRIVATE_PROFILE",
+		"PRIVATE_BOUNDARY", "PRIVATE_RETRIEVAL",
+	} {
+		if strings.Contains(system, marker) {
+			t.Fatalf("group prompt leaked %s:\n%s", marker, system)
+		}
+	}
+	for _, marker := range []string{"PUBLIC_PROFILE", "PUBLIC_BOUNDARY", "PUBLIC_RETRIEVAL"} {
+		if !strings.Contains(system, marker) {
+			t.Fatalf("group prompt missing %s:\n%s", marker, system)
+		}
+	}
+}
+
 func TestContextBuilder_DoesNotInjectLegacyMemoryFiles(t *testing.T) {
 	workspace := t.TempDir()
 	memoryDir := filepath.Join(workspace, "memory")

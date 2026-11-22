@@ -111,8 +111,12 @@ func (s *Store) Confirm(ctx context.Context, id, evidence string) error {
 }
 
 // Correct replaces a memory with corrected text. The old entry is kept as
-// superseded history with valid_to set, and the replacement is linked.
+// superseded history with valid_to set, and the replacement, supersede edge and
+// operation log commit in one transaction.
 func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
 	old, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -126,6 +130,15 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 	in.SupersedesID = id
 	in.Force = true
 	in.BypassForgetTombstone = true
+	if strings.TrimSpace(in.DomainID) == "" {
+		in.DomainID = old.DomainID
+	}
+	if strings.TrimSpace(in.Sensitivity) == "" {
+		in.Sensitivity = old.Sensitivity
+	}
+	// A correction must not silently un-pin a core memory or change its
+	// permission domain/sensitivity.
+	in.PinnedCore = in.PinnedCore || old.PinnedCore
 	if in.Realm == "" {
 		in.Realm = old.Realm
 	}
@@ -153,31 +166,44 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 	if in.EvidenceText == "" {
 		in.EvidenceText = in.Text
 	}
-	res, err := s.Add(ctx, in)
+	if err := prepareAddInput(&in); err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	if res.Entry != nil {
-		now := time.Now().UnixMilli()
-		s.mu.Lock()
-		tx, txErr := s.db.BeginTx(ctx, nil)
-		if txErr == nil {
-			txErr = s.logOperation(ctx, tx, OperationLog{
-				Operation: "correct", TargetEntryID: id, ReplacementEntryID: res.Entry.ID,
-				Reason: "user correction", AffectedCount: 1, CreatedAt: now,
-			})
-			if txErr == nil {
-				txErr = tx.Commit()
-			} else {
-				_ = tx.Rollback()
-			}
-		}
-		s.mu.Unlock()
-		if txErr != nil {
-			return res, txErr
-		}
+	defer func() { _ = tx.Rollback() }()
+
+	supersededID, pinnedBlockID, err := resolveSupersededID(ctx, tx, in, now)
+	if err != nil {
+		return nil, err
 	}
-	return res, nil
+	e, err := buildAndInsertEntryTx(ctx, tx, in, now, writeStatus(in, pinnedBlockID),
+		supersededID, pinnedBlockID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.logOperation(ctx, tx, OperationLog{
+		Operation: "correct", TargetEntryID: id, ReplacementEntryID: e.ID,
+		Reason: "user correction", AffectedCount: 1, CreatedAt: now,
+	}); err != nil {
+		return nil, err
+	}
+	if err := s.invalidateSummariesForEntryTx(ctx, tx, id, "correct"); err != nil {
+		return nil, err
+	}
+	if err := s.bumpRevision(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &AddResult{Action: "superseded", Entry: e, ExistingID: id}, nil
 }
 
 // Forget hard-deletes a memory and its derived data. dryRun only reports the

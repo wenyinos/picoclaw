@@ -20,7 +20,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/memstore"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
-	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 type ContextBuilder struct {
@@ -985,9 +984,9 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			if fixedBudget <= 0 {
 				fixedBudget = 600
 			}
-			fixed, usage := cb.longTerm.BuildFixedContext(
+			fixed, usage := cb.longTerm.BuildFixedContextFor(
 				context.Background(), fixedBudget, cb.longTermCfg.InjectFictional,
-				req.Channel, cb.longTermCfg.PrivateChannelExclusions,
+				req.Channel, req.ChatKind, cb.longTermCfg.PrivateChannelExclusions,
 			)
 			fixedUsage = usage
 			if fixed != "" {
@@ -1011,8 +1010,8 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			if budget < 200 {
 				budget = 200
 			}
-			if retrieval := cb.longTerm.BuildRetrievalContext(
-				context.Background(), req.CurrentMessage, req.Channel, budget,
+			if retrieval := cb.longTerm.BuildRetrievalContextFor(
+				context.Background(), req.CurrentMessage, req.Channel, req.ChatKind, budget,
 				cb.longTermCfg.InjectFictional, cb.longTermCfg.PrivateChannelExclusions,
 			); retrieval != "" {
 				retrievalPart := PromptPart{
@@ -1084,11 +1083,12 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			"cached":        isCached,
 		})
 
-	// Log preview of system prompt (avoid logging huge content)
-	preview := utils.Truncate(fullSystemPrompt, 500)
+	// Log only a fingerprint of the system prompt: it can contain long-term
+	// memory and must not enter operation logs.
 	logger.DebugCF("agent", "System prompt preview",
 		map[string]any{
-			"preview": preview,
+			"chars":  len(fullSystemPrompt),
+			"sha256": logSafeDigest(fullSystemPrompt),
 		})
 
 	history := sanitizeHistoryForProvider(req.History)

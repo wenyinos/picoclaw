@@ -4,6 +4,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -18,6 +20,13 @@ import (
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
+
+// logSafeDigest returns a short fingerprint for debug logs without copying
+// memory text or tool arguments into log files.
+func logSafeDigest(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:8])
+}
 
 func outboundContextFromInbound(
 	inbound *bus.InboundContext,
@@ -437,15 +446,15 @@ func formatMessagesForLog(messages []providers.Message) string {
 				if tc.Function != nil {
 					fmt.Fprintf(
 						&sb,
-						"      Arguments: %s\n",
-						utils.Truncate(tc.Function.Arguments, 200),
+						"      Arguments: len=%d sha256=%s\n",
+						len(tc.Function.Arguments),
+						logSafeDigest(tc.Function.Arguments),
 					)
 				}
 			}
 		}
 		if msg.Content != "" {
-			content := utils.Truncate(msg.Content, 200)
-			fmt.Fprintf(&sb, "  Content: %s\n", content)
+			fmt.Fprintf(&sb, "  Content: len=%d sha256=%s\n", len(msg.Content), logSafeDigest(msg.Content))
 		}
 		if msg.ToolCallID != "" {
 			fmt.Fprintf(&sb, "  ToolCallID: %s\n", msg.ToolCallID)

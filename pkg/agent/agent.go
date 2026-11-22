@@ -60,6 +60,7 @@ type AgentLoop struct {
 	steering       *steeringQueue
 	pendingSkills  sync.Map
 	pendingStops   sync.Map
+	cleanupOnce    sync.Once
 	mu             sync.RWMutex
 
 	// workerSem limits concurrent turn processing workers.
@@ -151,6 +152,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	if err := al.ensureMCPInitialized(ctx); err != nil {
 		return err
 	}
+	al.cleanupOnce.Do(func() { go al.runForgetCleanup(ctx) })
 
 	idleTicker := time.NewTicker(100 * time.Millisecond)
 	defer idleTicker.Stop()

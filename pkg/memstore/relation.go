@@ -192,6 +192,18 @@ func (s *Store) LoadCapsule(
 	injectFictional bool,
 	budget int,
 ) (CapsuleResult, error) {
+	return s.LoadCapsuleFor(ctx, clusterID, channel, "", privateChannels, injectFictional, budget)
+}
+
+// LoadCapsuleFor applies the trusted chat kind to every capsule item. A
+// group/public chat never receives private or fictional capsule content.
+func (s *Store) LoadCapsuleFor(
+	ctx context.Context,
+	clusterID, channel, chatKind string,
+	privateChannels []string,
+	injectFictional bool,
+	budget int,
+) (CapsuleResult, error) {
 	clusterID = strings.TrimSpace(clusterID)
 	if clusterID == "" {
 		return CapsuleResult{}, fmt.Errorf("memstore: capsule id is required")
@@ -211,7 +223,8 @@ func (s *Store) LoadCapsule(
 	}
 	result := CapsuleResult{ID: c.ID, Title: c.Title}
 	if c.Realm == RealmFictional {
-		if !injectFictional || !channelIsPrivate(channel, privateChannels) {
+		if !injectFictional || !chatKindAllowsPrivate(chatKind) ||
+			!channelIsPrivate(channel, privateChannels) {
 			return result, nil
 		}
 	}
@@ -251,7 +264,7 @@ func (s *Store) LoadCapsule(
 		if e.Realm == RealmFictional && !injectFictional {
 			continue
 		}
-		if !audienceAllowed(e.Audience, channel, privateChannels) {
+		if !audienceAllowedForChat(e.Audience, chatKind, channel, privateChannels) {
 			continue
 		}
 		text := strings.TrimSpace(e.Text)

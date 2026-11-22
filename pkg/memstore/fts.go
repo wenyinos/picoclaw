@@ -94,8 +94,8 @@ func (s *Store) searchLike(ctx context.Context, term string, limit int, filter s
 		limit = 50
 	}
 	like := "%" + term + "%"
-	where := `status='active'
-		   AND (text LIKE ? OR value LIKE ? OR subject LIKE ? OR predicate LIKE ? OR facet LIKE ?)`
+	where := `e.status='active'
+		   AND (e.text LIKE ? OR e.value LIKE ? OR e.subject LIKE ? OR e.predicate LIKE ? OR e.facet LIKE ?)`
 	if strings.TrimSpace(filter) != "" {
 		where += ` AND ` + filter
 	}
@@ -103,9 +103,9 @@ func (s *Store) searchLike(ctx context.Context, term string, limit int, filter s
 	args = append(args, filterArgs...)
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id FROM entries
+		`SELECT e.id FROM entries e
 		 WHERE `+where+`
-		 ORDER BY importance DESC, updated_at DESC LIMIT ?`, args...)
+		 ORDER BY e.importance DESC, e.updated_at DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

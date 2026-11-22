@@ -22,6 +22,8 @@ type Store struct {
 	path           string
 	ledger         *ForgetLedger
 	ledgerPath     string
+	fresh          bool
+	ledgerErr      error
 	mu             sync.Mutex
 	revision       atomic.Int64
 	usageMu        sync.Mutex
@@ -200,7 +202,7 @@ var schemaStatements = []string{
 
 // Open opens or creates the SQLite store at path.
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("memstore: create dir: %w", err)
 	}
 	dsn := path
@@ -234,7 +236,7 @@ func Open(path string) (*Store, error) {
 			}
 		}
 	}
-	s := &Store{db: db, path: path, usage: make(map[string]int), usageLastFlush: time.Now()}
+	s := &Store{db: db, path: path, fresh: fresh, usage: make(map[string]int), usageLastFlush: time.Now()}
 	if err := s.loadRevision(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -252,13 +254,15 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	// Forgetting must be journaled before the main database changes. If the
-	// ledger cannot be opened, the memory service fails closed instead of
-	// offering destructive writes without a durable obligation.
+	// Forgetting must be journaled before the main database changes. A
+	// missing or damaged ledger on an existing v4 database is recorded as a
+	// degraded state instead of silently creating a new identity: reads stay
+	// available, while Forget and ReplayForget fail closed because s.ledger is
+	// nil. A v3 database being migrated may create its first ledger.
 	if err := s.ensureLedger(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("memstore: forget ledger: %w", err)
+		s.ledgerErr = err
 	}
+	_ = os.Chmod(path, 0o600)
 	return s, nil
 }
 
@@ -468,14 +472,17 @@ func scanEntry(row scanner) (Entry, error) {
 	return e, nil
 }
 
-// Add inserts or merges a memory after exact/near duplicate and conflict checks.
-func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
-	if err := s.checkReady(); err != nil {
-		return nil, err
-	}
-
+// prepareAddInput validates and fills write defaults shared by Add and
+// Correct. Secrets are rejected here, before any transaction starts.
+func prepareAddInput(in *AddInput) error {
 	if strings.TrimSpace(in.Text) == "" {
-		return nil, fmt.Errorf("memstore: empty text")
+		return fmt.Errorf("memstore: empty text")
+	}
+	// Secrets are a storage-level invariant, not a policy applied by one
+	// caller: tools, API handlers, extraction and imports all pass through Add.
+	if strings.TrimSpace(in.Sensitivity) == SensitivitySecret ||
+		SensitivityForText(in.Text) == SensitivitySecret {
+		return fmt.Errorf("memstore: credentials and secrets are never stored in long-term memory")
 	}
 	in.Realm = normalizeRealm(in.Realm)
 	in.Layer = normalizeLayer(in.Layer)
@@ -511,6 +518,17 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		} else {
 			in.EventTimeSource = "user_stated"
 		}
+	}
+	return nil
+}
+
+// Add inserts or merges a memory after exact/near duplicate and conflict checks.
+func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
+	if err := s.checkReady(); err != nil {
+		return nil, err
+	}
+	if err := prepareAddInput(&in); err != nil {
+		return nil, err
 	}
 	now := time.Now().UnixMilli()
 	norm := Normalize(in.Text)
@@ -646,6 +664,28 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 		return nil, err
 	}
 
+	status := writeStatus(in, pinnedBlockID)
+	e, err := buildAndInsertEntryTx(ctx, tx, in, now, status, supersededID, pinnedBlockID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.bumpRevision(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	action := "added"
+	if supersededID != "" {
+		action = "superseded"
+	}
+	if pinnedBlockID != "" {
+		action = "pending_review"
+	}
+	return &AddResult{Action: action, Entry: e, ExistingID: supersededID}, nil
+}
+
+func writeStatus(in AddInput, pinnedBlockID string) string {
 	status := strings.TrimSpace(in.ForceStatus)
 	if status == "" {
 		switch {
@@ -657,6 +697,22 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 			status = StatusActive
 		}
 	}
+	return status
+}
+
+// buildAndInsertEntryTx writes the replacement entry plus its supersede edge,
+// contradiction edge and source inside the caller's transaction. Correct uses
+// the same helper so the new version and its audit edge commit atomically.
+func buildAndInsertEntryTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	in AddInput,
+	now int64,
+	status, supersededID, pinnedBlockID string,
+) (*Entry, error) {
+	norm := Normalize(in.Text)
+	hash := ContentHash(norm)
+	sim := SimHash(norm)
 	e := Entry{
 		ID:              newID(),
 		Realm:           in.Realm,
@@ -747,20 +803,7 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	if err := insertSource(ctx, tx, e.ID, in, now); err != nil {
 		return nil, err
 	}
-	if err := s.bumpRevision(ctx, tx); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	action := "added"
-	if supersededID != "" {
-		action = "superseded"
-	}
-	if pinnedBlockID != "" {
-		action = "pending_review"
-	}
-	return &AddResult{Action: action, Entry: &e, ExistingID: supersededID}, nil
+	return &e, nil
 }
 
 // resolveSupersededID returns the entry that the new write replaces and, when
@@ -947,6 +990,10 @@ func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
 		where = append(where, "predicate=?")
 		args = append(args, opts.Predicate)
 	}
+	if opts.DomainID != "" {
+		where = append(where, "domain_id=?")
+		args = append(args, opts.DomainID)
+	}
 	if opts.Facet != "" {
 		where = append(where, "facet=?")
 		args = append(args, opts.Facet)
@@ -981,6 +1028,26 @@ func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// ExportEntries pages through List so an explicit export is not silently
+// truncated by the request-path limit (List caps at 500). It is for CLI/API
+// export only, not for prompt retrieval.
+func (s *Store) ExportEntries(ctx context.Context, opts SearchOptions) ([]Entry, error) {
+	const pageSize = 500
+	var out []Entry
+	for {
+		opts.Limit = pageSize
+		opts.Offset = len(out)
+		page, err := s.List(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < pageSize {
+			return out, nil
+		}
+	}
 }
 
 // Update applies editable metadata to an entry. Content changes go through
@@ -1119,6 +1186,12 @@ func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, err
 	if _, err := tx.ExecContext(ctx, `UPDATE entries SET `+strings.Join(sets, ",")+` WHERE id=?`, args...); err != nil {
 		return nil, err
 	}
+	if textChanged || in.Audience != "" || in.Scope != "" || in.ForceStatus != "" ||
+		in.Realm != "" || in.Layer != "" {
+		if err := s.invalidateSummariesForEntryTx(ctx, tx, id, "update"); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.bumpRevision(ctx, tx); err != nil {
 		return nil, err
 	}
@@ -1141,8 +1214,15 @@ func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE entries SET status=?, updated_at=? WHERE id=?`, status, time.Now().UnixMilli(), id); err != nil {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE entries SET status=?, updated_at=? WHERE id=?`, status, time.Now().UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("memstore: entry %q not found", id)
+	}
+	if err := s.invalidateSummariesForEntryTx(ctx, tx, id, "status"); err != nil {
 		return err
 	}
 	if err := s.bumpRevision(ctx, tx); err != nil {

@@ -4,9 +4,28 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
+
+// chatKindFromType maps the host-provided chat type to the memory permission
+// vocabulary. Unknown types stay empty (private-compatible maintenance view).
+func chatKindFromType(in *bus.InboundContext) string {
+	if in == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(in.ChatType)) {
+	case "group":
+		return "group"
+	case "channel", "public":
+		return "public"
+	case "direct", "private":
+		return "private"
+	default:
+		return ""
+	}
+}
 
 func promptBuildRequestForTurn(
 	ts *turnState,
@@ -23,6 +42,7 @@ func promptBuildRequestForTurn(
 		Media:             append([]string(nil), media...),
 		Channel:           ts.channel,
 		ChatID:            ts.chatID,
+		ChatKind:          chatKindFromType(ts.opts.Dispatch.InboundContext),
 		SenderID:          ts.opts.Dispatch.SenderID(),
 		SenderDisplayName: ts.opts.SenderDisplayName,
 		ActiveSkills:      activeSkillNames(ts.agent, ts.opts),
@@ -86,6 +106,7 @@ func promptBuildRequestForProcessOptions(
 		Media:             append([]string(nil), media...),
 		Channel:           opts.Channel,
 		ChatID:            opts.ChatID,
+		ChatKind:          chatKindFromType(opts.InboundContext),
 		SenderID:          opts.SenderID,
 		SenderDisplayName: opts.SenderDisplayName,
 		ActiveSkills:      activeSkillNames(agent, opts),

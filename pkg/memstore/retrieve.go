@@ -62,35 +62,35 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		status = StatusActive
 	}
 	if !strings.EqualFold(status, "all") {
-		where = append(where, "status=?")
+		where = append(where, "e.status=?")
 		args = append(args, status)
 	}
 	if opts.Realm != "" {
-		where = append(where, "realm=?")
+		where = append(where, "e.realm=?")
 		args = append(args, opts.Realm)
 	} else if !admin && !opts.IncludeFic {
-		where = append(where, "realm IN ('real','work')")
+		where = append(where, "e.realm IN ('real','work')")
 	}
 	if opts.Layer != "" {
-		where = append(where, "layer=?")
+		where = append(where, "e.layer=?")
 		args = append(args, opts.Layer)
 	} else if !admin && !opts.AllLayers {
-		where = append(where, "layer IN ('relationship','episodic','procedural')")
+		where = append(where, "e.layer IN ('relationship','episodic','procedural')")
 	}
 	if opts.Predicate != "" {
-		where = append(where, "predicate=?")
+		where = append(where, "e.predicate=?")
 		args = append(args, opts.Predicate)
 	}
 	if opts.Facet != "" {
-		where = append(where, "facet=?")
+		where = append(where, "e.facet=?")
 		args = append(args, opts.Facet)
 	}
 	if opts.Scope != "" {
-		where = append(where, "scope=?")
+		where = append(where, "e.scope=?")
 		args = append(args, opts.Scope)
 	}
 	if opts.Audience != "" {
-		where = append(where, "audience=?")
+		where = append(where, "e.audience=?")
 		args = append(args, opts.Audience)
 	}
 	if !admin {
@@ -100,7 +100,7 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		if domainID == "" {
 			domainID = DomainLegacyUnassigned
 		}
-		where = append(where, "domain_id=?")
+		where = append(where, "e.domain_id=?")
 		args = append(args, domainID)
 
 		audience, audienceArgs := audienceSQLFor(opts.ChatKindHint, opts.Channel, opts.PrivateChannelExclusions)
@@ -116,7 +116,7 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 	// Channel 1: anchor. Visible rows are selected in SQL first; the limit is
 	// a scan guard, not a visibility cut.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+entryColumns+` FROM entries WHERE `+base+` ORDER BY updated_at DESC LIMIT 800`, args...)
+		`SELECT `+entryColumns+` FROM entries e WHERE `+base+` ORDER BY e.updated_at DESC LIMIT 800`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		match, likeTerms := buildFTSQuery(opts.Query)
 		ftsHits := 0
 		if match != "" && s.ftsTableExists(ctx) {
-			hits, err := s.searchFTS(ctx, opts.Query, 100, "", nil)
+			hits, err := s.searchFTS(ctx, opts.Query, 100, base, args)
 			if err == nil {
 				ftsHits = len(hits)
 				for _, hit := range hits {
@@ -157,7 +157,7 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		// visible rows.
 		if len(likeTerms) > 0 || ftsHits < 5 {
 			for _, term := range likeTerms {
-				ids, err := s.searchLike(ctx, term, 100, "", nil)
+				ids, err := s.searchLike(ctx, term, 100, base, args)
 				if err != nil {
 					return nil, err
 				}
@@ -176,10 +176,10 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		if hint := ParseRelativeTime(opts.Query, time.Now(), time.Local); hint != nil {
 			from, to := hintRange(hint)
 			if from != 0 && to > from {
-				tq := `SELECT ` + entryColumns + ` FROM entries WHERE ` + base + ` AND (
-					(event_at IS NOT NULL AND event_at >= ? AND event_at < ?)
-					OR (event_start IS NOT NULL AND event_start < ? AND COALESCE(event_end, ?) > ?)
-					OR (valid_from IS NOT NULL AND valid_from < ? AND COALESCE(valid_to, ?) > ?))`
+				tq := `SELECT ` + entryColumns + ` FROM entries e WHERE ` + base + ` AND (
+					(e.event_at IS NOT NULL AND e.event_at >= ? AND e.event_at < ?)
+					OR (e.event_start IS NOT NULL AND e.event_start < ? AND COALESCE(e.event_end, ?) > ?)
+					OR (e.valid_from IS NOT NULL AND e.valid_from < ? AND COALESCE(e.valid_to, ?) > ?))`
 				targs := append(append([]any{}, args...), from, to, to, to, from, to, to, from)
 				trows, err := s.db.QueryContext(ctx, tq, targs...)
 				if err == nil {
@@ -243,7 +243,7 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 
 func (s *Store) loadOne(ctx context.Context, id, base string, args []any) (*Entry, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT `+entryColumns+` FROM entries WHERE id=? AND `+base, append([]any{id}, args...)...)
+		`SELECT `+entryColumns+` FROM entries e WHERE e.id=? AND `+base, append([]any{id}, args...)...)
 	e, err := scanEntry(row)
 	if err != nil {
 		return nil, err
@@ -348,15 +348,27 @@ func dedupeScored(in []scoredEntry) []scoredEntry {
 	return out
 }
 
-// BuildFixedContext renders persona, relationship, profile and boundary blocks
-// and returns the real token usage. Relationship and private profile entries
-// are only included for channels in privateChannels; pass an empty channel for
-// an unfiltered administrative view.
+// BuildFixedContext renders the fixed blocks for a private-chat caller. It is
+// kept for CLI/tests; request paths must pass the trusted chat kind through
+// BuildFixedContextFor so a group chat cannot inherit private blocks.
 func (s *Store) BuildFixedContext(
 	ctx context.Context,
 	budget int,
 	injectFictional bool,
 	channel string,
+	privateChannels []string,
+) (string, FixedUsage) {
+	return s.BuildFixedContextFor(ctx, budget, injectFictional, channel, "", privateChannels)
+}
+
+// BuildFixedContextFor renders persona, relationship, profile and boundary
+// blocks and returns the real token usage. Group/public chat kinds only receive
+// audience ""/"all" content; relationship state is omitted entirely.
+func (s *Store) BuildFixedContextFor(
+	ctx context.Context,
+	budget int,
+	injectFictional bool,
+	channel, chatKind string,
 	privateChannels []string,
 ) (string, FixedUsage) {
 	var usage FixedUsage
@@ -367,22 +379,29 @@ func (s *Store) BuildFixedContext(
 		budget = 600
 	}
 	var parts []string
-	if persona, err := s.GetActivePersonaForChannel(ctx, channel, privateChannels, injectFictional); err == nil && persona != nil {
+	if persona, err := s.GetActivePersonaForChat(ctx, channel, chatKind, privateChannels, injectFictional); err == nil && persona != nil {
 		parts = append(parts, "## 角色设定\n"+strings.TrimSpace(persona.Content))
 	}
-	includeRelationship := channel == "" || channelIsPrivate(channel, privateChannels)
+	includeRelationship := chatKindAllowsPrivate(chatKind) &&
+		(channel == "" || channelIsPrivate(channel, privateChannels))
 	if includeRelationship {
 		if rel, err := s.GetRelationship(ctx); err == nil && len(rel) > 0 {
 			var b strings.Builder
 			b.WriteString("## 关系状态")
 			for _, r := range rel {
+				if !audienceAllowedForChat(r.Audience, chatKind, channel, privateChannels) {
+					continue
+				}
 				b.WriteString("\n- " + r.Key + ": " + r.Value)
 			}
-			parts = append(parts, b.String())
+			if b.Len() > len("## 关系状态") {
+				parts = append(parts, b.String())
+			}
 		}
 	}
 	profile, _ := s.List(ctx, SearchOptions{
 		Status: StatusActive, Layer: LayerProfile, Limit: 40,
+		DomainID: DomainLegacyUnassigned,
 	})
 	now := s.now()
 	var profileLines []string
@@ -395,7 +414,7 @@ func (s *Store) BuildFixedContext(
 		if e.Realm == RealmFictional && !injectFictional {
 			continue
 		}
-		if !audienceAllowed(e.Audience, channel, privateChannels) {
+		if !audienceAllowedForChat(e.Audience, chatKind, channel, privateChannels) {
 			continue
 		}
 		profileLines = append(profileLines, "- "+strings.TrimSpace(e.Text))
@@ -416,6 +435,7 @@ func (s *Store) BuildFixedContext(
 	usage.BoundaryBudget = boundaryBudget
 	boundaries, _ := s.List(ctx, SearchOptions{
 		Status: StatusActive, Layer: LayerBoundary, Limit: 30,
+		DomainID: DomainLegacyUnassigned,
 	})
 	sort.SliceStable(boundaries, func(i, j int) bool {
 		if boundaries[i].PinnedCore != boundaries[j].PinnedCore {
@@ -431,7 +451,7 @@ func (s *Store) BuildFixedContext(
 		if e.Realm == RealmFictional && !injectFictional {
 			continue
 		}
-		if !audienceAllowed(e.Audience, channel, privateChannels) {
+		if !audienceAllowedForChat(e.Audience, chatKind, channel, privateChannels) {
 			continue
 		}
 		line := "\n- " + strings.TrimSpace(e.Text)
@@ -462,12 +482,24 @@ func (s *Store) BuildFixedContext(
 	return base + "\n\n" + boundaryText, usage
 }
 
-// BuildRetrievalContext renders query-relevant relationship, episodic and
-// procedural memories, plus one-hop related memories. Relationship entries are
-// capped so they cannot crowd out event/procedure memories.
+// BuildRetrievalContext renders the retrieval block for a private-chat caller.
+// Request paths must use BuildRetrievalContextFor with the trusted chat kind.
 func (s *Store) BuildRetrievalContext(
 	ctx context.Context,
 	query, channel string,
+	budget int,
+	injectFictional bool,
+	privateChannels []string,
+) string {
+	return s.BuildRetrievalContextFor(ctx, query, channel, "", budget, injectFictional, privateChannels)
+}
+
+// BuildRetrievalContextFor renders query-relevant relationship, episodic and
+// procedural memories, plus one-hop related memories. Relationship entries are
+// capped so they cannot crowd out event/procedure memories.
+func (s *Store) BuildRetrievalContextFor(
+	ctx context.Context,
+	query, channel, chatKind string,
 	budget int,
 	injectFictional bool,
 	privateChannels []string,
@@ -481,6 +513,8 @@ func (s *Store) BuildRetrievalContext(
 	opts := SearchOptions{
 		Query: query, Channel: channel, Limit: 200, IncludeFic: injectFictional,
 		PrivateChannelExclusions: privateChannels,
+		ChatKindHint:             chatKind,
+		DomainID:                 DomainLegacyUnassigned,
 	}
 	entries, err := s.Search(ctx, opts)
 	if err != nil {
@@ -642,18 +676,39 @@ func audienceAllowed(audience, channel string, privateExclusions []string) bool 
 	return false
 }
 
+// chatKindAllowsPrivate reports whether a trusted chat kind may read private
+// content. Empty keeps CLI/maintenance compatibility; group and public never do.
+func chatKindAllowsPrivate(chatKind string) bool {
+	switch strings.ToLower(strings.TrimSpace(chatKind)) {
+	case ChatKindGroup, ChatKindPublic:
+		return false
+	default:
+		return true
+	}
+}
+
+// audienceAllowedForChat is audienceAllowed with the chat kind applied first:
+// a group/public chat only sees audience ""/"all", even on a private channel.
+func audienceAllowedForChat(audience, chatKind, channel string, privateExclusions []string) bool {
+	if !chatKindAllowsPrivate(chatKind) {
+		a := strings.TrimSpace(audience)
+		return a == "" || a == "all"
+	}
+	return audienceAllowed(audience, channel, privateExclusions)
+}
+
 // audienceSQL is the SQL twin of audienceAllowed. It runs inside every
 // retrieval query so LIMIT counts visible rows (B07). Unknown audience values
 // fail closed: a typo must not expose a private memory.
 func audienceSQL(channel string, privateExclusions []string) (string, []any) {
 	channel = strings.TrimSpace(channel)
 	if channel == "" {
-		return `(audience IN ('','all'))`, nil
+		return `(e.audience IN ('','all'))`, nil
 	}
 	if channelIsPrivate(channel, privateExclusions) {
-		return `(audience IN ('','all','private') OR audience = ?)`, []any{"channel:" + channel}
+		return `(e.audience IN ('','all','private') OR e.audience = ?)`, []any{"channel:" + channel}
 	}
-	return `(audience IN ('','all') OR audience = ?)`, []any{"channel:" + channel}
+	return `(e.audience IN ('','all') OR e.audience = ?)`, []any{"channel:" + channel}
 }
 
 // audienceSQLFor additionally respects the chat kind: a group or public chat
@@ -661,7 +716,7 @@ func audienceSQL(channel string, privateExclusions []string) (string, []any) {
 func audienceSQLFor(chatKind, channel string, privateExclusions []string) (string, []any) {
 	switch chatKind {
 	case ChatKindGroup, ChatKindPublic:
-		return `(audience IN ('','all'))`, nil
+		return `(e.audience IN ('','all'))`, nil
 	}
 	return audienceSQL(channel, privateExclusions)
 }

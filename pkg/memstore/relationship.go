@@ -244,6 +244,18 @@ func (s *Store) GetActivePersonaForChannel(
 	privateChannels []string,
 	injectFictional bool,
 ) (*Persona, error) {
+	return s.GetActivePersonaForChat(ctx, channel, "", privateChannels, injectFictional)
+}
+
+// GetActivePersonaForChat applies the trusted chat kind before the persona
+// audience check, so a group chat cannot inherit a private persona even on a
+// channel that is normally private.
+func (s *Store) GetActivePersonaForChat(
+	ctx context.Context,
+	channel, chatKind string,
+	privateChannels []string,
+	injectFictional bool,
+) (*Persona, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id,name,version,content,active,realm,audience,scope,created_at
 		 FROM personas WHERE active=1 ORDER BY created_at DESC, version DESC`)
@@ -259,7 +271,7 @@ func (s *Store) GetActivePersonaForChannel(
 		if p.Realm == RealmFictional && !injectFictional {
 			continue
 		}
-		if !audienceAllowed(p.Audience, channel, privateChannels) {
+		if !audienceAllowedForChat(p.Audience, chatKind, channel, privateChannels) {
 			continue
 		}
 		return &p, nil

@@ -901,7 +901,7 @@ func (h *Handler) handleMemoryExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	entries, err := store.List(r.Context(), memstore.SearchOptions{Limit: 10000})
+	entries, err := store.ExportEntries(r.Context(), memstore.SearchOptions{})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -75,6 +75,7 @@ func (svc *MemoryService) Search(ctx context.Context, mc MemoryContext, opts Sea
 	}
 	opts.DomainID = mc.DomainID
 	opts.Channel = firstNonEmpty(opts.Channel, mc.Channel)
+	opts.ChatKindHint = mc.ChatKind
 	if len(opts.PrivateChannelExclusions) == 0 {
 		opts.PrivateChannelExclusions = svc.cfg.PrivateChannelExclusions
 	}
@@ -100,12 +101,15 @@ func (svc *MemoryService) Get(ctx context.Context, mc MemoryContext, id string) 
 	if !EntryVisible(*e, mc.Channel, svc.cfg.PrivateChannelExclusions) {
 		return nil, fmt.Errorf("memstore: memory not found")
 	}
+	if !audienceAllowedForChat(e.Audience, mc.ChatKind, mc.Channel, svc.cfg.PrivateChannelExclusions) {
+		return nil, fmt.Errorf("memstore: memory not found")
+	}
 	return e, nil
 }
 
 // Confirm records a user confirmation event.
 func (svc *MemoryService) Confirm(ctx context.Context, mc MemoryContext, id, evidence string) error {
-	mc, err := svc.authorizeRead(mc)
+	mc, err := svc.authorizeWrite(mc, "")
 	if err != nil {
 		return err
 	}
@@ -128,13 +132,40 @@ func (svc *MemoryService) Correct(ctx context.Context, mc MemoryContext, id stri
 	if old.DomainID != "" && old.DomainID != mc.DomainID {
 		return nil, fmt.Errorf("memstore: memory not found")
 	}
+	in.DomainID = mc.DomainID
 	return svc.store.Correct(ctx, id, in)
+}
+
+// SetStatus changes a memory's lifecycle status through the governed write
+// path. Shared chats cannot archive or restore personal memories.
+func (svc *MemoryService) SetStatus(ctx context.Context, mc MemoryContext, id, status string) error {
+	mc, err := svc.authorizeWrite(mc, "")
+	if err != nil {
+		return err
+	}
+	if err := svc.requireTarget(ctx, mc, id); err != nil {
+		return err
+	}
+	return svc.store.SetStatus(ctx, id, status)
+}
+
+// SetRelationshipState updates one derived relationship attribute. It is a
+// write: group/public chats are rejected before the store is touched.
+func (svc *MemoryService) SetRelationshipState(ctx context.Context, mc MemoryContext, update RelationshipUpdate) error {
+	mc, err := svc.authorizeWrite(mc, "")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(update.DomainID) == "" {
+		update.DomainID = mc.DomainID
+	}
+	return svc.store.SetRelationshipFull(ctx, update)
 }
 
 // Forget executes or previews a permanent erase. Owner approval is the
 // caller's responsibility (dashboard auth or CLI maintenance mode).
 func (svc *MemoryService) Forget(ctx context.Context, mc MemoryContext, id string, dryRun bool) (*ForgetPreview, error) {
-	mc, err := svc.authorizeRead(mc)
+	mc, err := svc.authorizeWrite(mc, "")
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +205,7 @@ type ChangePlan struct {
 
 // CreateChangePlan previews an action and stores it as a pending plan.
 func (svc *MemoryService) CreateChangePlan(ctx context.Context, mc MemoryContext, action, targetID string, payload any) (*ChangePlan, error) {
-	mc, err := svc.authorizeRead(mc)
+	mc, err := svc.authorizeWrite(mc, "")
 	if err != nil {
 		return nil, err
 	}
@@ -183,12 +214,22 @@ func (svc *MemoryService) CreateChangePlan(ctx context.Context, mc MemoryContext
 	default:
 		return nil, fmt.Errorf("memstore: unsupported plan action %q", action)
 	}
-	target, err := svc.store.Get(ctx, targetID)
-	if err != nil {
-		return nil, fmt.Errorf("memstore: target not found")
-	}
-	if target.DomainID != "" && target.DomainID != mc.DomainID {
-		return nil, fmt.Errorf("memstore: target not found")
+	var expectedRevision int64
+	targetKind := "entry"
+	if action == "set_relationship" {
+		if strings.TrimSpace(targetID) == "" {
+			return nil, fmt.Errorf("memstore: relationship plans need a key")
+		}
+		targetKind = "relationship"
+	} else {
+		target, err := svc.store.Get(ctx, targetID)
+		if err != nil {
+			return nil, fmt.Errorf("memstore: target not found")
+		}
+		if target.DomainID != "" && target.DomainID != mc.DomainID {
+			return nil, fmt.Errorf("memstore: target not found")
+		}
+		expectedRevision = target.RowRevision
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -198,9 +239,9 @@ func (svc *MemoryService) CreateChangePlan(ctx context.Context, mc MemoryContext
 	plan := &ChangePlan{
 		PlanID:           "plan_" + randomUUID()[:12],
 		Action:           action,
-		TargetKind:       "entry",
+		TargetKind:       targetKind,
 		TargetID:         targetID,
-		ExpectedRevision: target.RowRevision,
+		ExpectedRevision: expectedRevision,
 		ParamsDigest:     ContentHash(Normalize(string(raw))),
 		Payload:          string(raw),
 		Status:           "pending",
@@ -252,7 +293,8 @@ func (svc *MemoryService) GetChangePlan(ctx context.Context, planID string) (*Ch
 // ApproveChangePlan executes a pending plan after re-validating the target
 // revision. Stale plans return a conflict instead of overwriting newer data.
 func (svc *MemoryService) ApproveChangePlan(ctx context.Context, mc MemoryContext, planID, approver string) (*ChangePlan, error) {
-	if mc.Normalize().ChatKind != ChatKindAdmin {
+	mc = mc.Normalize()
+	if mc.ChatKind != ChatKindAdmin {
 		return nil, fmt.Errorf("memstore: plan approval requires the dashboard/admin context")
 	}
 	p, err := svc.GetChangePlan(ctx, planID)
@@ -268,39 +310,77 @@ func (svc *MemoryService) ApproveChangePlan(ctx context.Context, mc MemoryContex
 			`UPDATE memory_change_plans SET status='expired' WHERE plan_id=?`, planID)
 		return nil, fmt.Errorf("memstore: plan %q expired; create a new preview", planID)
 	}
-	target, err := svc.store.Get(ctx, p.TargetID)
-	if err != nil {
-		return nil, fmt.Errorf("memstore: target no longer exists")
+	if p.Action != "set_relationship" {
+		target, err := svc.store.Get(ctx, p.TargetID)
+		if err != nil {
+			return nil, fmt.Errorf("memstore: target no longer exists")
+		}
+		if target.RowRevision != p.ExpectedRevision {
+			return nil, fmt.Errorf("memstore: target changed since preview (revision %d != %d)",
+				target.RowRevision, p.ExpectedRevision)
+		}
 	}
-	if target.RowRevision != p.ExpectedRevision {
-		return nil, fmt.Errorf("memstore: target changed since preview (revision %d != %d)",
-			target.RowRevision, p.ExpectedRevision)
+
+	// Claim the plan atomically before any side effect. A repeated approval
+	// cannot execute the action twice, even when the final status write fails.
+	res, err := svc.store.db.ExecContext(ctx,
+		`UPDATE memory_change_plans SET status='executing' WHERE plan_id=? AND status='pending'`, planID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("memstore: plan %q was already claimed", planID)
 	}
 
 	switch p.Action {
 	case "forget":
 		if _, err := svc.store.Forget(ctx, p.TargetID, false); err != nil {
+			svc.markPlanFailed(ctx, planID, err)
 			return nil, err
 		}
 	case "confirm":
 		if err := svc.store.Confirm(ctx, p.TargetID, "plan approval"); err != nil {
+			svc.markPlanFailed(ctx, planID, err)
 			return nil, err
 		}
 	case "correct":
 		var in AddInput
 		if err := json.Unmarshal([]byte(p.Payload), &in); err != nil {
+			svc.markPlanFailed(ctx, planID, err)
 			return nil, err
 		}
 		if _, err := svc.store.Correct(ctx, p.TargetID, in); err != nil {
+			svc.markPlanFailed(ctx, planID, err)
 			return nil, err
 		}
 	case "reassign_audience":
 		var in AddInput
 		if err := json.Unmarshal([]byte(p.Payload), &in); err != nil {
+			svc.markPlanFailed(ctx, planID, err)
+			return nil, err
+		}
+		target, err := svc.store.Get(ctx, p.TargetID)
+		if err != nil {
+			svc.markPlanFailed(ctx, planID, err)
 			return nil, err
 		}
 		in.Force = in.Force || target.PinnedCore
 		if _, err := svc.store.Update(ctx, p.TargetID, in); err != nil {
+			svc.markPlanFailed(ctx, planID, err)
+			return nil, err
+		}
+	case "set_relationship":
+		var u RelationshipUpdate
+		if err := json.Unmarshal([]byte(p.Payload), &u); err != nil {
+			svc.markPlanFailed(ctx, planID, err)
+			return nil, err
+		}
+		if strings.TrimSpace(u.Key) == "" {
+			u.Key = p.TargetID
+		}
+		u.DomainID = mc.DomainID
+		if err := svc.store.SetRelationshipFull(ctx, u); err != nil {
+			svc.markPlanFailed(ctx, planID, err)
 			return nil, err
 		}
 	}
@@ -313,6 +393,11 @@ func (svc *MemoryService) ApproveChangePlan(ctx context.Context, mc MemoryContex
 		return nil, err
 	}
 	return svc.GetChangePlan(ctx, planID)
+}
+
+func (svc *MemoryService) markPlanFailed(ctx context.Context, planID string, cause error) {
+	_, _ = svc.store.db.ExecContext(ctx,
+		`UPDATE memory_change_plans SET status='failed' WHERE plan_id=? AND status='executing'`, planID)
 }
 
 // ListChangePlans lists plans by status for the dashboard inbox.

@@ -158,6 +158,22 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("memory store unavailable: %v", err))
 	}
+	// Every model tool call goes through the governed service with the trusted
+	// request context. The model cannot self-approve, widen the domain or write
+	// personal memory from a group chat.
+	mc := memstore.MemoryContext{
+		DomainID:   memstore.DomainLegacyUnassigned,
+		ChatKind:   toolshared.ToolChatKind(ctx),
+		Channel:    toolshared.ToolChannel(ctx),
+		SessionKey: toolshared.ToolSessionKey(ctx),
+		Purpose:    "chat",
+	}
+	svc := memstore.NewMemoryService(store, memstore.Config{
+		Enabled:                  true,
+		DBPath:                   t.dbPath,
+		ReviewRequired:           t.reviewRequired,
+		PrivateChannelExclusions: append([]string(nil), t.privateExclusions...),
+	})
 
 	switch action {
 	case "add":
@@ -181,7 +197,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		supersedesID, _ := args["supersedes_id"].(string)
 		emotionalWeight, _ := args["emotional_weight"].(float64)
 		valence, _ := args["valence"].(float64)
-		res, err := store.Add(ctx, memstore.AddInput{
+		res, err := svc.Add(ctx, mc, memstore.AddInput{
 			Text: text, Realm: realm, Layer: layer, Importance: importance,
 			Subject: subject, Predicate: predicate, Facet: facet, Value: value,
 			SupersedesID: supersedesID, EmotionalWeight: emotionalWeight, Valence: valence,
@@ -216,12 +232,10 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if strings.TrimSpace(channel) == "" {
 			return ErrorResult("memory search needs a trusted channel context")
 		}
-		entries, err := store.Search(ctx, memstore.SearchOptions{
+		entries, err := svc.Search(ctx, mc, memstore.SearchOptions{
 			Query: query, Realm: realm, Layer: layer, Predicate: predicate,
 			Facet: facet, Status: status, Limit: 20,
-			Channel: channel, PrivateChannelExclusions: t.privateExclusions,
-			DomainID: memstore.DomainLegacyUnassigned, AllLayers: true,
-			IncludeFic: t.injectFictional,
+			AllLayers: true, IncludeFic: t.injectFictional,
 		})
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory search failed: %v", err))
@@ -248,14 +262,16 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if strings.TrimSpace(id) == "" {
 			return ErrorResult("id is required for action=inspect")
 		}
+		if strings.TrimSpace(toolshared.ToolChannel(ctx)) == "" {
+			return ErrorResult("memory inspect needs a trusted channel context")
+		}
+		if _, err := svc.Get(ctx, mc, id); err != nil {
+			// Same message for "missing" and "not visible": no enumeration.
+			return ErrorResult("memory not found")
+		}
 		res, err := store.Inspect(ctx, id)
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory inspect failed: %v", err))
-		}
-		channel := toolshared.ToolChannel(ctx)
-		if strings.TrimSpace(channel) == "" || !memstore.EntryVisible(res.Entry, channel, t.privateExclusions) {
-			// Same message for "missing" and "not visible": no enumeration.
-			return ErrorResult("memory not found")
 		}
 		return SilentResult(formatInspect(res))
 
@@ -265,7 +281,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if strings.TrimSpace(id) == "" {
 			return ErrorResult("id is required for action=confirm")
 		}
-		if err := store.Confirm(ctx, id, evidence); err != nil {
+		if err := svc.Confirm(ctx, mc, id, evidence); err != nil {
 			return ErrorResult(fmt.Sprintf("memory confirm failed: %v", err))
 		}
 		return SilentResult("memory confirmed: " + id)
@@ -282,7 +298,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		predicate, _ := args["predicate"].(string)
 		facet, _ := args["facet"].(string)
 		value, _ := args["value"].(string)
-		res, err := store.Correct(ctx, id, memstore.AddInput{
+		res, err := svc.Correct(ctx, mc, id, memstore.AddInput{
 			Text: text, Realm: realm, Layer: layer, Predicate: predicate, Facet: facet,
 			Value: value, Force: force, SourceType: memstore.SourceManual, EvidenceText: text,
 		})
@@ -303,7 +319,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if action == "restore" {
 			status = memstore.StatusActive
 		}
-		if err := store.SetStatus(ctx, id, status); err != nil {
+		if err := svc.SetStatus(ctx, mc, id, status); err != nil {
 			return ErrorResult(fmt.Sprintf("memory %s failed: %v", action, err))
 		}
 		return SilentResult(fmt.Sprintf("memory %s: %s", action, id))
@@ -316,7 +332,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		// Permanent forget is an owner decision. The model may only preview
 		// the impact; a model-requested erase must be approved by the host
 		// through the dashboard or CLI (FR-05).
-		preview, err := store.Forget(ctx, id, true)
+		preview, err := svc.Forget(ctx, mc, id, true)
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory forget preview failed: %v", err))
 		}
@@ -346,7 +362,8 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if strings.TrimSpace(channel) == "" {
 			return ErrorResult("memory load_capsule needs a trusted channel context")
 		}
-		capsule, err := store.LoadCapsule(ctx, clusterID, channel, t.privateExclusions, t.injectFictional, 1200)
+		capsule, err := store.LoadCapsuleFor(ctx, clusterID, channel,
+			toolshared.ToolChatKind(ctx), t.privateExclusions, t.injectFictional, 1200)
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory load_capsule failed: %v", err))
 		}
@@ -370,7 +387,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 			v := time.Now().Add(time.Duration(ttl * float64(time.Second))).UnixMilli()
 			expires = &v
 		}
-		if err := store.SetRelationshipFull(ctx, memstore.RelationshipUpdate{
+		if err := svc.SetRelationshipState(ctx, mc, memstore.RelationshipUpdate{
 			Key: key, Value: value, Confidence: 0.9, ExpiresAt: expires,
 			DomainID: memstore.DomainLegacyUnassigned,
 			Realm:    memstore.RealmReal, Audience: "private",

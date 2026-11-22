@@ -67,8 +67,8 @@ func TestForgetQueuesCleanupJob(t *testing.T) {
 }
 
 // TestCleanupJobWithoutLocatorReportsPartial verifies the honest boundary:
-// a forget with nothing locatable completes with a partial note, never a
-// fake "removed" count.
+// a forget with nothing locatable is parked as blocked with a partial note,
+// never reported as a completed erase.
 func TestCleanupJobWithoutLocatorReportsPartial(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -89,5 +89,12 @@ func TestCleanupJobWithoutLocatorReportsPartial(t *testing.T) {
 	}
 	if outcome.Removed != 0 || len(outcome.Details) == 0 {
 		t.Fatalf("expected partial note, got %+v", outcome)
+	}
+	blocked, err := s.ListJobs(ctx, JobBlocked, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked) != 1 {
+		t.Fatalf("partial cleanup job must be blocked, got %+v", blocked)
 	}
 }

@@ -50,6 +50,9 @@ func (s *Store) CreateCommitment(ctx context.Context, c Commitment) (*Commitment
 	if !validCommitmentStatus(c.Status) {
 		return nil, fmt.Errorf("memstore: invalid commitment status %q", c.Status)
 	}
+	if c.Status == CommitmentFulfilled || c.Status == CommitmentCancelled {
+		return nil, fmt.Errorf("memstore: a commitment cannot be created in a terminal state")
+	}
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()

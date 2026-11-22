@@ -297,6 +297,16 @@ func (p *Pipeline) CallLLM(
 			}
 			return fbResult.Response, nil
 		}
+		// The single-provider branch is also a real send point. Without this
+		// check, a deployment without fallbacks bypassed the recipient policy.
+		if err := p.checkActiveCandidateEgress(exec); err != nil {
+			return nil, err
+		}
+		if len(exec.activeCandidates) == 0 && exec.activeModelConfig != nil {
+			if err := p.checkMemoryEgress(exec.activeModelConfig.Provider, exec.llmModel); err != nil {
+				return nil, err
+			}
+		}
 		return exec.activeProvider.Chat(providerCtx, messagesForCall, toolDefsForCall, exec.llmModel, exec.llmOpts)
 	}
 

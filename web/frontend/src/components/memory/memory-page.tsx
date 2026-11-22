@@ -1160,13 +1160,13 @@ function MigrationTab({
         <h3 className="text-sm font-semibold">迁移后建议</h3>
         <ul className="text-muted-foreground mt-2 list-disc space-y-1 pl-5 text-sm">
           <li>
-            旧条目进入隔离域 legacy_unassigned；认领前只用于审计，不会被当作已授权画像注入。
+            旧条目进入隔离域 legacy_unassigned；在认领或迁移到新域前，提示词检索默认读取该隔离域，仍可能被注入。
           </li>
           <li>
-            forget-ledger.db 与 memory.db 同目录，必须一起备份；账本丢失时遗忘操作会故障关闭。
+            forget-ledger.db 与 memory.db 同目录，备份会同时保存两者；账本缺失或身份损坏时永久遗忘会故障关闭，不会静默新建。
           </li>
           <li>v1/v2 数据库不会被就地升级，先用 0.6.x 打开一次升到 v3。</li>
-          <li>迁移可重复执行；每次都会先生成新的 VACUUM INTO 备份，第二次运行零变更。</li>
+          <li>迁移可重复执行；需要迁移时会生成 VACUUM INTO 主库与账本备份，重复执行零变更。</li>
         </ul>
       </div>
     </div>

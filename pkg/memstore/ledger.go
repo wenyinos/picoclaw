@@ -70,6 +70,23 @@ func LedgerPathFor(dbPath string) string {
 // OpenForgetLedger opens or creates the independent ledger. The HMAC key is
 // generated once, stored in the ledger, and never leaves the host.
 func OpenForgetLedger(path string) (*ForgetLedger, error) {
+	return openForgetLedger(path, true)
+}
+
+// OpenExistingForgetLedger opens a ledger that must already exist and carry a
+// complete identity. A missing or damaged ledger is an error: silently creating
+// a new empty identity would invalidate every historical HMAC selector.
+func OpenExistingForgetLedger(path string) (*ForgetLedger, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("memstore: empty ledger path")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("memstore: forget ledger missing: %w", err)
+	}
+	return openForgetLedger(path, false)
+}
+
+func openForgetLedger(path string, allowCreate bool) (*ForgetLedger, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("memstore: empty ledger path")
 	}
@@ -121,14 +138,14 @@ func OpenForgetLedger(path string) (*ForgetLedger, error) {
 	_ = os.Chmod(path, 0o600)
 
 	l := &ForgetLedger{db: db, path: path}
-	if err := l.loadOrCreateIdentity(); err != nil {
+	if err := l.loadOrCreateIdentity(allowCreate); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return l, nil
 }
 
-func (l *ForgetLedger) loadOrCreateIdentity() error {
+func (l *ForgetLedger) loadOrCreateIdentity(allowCreate bool) error {
 	uuid, err := l.meta("ledger_uuid")
 	if err != nil {
 		return err
@@ -147,9 +164,21 @@ func (l *ForgetLedger) loadOrCreateIdentity() error {
 			l.uuid, l.keyID, l.key = uuid, keyID, key
 			return nil
 		}
+		return fmt.Errorf("memstore: forget ledger identity is corrupt (unreadable HMAC key); restore the ledger backup")
 	}
-	// First use, or an unreadable key: issue a fresh identity and record it.
-	// A corrupted ledger never silently reuses a partial key.
+	if uuid != "" || keyB64 != "" || keyID != "" {
+		return fmt.Errorf("memstore: forget ledger identity is incomplete; restore the ledger backup")
+	}
+	var journalRows int
+	if err := l.db.QueryRow(`SELECT COUNT(*) FROM forget_journal`).Scan(&journalRows); err != nil {
+		return err
+	}
+	if !allowCreate || journalRows > 0 {
+		return fmt.Errorf(
+			"memstore: forget ledger has no usable identity and %d journal row(s); refusing to create a new identity",
+			journalRows)
+	}
+	// First use of a brand-new ledger: issue the identity exactly once.
 	newUUID := randomUUID()
 	newKey := make([]byte, 32)
 	if _, err := rand.Read(newKey); err != nil {
@@ -351,6 +380,64 @@ func (l *ForgetLedger) AllDigests(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// VerifyLedgerBackup compares a ledger backup with the active ledger identity.
+// Restoring a database with a ledger from another identity would make every
+// historical HMAC selector unusable, so this check is explicit.
+func (s *Store) VerifyLedgerBackup(backupPath string) (map[string]any, error) {
+	if s == nil || s.ledger == nil {
+		return nil, fmt.Errorf("memstore: active forget ledger unavailable")
+	}
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		return nil, fmt.Errorf("memstore: read ledger backup: %w", err)
+	}
+	// Verify a copy so a read-only backup directory and sidecar files are not
+	// touched by opening the ledger in WAL mode.
+	tmpDir, err := os.MkdirTemp("", "picoclaw-ledger-verify-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+	tmpPath := filepath.Join(tmpDir, "forget-ledger.db")
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return nil, err
+	}
+	backup, err := OpenExistingForgetLedger(tmpPath)
+	if err != nil {
+		return nil, err
+	}
+	defer backup.Close()
+	match := backup.UUID() == s.ledger.UUID() && backup.KeyID() == s.ledger.KeyID()
+	out := map[string]any{
+		"backup_uuid":   backup.UUID(),
+		"backup_key_id": backup.KeyID(),
+		"active_uuid":   s.ledger.UUID(),
+		"active_key_id": s.ledger.KeyID(),
+		"match":         match,
+	}
+	if !match {
+		return out, fmt.Errorf("memstore: ledger backup identity does not match the active ledger")
+	}
+	return out, nil
+}
+
+// BackupTo writes a consistent snapshot of the ledger (including committed WAL
+// pages) without copying a live SQLite file. The destination must not exist.
+func (l *ForgetLedger) BackupTo(ctx context.Context, dst string) error {
+	if l == nil || l.db == nil {
+		return fmt.Errorf("memstore: forget ledger unavailable")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, err := l.db.ExecContext(ctx, `VACUUM INTO ?`, dst); err != nil {
+		return fmt.Errorf("memstore: backup ledger: %w", err)
+	}
+	if err := os.Chmod(dst, 0o600); err != nil {
+		return fmt.Errorf("memstore: chmod ledger backup: %w", err)
+	}
+	return nil
+}
+
 func randomUUID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -372,6 +459,23 @@ func (s *Store) ensureLedger() error {
 	if path == "" {
 		path = LedgerPathFor(s.path)
 	}
+	if _, err := os.Stat(path); err == nil {
+		l, err := OpenExistingForgetLedger(path)
+		if err != nil {
+			return err
+		}
+		s.ledger = l
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("memstore: inspect forget ledger: %w", err)
+	}
+	// Only a brand-new database or a v3 database being upgraded may create its
+	// first ledger. An existing v4 database that lost its ledger must restore
+	// the backup instead of silently issuing a new identity.
+	if !s.fresh && s.openedSchema >= CurrentSchemaVersion {
+		return fmt.Errorf(
+			"memstore: forget ledger missing at %s; restore the ledger backup before destructive forget", path)
+	}
 	l, err := OpenForgetLedger(path)
 	if err != nil {
 		return err
@@ -388,7 +492,11 @@ func (s *Store) ForgetLedgerRef() *ForgetLedger { return s.ledger }
 func (s *Store) LedgerHealth(ctx context.Context) (map[string]any, error) {
 	out := map[string]any{"available": false}
 	if s.ledger == nil {
-		out["reason"] = "ledger not opened"
+		reason := "ledger not opened"
+		if s.ledgerErr != nil {
+			reason = s.ledgerErr.Error()
+		}
+		out["reason"] = reason
 		return out, nil
 	}
 	out["available"] = true

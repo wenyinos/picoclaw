@@ -561,6 +561,7 @@ toolLoop:
 			ts.opts.Dispatch.MessageID(),
 			ts.opts.Dispatch.ReplyToMessageID(),
 		)
+		execCtx = tools.WithToolChatKind(execCtx, chatKindFromType(ts.opts.Dispatch.InboundContext))
 		execCtx = tools.WithToolSessionContext(
 			execCtx,
 			ts.agent.ID,

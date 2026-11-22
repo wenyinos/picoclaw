@@ -6,6 +6,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
 func TestMemoryEgressAllowList(t *testing.T) {
@@ -56,6 +57,24 @@ func TestMemoryEgressZeroBudget(t *testing.T) {
 	p := &Pipeline{Cfg: cfg}
 	if err := p.checkMemoryEgress("deepseek", "chat"); err != nil {
 		t.Fatalf("zero budget means no memory is injected: %v", err)
+	}
+}
+
+func TestActiveCandidateEgressChecksPrimary(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Memory.Enabled = true
+	cfg.Memory.BudgetTokens = 1200
+	cfg.Memory.AllowedChatRecipients = []string{"openai/gpt-4o"}
+	p := &Pipeline{Cfg: cfg}
+	exec := &turnExecution{activeCandidates: []providers.FallbackCandidate{
+		{Provider: "deepseek", Model: "chat"},
+	}}
+	if err := p.checkActiveCandidateEgress(exec); !errors.Is(err, ErrMemoryEgressDenied) {
+		t.Fatalf("single-provider candidate was not gated: %v", err)
+	}
+	exec.activeCandidates[0] = providers.FallbackCandidate{Provider: "openai", Model: "gpt-4o"}
+	if err := p.checkActiveCandidateEgress(exec); err != nil {
+		t.Fatalf("listed candidate rejected: %v", err)
 	}
 }
 

@@ -24,6 +24,14 @@ func WithToolInboundContext(
 	return toolshared.WithToolInboundContext(ctx, channel, chatID, messageID, replyToMessageID)
 }
 
+func WithToolChatKind(ctx context.Context, chatKind string) context.Context {
+	return toolshared.WithToolChatKind(ctx, chatKind)
+}
+
+func ToolChatKind(ctx context.Context) string {
+	return toolshared.ToolChatKind(ctx)
+}
+
 func WithToolSessionContext(
 	ctx context.Context,
 	agentID, sessionKey string,

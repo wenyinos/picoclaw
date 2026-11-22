@@ -44,13 +44,34 @@ type Summarizer interface {
 }
 
 // PublishSummary stores a new summary version after verifying every claim is
-// backed by live entries in the same domain. Publishing is an explicit act:
-// summaries are never authoritative facts.
+// backed by live entries in the same domain and cluster.
 func (s *Store) PublishSummary(
 	ctx context.Context,
 	clusterID, summary string,
 	claims []SummaryClaim,
 	model, promptVersion string,
+) (*SummaryVersion, error) {
+	return s.publishSummary(ctx, clusterID, summary, claims, model, promptVersion, -1)
+}
+
+// PublishSummaryAtGeneration additionally refuses to publish a draft when the
+// cluster generation changed during generation.
+func (s *Store) PublishSummaryAtGeneration(
+	ctx context.Context,
+	clusterID, summary string,
+	claims []SummaryClaim,
+	model, promptVersion string,
+	expectedGeneration int,
+) (*SummaryVersion, error) {
+	return s.publishSummary(ctx, clusterID, summary, claims, model, promptVersion, expectedGeneration)
+}
+
+func (s *Store) publishSummary(
+	ctx context.Context,
+	clusterID, summary string,
+	claims []SummaryClaim,
+	model, promptVersion string,
+	expectedGeneration int,
 ) (*SummaryVersion, error) {
 	if err := s.checkReady(); err != nil {
 		return nil, err
@@ -75,6 +96,11 @@ func (s *Store) PublishSummary(
 		}
 		return nil, err
 	}
+	if expectedGeneration >= 0 && generation != expectedGeneration {
+		return nil, fmt.Errorf(
+			"memstore: cluster %q changed during summarization (generation %d != %d)",
+			clusterID, generation, expectedGeneration)
+	}
 
 	// Verify claims before anything is written: the fingerprint locks the
 	// exact evidence set so a later retry cannot publish a drifted summary.
@@ -97,6 +123,17 @@ func (s *Store) PublishSummary(
 			}
 			if domainID != "" && e.DomainID != domainID {
 				return nil, fmt.Errorf("memstore: claim %q mixes domains", claim.ClaimID)
+			}
+			var membership int
+			if err := s.db.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM memory_cluster_members WHERE cluster_id=? AND entry_id=?`,
+				clusterID, entryID).Scan(&membership); err != nil {
+				return nil, err
+			}
+			if membership == 0 {
+				return nil, fmt.Errorf(
+					"memstore: claim %q evidence %q is not a member of cluster %q",
+					claim.ClaimID, entryID, clusterID)
 			}
 			fingerprintParts = append(fingerprintParts, fmt.Sprintf("%s@%d", entryID, e.RowRevision))
 			evidence[claim.ClaimID] = append(evidence[claim.ClaimID], *e)
@@ -135,11 +172,14 @@ func (s *Store) PublishSummary(
 	summaryID, _ := res.LastInsertId()
 	for _, claim := range claims {
 		for _, e := range evidence[claim.ClaimID] {
+			var sourceID int64
+			_ = tx.QueryRowContext(ctx,
+				`SELECT COALESCE(MIN(id),0) FROM sources WHERE entry_id=?`, e.ID).Scan(&sourceID)
 			if _, err := tx.ExecContext(ctx,
 				`INSERT OR IGNORE INTO memory_summary_evidence
-				 (summary_version_id,claim_id,entry_id,row_revision,created_at)
-				 VALUES(?,?,?,?,?)`,
-				summaryID, claim.ClaimID, e.ID, e.RowRevision, now); err != nil {
+				 (summary_version_id,claim_id,entry_id,source_id,row_revision,created_at)
+				 VALUES(?,?,?,?,?,?)`,
+				summaryID, claim.ClaimID, e.ID, sourceID, e.RowRevision, now); err != nil {
 				return nil, err
 			}
 			if _, err := tx.ExecContext(ctx,
@@ -170,7 +210,14 @@ func (s *Store) PublishSummary(
 // bumps its generation so in-flight generation cannot publish (FR-08).
 func (s *Store) InvalidateClusterSummaries(ctx context.Context, clusterID, reason string) (int, error) {
 	now := s.now()
-	res, err := s.db.ExecContext(ctx,
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
 		`UPDATE memory_summary_versions
 		 SET status='invalidated', invalidated_at=?, superseded_at=COALESCE(superseded_at,?)
 		 WHERE cluster_id=? AND status='active'`, now, now, clusterID)
@@ -178,20 +225,81 @@ func (s *Store) InvalidateClusterSummaries(ctx context.Context, clusterID, reaso
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE memory_clusters SET generation=generation+1, updated_at=? WHERE id=?`,
 		now, clusterID); err != nil {
 		return int(n), err
 	}
 	if n > 0 {
-		_ = s.bumpRevisionLocked(ctx)
-		_, _ = s.db.ExecContext(ctx,
+		if err := s.bumpRevision(ctx, tx); err != nil {
+			return int(n), err
+		}
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO memory_operations
 			 (operation,target_entry_id,reason,affected_count,created_at,reason_code)
 			 VALUES('invalidate_summary','',?,?,?,'dependency_change')`,
-			reason, n, now)
+			reason, n, now); err != nil {
+			return int(n), err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return int(n), err
 	}
 	return int(n), nil
+}
+
+// invalidateSummariesForEntryTx invalidates every cluster containing an entry
+// inside the caller's transaction, so a content/permission/status change and
+// the dependent-summary invalidation commit together.
+func (s *Store) invalidateSummariesForEntryTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	entryID, reason string,
+) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT DISTINCT cluster_id FROM memory_cluster_members WHERE entry_id=?`, entryID)
+	if err != nil {
+		return err
+	}
+	var clusters []string
+	for rows.Next() {
+		var clusterID string
+		if err := rows.Scan(&clusterID); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		clusters = append(clusters, clusterID)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	now := s.now()
+	for _, clusterID := range clusters {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE memory_summary_versions
+			 SET status='invalidated', invalidated_at=?, superseded_at=COALESCE(superseded_at,?)
+			 WHERE cluster_id=? AND status='active'`, now, now, clusterID)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE memory_clusters SET generation=generation+1, updated_at=? WHERE id=?`,
+			now, clusterID); err != nil {
+			return err
+		}
+		if n > 0 {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO memory_operations
+				 (operation,target_entry_id,reason,affected_count,created_at,reason_code)
+				 VALUES('invalidate_summary','',?,?,?,'dependency_change')`,
+				reason, n, now); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // InvalidateSummariesForEntry invalidates every cluster containing an entry.
@@ -317,9 +425,11 @@ func (s *Store) GenerateSummary(ctx context.Context, clusterID string, summarize
 	for _, c := range claims {
 		lines = append(lines, "· "+c.Text)
 	}
-	// Generation is re-checked inside PublishSummary via the evidence
-	// fingerprints; a cluster that changed during summarization fails there.
-	return s.PublishSummary(ctx, clusterID, strings.Join(lines, "\n"), claims, "rule-summarizer", "v1")
+	// Generation is re-checked inside PublishSummary via the expected
+	// generation and evidence fingerprints; a cluster that changed during
+	// summarization fails there.
+	return s.PublishSummaryAtGeneration(
+		ctx, clusterID, strings.Join(lines, "\n"), claims, "rule-summarizer", "v1", generation)
 }
 
 // ruleSummarizer is the local, evidence-first default: one claim per entry.

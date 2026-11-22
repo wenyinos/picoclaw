@@ -112,11 +112,11 @@ func (s *Store) RunCleanupJobs(ctx context.Context, cleaner MessageCleaner, maxJ
 			continue
 		}
 		if len(manifest.Locators) == 0 {
-			// Nothing locatable was recorded; mark done but keep the fact in
-			// the description so an operator can see the limit.
+			// Nothing locatable was recorded: the job must stay visible for a
+			// human instead of claiming that every copy was removed.
 			total.Details = append(total.Details,
 				fmt.Sprintf("job %s: no locator recorded (partial)", job.JobID))
-			_ = s.CompleteJob(ctx, job.JobID)
+			_ = s.BlockJob(ctx, job.JobID, "no locator recorded; cleanup is partial")
 			continue
 		}
 		outcome, err := cleaner.CleanLocators(ctx, manifest.Locators)
@@ -129,8 +129,11 @@ func (s *Store) RunCleanupJobs(ctx context.Context, cleaner MessageCleaner, maxJ
 		total.Sessions += outcome.Sessions
 		total.Details = append(total.Details, outcome.Details...)
 		if outcome.Unavailable > 0 {
+			reason := fmt.Sprintf("%d locator(s) unverifiable; cleanup is partial", outcome.Unavailable)
 			total.Details = append(total.Details,
-				fmt.Sprintf("job %s: %d locator(s) unverifiable (partial)", job.JobID, outcome.Unavailable))
+				fmt.Sprintf("job %s: %s", job.JobID, reason))
+			_ = s.BlockJob(ctx, job.JobID, reason)
+			continue
 		}
 		_ = s.CompleteJob(ctx, job.JobID)
 	}

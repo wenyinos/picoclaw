@@ -112,6 +112,7 @@ type PromptBuildRequest struct {
 
 	Channel           string
 	ChatID            string
+	ChatKind          string // trusted chat kind: private/group/public
 	SenderID          string
 	SenderDisplayName string
 

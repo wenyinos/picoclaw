@@ -45,6 +45,7 @@ type toolCtxKey struct{ name string }
 var (
 	ctxKeyChannel          = &toolCtxKey{"channel"}
 	ctxKeyChatID           = &toolCtxKey{"chatID"}
+	ctxKeyChatKind         = &toolCtxKey{"chatKind"}
 	ctxKeyMessageID        = &toolCtxKey{"messageID"}
 	ctxKeyReplyToMessageID = &toolCtxKey{"replyToMessageID"}
 	ctxKeyAgentID          = &toolCtxKey{"agentID"}
@@ -57,6 +58,22 @@ func WithToolContext(ctx context.Context, channel, chatID string) context.Contex
 	ctx = context.WithValue(ctx, ctxKeyChannel, channel)
 	ctx = context.WithValue(ctx, ctxKeyChatID, chatID)
 	return ctx
+}
+
+// WithToolChatKind returns a child context carrying the trusted chat kind
+// (private/group/public). It is separate from WithToolContext so existing
+// callers keep their defaults.
+func WithToolChatKind(ctx context.Context, chatKind string) context.Context {
+	return context.WithValue(ctx, ctxKeyChatKind, chatKind)
+}
+
+// ToolChatKind extracts the trusted chat kind from ctx, or "" if unset.
+func ToolChatKind(ctx context.Context) string {
+	v, ok := ctx.Value(ctxKeyChatKind).(string)
+	if !ok {
+		return ""
+	}
+	return v
 }
 
 // WithToolMessageContext returns a child context carrying inbound message IDs.

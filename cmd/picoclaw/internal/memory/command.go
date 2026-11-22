@@ -30,6 +30,7 @@ func NewMemoryCommand() *cobra.Command {
 		newForgetCommand(),
 		newReplayForgetCommand(),
 		newCleanupCommand(),
+		newLedgerVerifyCommand(),
 		newCapsuleCommand(),
 		newImportCommand(),
 		newAuditCommand(),
@@ -282,6 +283,33 @@ func newCleanupCommand() *cobra.Command {
 	return cmd
 }
 
+func newLedgerVerifyCommand() *cobra.Command {
+	var backup string
+	cmd := &cobra.Command{
+		Use:   "ledger-verify",
+		Short: "Verify a forget-ledger backup matches the active ledger identity",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(backup) == "" {
+				return fmt.Errorf("--backup is required")
+			}
+			store, _, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			result, verifyErr := store.VerifyLedgerBackup(backup)
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(result); err != nil {
+				return err
+			}
+			return verifyErr
+		},
+	}
+	cmd.Flags().StringVar(&backup, "backup", "", "path to a forget-ledger.db backup")
+	return cmd
+}
+
 func newImportCommand() *cobra.Command {
 	var from string
 	cmd := &cobra.Command{
@@ -425,7 +453,7 @@ func newExportCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			entries, err := store.List(context.Background(), memstore.SearchOptions{Limit: 100000})
+			entries, err := store.ExportEntries(context.Background(), memstore.SearchOptions{})
 			if err != nil {
 				return err
 			}
