@@ -1139,9 +1139,14 @@ This PASS is the final document consistency conclusion; it does not replace post
 
 These differences are publicly documented in the "known boundaries" of the 0.7.20 release notes; unimplemented capabilities are not written as completed.
 
-### 24.5 Post-release supplementary testing: pending worker and FTS/LIKE
+### 24.5 Release-gate supplementary testing: pending worker and FTS/LIKE
 
-Two explicit gaps were closed after the release-gate review:
+Two explicit gaps were closed after the release-gate review and are included in the final `v0.7.20` tag:
+
+- pending worker: `021021c1`;
+- FTS/LIKE measurement: `c392ef4d`;
+- no-Seahorse platform build fix: `d1fccbe7`;
+- documentation sync: `fed4536d`.
 
 1. **G3-03 pending intent background reconciliation**
    `Store.ReconcilePendingIntents` has been wired into the gateway's forget cleanup worker:

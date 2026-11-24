@@ -1139,9 +1139,14 @@ Dashboard 的指标不能将 `done` 作为唯一健康标准；必须同时显�
 
 这些差异已在 0.7.20 发布说明“已知边界”中公开，不把未实现能力写成已完成。
 
-### 24.5 发布后补测：pending worker 与 FTS/LIKE
+### 24.5 发布门禁补测：pending worker 与 FTS/LIKE
 
-发布门禁复核后补齐两项明确缺口：
+发布门禁复核后补齐两项明确缺口，并纳入最终 `v0.7.20` tag：
+
+- pending worker：`021021c1`；
+- FTS/LIKE 测量：`c392ef4d`；
+- 无 Seahorse 平台构建修复：`d1fccbe7`；
+- 文档同步：`fed4536d`。
 
 1. **G3-03 pending intent 后台对账**  
    `Store.ReconcilePendingIntents` 已接入 gateway 的 forget cleanup worker：
