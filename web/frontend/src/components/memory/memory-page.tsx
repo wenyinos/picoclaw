@@ -233,7 +233,8 @@ function GovernanceTab({
               {health.ledger_uuid}
             </div>
             <div className="text-muted-foreground text-xs">
-              清理积压以下方 cleanup job 为准；主库 applied 不等于会话副本已清除。
+              清理积压以下方 cleanup job 为准；主库 applied
+              不等于会话副本已清除。
             </div>
             <div>
               <Button size="sm" variant="outline" onClick={replay}>
@@ -1118,11 +1119,13 @@ function MigrationTab({
       <div className="rounded-lg border p-4">
         <h2 className="text-sm font-semibold">数据库一键迁移（v3 → v4）</h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          schema v4 新增权限域与渠道绑定、处理用途许可、来源事件、依赖/任务/审批计划、
-          摘要证据、承诺与主动回忆表，并为 entries/sources/relationship 补充治理列。
-          sources 会逐字段重建，证据原文、模型、置信度与确认标志全部保留；旧数据进入
-          隔离域 legacy_unassigned，不猜测归属。只接受 v3 数据库：v1/v2 请先用 0.6.x
-          升到 v3。迁移幂等、整段事务，执行前自动 VACUUM INTO 备份。
+          schema v4
+          新增权限域与渠道绑定、处理用途许可、来源事件、依赖/任务/审批计划、
+          摘要证据、承诺与主动回忆表，并为 entries/sources/relationship
+          补充治理列。 sources
+          会逐字段重建，证据原文、模型、置信度与确认标志全部保留；旧数据进入
+          隔离域 legacy_unassigned，不猜测归属。只接受 v3 数据库：v1/v2 请先用
+          0.6.x 升到 v3。迁移幂等、整段事务，执行前自动 VACUUM INTO 备份。
         </p>
         <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
           {stats.map((s) => (
@@ -1148,7 +1151,8 @@ function MigrationTab({
           )}
           {status && status.empty_predicate > 0 && (
             <span className="text-muted-foreground text-sm">
-              数据质量提示：{status.empty_predicate} 条空 predicate（不阻塞迁移）
+              数据质量提示：{status.empty_predicate} 条空
+              predicate（不阻塞迁移）
             </span>
           )}
         </div>
@@ -1189,13 +1193,18 @@ function MigrationTab({
         <h3 className="text-sm font-semibold">迁移后建议</h3>
         <ul className="text-muted-foreground mt-2 list-disc space-y-1 pl-5 text-sm">
           <li>
-            旧条目进入隔离域 legacy_unassigned；在认领或迁移到新域前，提示词检索默认读取该隔离域，仍可能被注入。
+            旧条目进入隔离域
+            legacy_unassigned；在认领或迁移到新域前，提示词检索默认读取该隔离域，仍可能被注入。
           </li>
           <li>
-            forget-ledger.db 与 memory.db 同目录，备份会同时保存两者；账本缺失或身份损坏时永久遗忘会故障关闭，不会静默新建。
+            forget-ledger.db 与 memory.db
+            同目录，备份会同时保存两者；账本缺失或身份损坏时永久遗忘会故障关闭，不会静默新建。
           </li>
           <li>v1/v2 数据库不会被就地升级，先用 0.6.x 打开一次升到 v3。</li>
-          <li>迁移可重复执行；需要迁移时会生成 VACUUM INTO 主库与账本备份，重复执行零变更。</li>
+          <li>
+            迁移可重复执行；需要迁移时会生成 VACUUM INTO
+            主库与账本备份，重复执行零变更。
+          </li>
         </ul>
       </div>
     </div>
@@ -1556,8 +1565,7 @@ function SettingsTab({
                   type="checkbox"
                   checked={!excluded}
                   onChange={(e) => {
-                    const prev =
-                      settings.private_channel_exclusions ?? []
+                    const prev = settings.private_channel_exclusions ?? []
                     update(
                       "private_channel_exclusions",
                       e.target.checked

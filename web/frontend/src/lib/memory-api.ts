@@ -379,10 +379,8 @@ export const memoryApi = {
         expected_revision: expectedRevision,
       }),
     }),
-  domains: () =>
-    request<{ domains: MemoryDomain[] }>("/api/memory/domains"),
-  ledgerHealth: () =>
-    request<MemoryLedgerHealth>("/api/memory/ledger/health"),
+  domains: () => request<{ domains: MemoryDomain[] }>("/api/memory/domains"),
+  ledgerHealth: () => request<MemoryLedgerHealth>("/api/memory/ledger/health"),
   replayForget: () =>
     request<{ removed: number }>("/api/memory/ledger/replay", {
       method: "POST",
@@ -408,9 +406,7 @@ export const memoryApi = {
       `/api/memory/clusters/${id}/summaries`,
     ),
   summaryEvidence: (id: number) =>
-    request<{ entries: MemoryEntry[] }>(
-      `/api/memory/summaries/${id}/evidence`,
-    ),
+    request<{ entries: MemoryEntry[] }>(`/api/memory/summaries/${id}/evidence`),
   commitments: (includeClosed = false) =>
     request<{ commitments: MemoryCommitment[] }>(
       `/api/memory/commitments?include_closed=${includeClosed}`,
