@@ -228,31 +228,25 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("memstore: inspect database: %w", err)
 	}
+	s := &Store{db: db, path: path, fresh: fresh, usage: make(map[string]int), usageLastFlush: time.Now()}
 	if fresh {
-		for _, stmt := range schemaStatements {
-			if _, err := db.Exec(stmt); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("memstore: schema: %w", err)
-			}
+		// Base and v4 objects are created in one transaction. A crash at any
+		// point leaves no partially initialized "v4" database.
+		if err := s.bootstrapFresh(context.Background()); err != nil {
+			_ = db.Close()
+			return nil, err
 		}
 	}
-	s := &Store{db: db, path: path, fresh: fresh, usage: make(map[string]int), usageLastFlush: time.Now()}
 	if err := s.loadRevision(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	s.openedSchema = s.schemaVersionLocked(context.Background())
-	if fresh {
-		// A brand-new database is created directly at v4 in one explicit
-		// bootstrap transaction: tables, governance columns, indexes, the
-		// isolated legacy domain and FTS.
-		if err := s.bootstrapV4(context.Background()); err != nil {
+	if !fresh {
+		if err := s.checkReadiness(context.Background()); err != nil {
 			_ = db.Close()
 			return nil, err
 		}
-	} else if err := s.checkReadiness(context.Background()); err != nil {
-		_ = db.Close()
-		return nil, err
 	}
 	// Forgetting must be journaled before the main database changes. A
 	// missing or damaged ledger on an existing v4 database is recorded as a
@@ -272,33 +266,75 @@ func Open(path string) (*Store, error) {
 func isFreshDatabase(db *sql.DB) (bool, error) {
 	var n int
 	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('meta','entries')`).Scan(&n); err != nil {
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&n); err != nil {
 		return false, err
 	}
 	return n == 0, nil
 }
 
-// bootstrapV4 creates the full v4 structure for a brand-new database.
-func (s *Store) bootstrapV4(ctx context.Context) error {
+// bootstrapFresh creates the complete Schema v4 for an empty database in one
+// transaction: base tables, governance tables/columns, indexes, FTS, metadata
+// and the isolated legacy domain.
+func (s *Store) bootstrapFresh(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	plan := s.planV4(ctx) // must run before the transaction (MaxOpenConns(1))
+
 	fts := s.detectFTS(ctx)
+	// The base schema already contains the complete entries, relationship and
+	// sources shapes. The v4 tables are still missing and their ALTER columns
+	// must run after CREATE, so those plan maps stay false.
+	plan := v4Plan{
+		entryCols:     map[string]bool{},
+		relCols:       map[string]bool{},
+		relHistCols:   map[string]bool{},
+		opCols:        map[string]bool{},
+		clusterCols:   map[string]bool{},
+		summaryCols:   map[string]bool{},
+		sourceCols:    map[string]bool{},
+		missingTables: map[string]bool{},
+	}
+	for _, c := range append(append([]string{}, v3EntryColumns...), v4EntryColumns...) {
+		plan.entryCols[c] = true
+	}
+	for _, c := range v4RelationshipColumns {
+		plan.relCols[c] = true
+		plan.relHistCols[c] = true
+	}
+	for _, c := range []string{
+		"entry_id", "conversation_id", "session_key", "message_id", "source_id",
+		"source_type", "evidence_text", "extraction_model", "prompt_version",
+		"confidence", "user_confirmed", "created_at",
+	} {
+		plan.sourceCols[c] = true
+	}
+	plan.sourcesHasOrigin = true
+	for _, t := range v4Tables {
+		plan.missingTables[t] = true
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	for _, stmt := range schemaStatements {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("memstore: fresh schema: %w", err)
+		}
+	}
 	if err := s.migrateToV4Locked(ctx, tx, plan, fts); err != nil {
+		return err
+	}
+	if err := s.setMetaLocked(ctx, tx, "revision", "0"); err != nil {
+		return err
+	}
+	if err := s.bumpRevision(ctx, tx); err != nil {
 		return err
 	}
 	if err := s.setMetaLocked(ctx, tx, "schema_version", fmt.Sprintf("%d", CurrentSchemaVersion)); err != nil {
 		return err
 	}
 	if err := s.setMetaLocked(ctx, tx, "fts_tokenizer", fts.tokenizer); err != nil {
-		return err
-	}
-	if err := s.bumpRevision(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -343,12 +379,16 @@ func (s *Store) loadRevision() error {
 		// A database with rows but no meta predates v3. This build only
 		// migrates v3 → v4, so refuse instead of stamping it as current.
 		var legacyRows int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM entries`).Scan(&legacyRows); err == nil && legacyRows > 0 {
+		if countErr := s.db.QueryRow(`SELECT COUNT(*) FROM entries`).Scan(&legacyRows); countErr != nil {
+			return fmt.Errorf("memstore: database %s is missing the base entries table: %w", s.path, countErr)
+		}
+		if legacyRows > 0 {
 			return fmt.Errorf(
 				"memstore: database %s has entries but no schema metadata; it predates v3 and must be upgraded with a 0.6.x build first", s.path)
 		}
-		if _, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES('revision','0'),('schema_version',?)`,
-			fmt.Sprintf("%d", CurrentSchemaVersion)); err != nil {
+		// Only the revision is initialized here. schema_version is written by
+		// the v4 bootstrap transaction after every object exists.
+		if _, err := s.db.Exec(`INSERT INTO meta(key,value) VALUES('revision','0')`); err != nil {
 			return fmt.Errorf("memstore: init meta: %w", err)
 		}
 		return nil

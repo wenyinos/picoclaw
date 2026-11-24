@@ -258,6 +258,23 @@ var v4Tables = []string{
 // v3EntryColumns are the columns added by the removed v3 segment. They are
 // still verified here so a v3 database that lost a column (interrupted
 // upgrade) is healed by the v4 segment instead of writing to a broken table.
+// nonRepairableV4Tables hold business, obligation, approval or audit state. If
+// one disappears from an existing v4 database, recreating it empty would erase
+// deletions, jobs or approvals; the operator must restore a backup instead.
+var nonRepairableV4Tables = []string{
+	"entries", "sources", "supersedes", "personas",
+	"relationship_state", "relationship_state_history",
+	"memory_operations", "memory_jobs", "memory_change_plans",
+	"memory_origin_events", "memory_domains", "memory_recalls",
+	"memory_commitments", "memory_dependencies",
+}
+
+var requiredV4Indexes = []string{
+	"ux_entries_hash", "ix_entries_domain", "ix_entries_revision",
+	"ix_sources_entry", "ix_sources_origin", "ix_memory_ops_request",
+	"ix_memory_jobs_state",
+}
+
 var v3EntryColumns = []string{
 	"event_time_precision", "event_timezone", "event_time_source",
 	"valid_from", "valid_to", "pinned_core",
@@ -287,18 +304,20 @@ type v4Plan struct {
 	sourceCols       map[string]bool
 	sourcesHasOrigin bool
 	missingTables    map[string]bool
+	missingIndexes   map[string]bool
 }
 
 func (s *Store) planV4(ctx context.Context) v4Plan {
 	p := v4Plan{
-		entryCols:     map[string]bool{},
-		relCols:       map[string]bool{},
-		relHistCols:   map[string]bool{},
-		opCols:        map[string]bool{},
-		clusterCols:   map[string]bool{},
-		summaryCols:   map[string]bool{},
-		sourceCols:    map[string]bool{},
-		missingTables: map[string]bool{},
+		entryCols:      map[string]bool{},
+		relCols:        map[string]bool{},
+		relHistCols:    map[string]bool{},
+		opCols:         map[string]bool{},
+		clusterCols:    map[string]bool{},
+		summaryCols:    map[string]bool{},
+		sourceCols:     map[string]bool{},
+		missingTables:  map[string]bool{},
+		missingIndexes: map[string]bool{},
 	}
 	for _, c := range append(append([]string{}, v3EntryColumns...), v4EntryColumns...) {
 		p.entryCols[c] = s.hasColumnLocked(ctx, "entries", c)
@@ -329,7 +348,17 @@ func (s *Store) planV4(ctx context.Context) v4Plan {
 	for _, t := range v4Tables {
 		p.missingTables[t] = !s.tableExistsLocked(ctx, t)
 	}
+	for _, idx := range requiredV4Indexes {
+		p.missingIndexes[idx] = !s.objectExistsLocked(ctx, "index", idx)
+	}
 	return p
+}
+
+func (s *Store) objectExistsLocked(ctx context.Context, kind, name string) bool {
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM sqlite_master WHERE type=? AND name=?`, kind, name).Scan(&one)
+	return err == nil
 }
 
 func (p v4Plan) complete() bool {
@@ -351,6 +380,11 @@ func (p v4Plan) complete() bool {
 		return false
 	}
 	for _, missing := range p.missingTables {
+		if missing {
+			return false
+		}
+	}
+	for _, missing := range p.missingIndexes {
 		if missing {
 			return false
 		}
@@ -381,20 +415,27 @@ func (s *Store) migrateSchemaLocked(ctx context.Context) (int, string, error) {
 			previous)
 	}
 
+	if previous >= CurrentSchemaVersion {
+		for _, table := range nonRepairableV4Tables {
+			if !s.tableExistsLocked(ctx, table) {
+				return previous, "", fmt.Errorf(
+					"memstore: non_repairable: v4 business/obligation table %q is missing; restore a backup instead of creating it empty",
+					table)
+			}
+		}
+	}
+
 	plan := s.planV4(ctx)
 	fts := s.detectFTS(ctx)
 	if plan.complete() && previous >= CurrentSchemaVersion && s.ftsCompleteLocked(ctx, fts) {
 		return previous, "", nil
 	}
 
-	backup := ""
-	needBackup := previous < CurrentSchemaVersion
-	if needBackup {
-		var err error
-		backup, err = s.backupWithRotation(ctx, "schema-v4")
-		if err != nil {
-			return previous, "", err
-		}
+	// Any actual migration or v4 repair writes to an existing database, so a
+	// fresh main+ledger snapshot is mandatory before the transaction starts.
+	backup, err := s.backupWithRotation(ctx, "schema-v4")
+	if err != nil {
+		return previous, "", err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -971,8 +1012,15 @@ func (s *Store) ApplyMigration(ctx context.Context) (MigrationReport, error) {
 
 	// `memory migrate` is an explicit maintenance command: it always leaves a
 	// VACUUM INTO snapshot, even when the schema was already current, so an
-	// operator has a rollback point for the data repairs in the same command.
-	if s.metaValueLocked(ctx, "last_migration_backup") == "" {
+	// operator has a rollback point. A stale meta path is not trusted.
+	backupPath := s.metaValueLocked(ctx, "last_migration_backup")
+	needBackup := strings.TrimSpace(backupPath) == ""
+	if !needBackup {
+		if _, statErr := os.Stat(backupPath); statErr != nil {
+			needBackup = true
+		}
+	}
+	if needBackup {
 		backup, err := s.backupWithRotation(ctx, "migrate")
 		if err != nil {
 			return MigrationReport{}, err
@@ -1037,18 +1085,11 @@ func (s *Store) RepairData(ctx context.Context) (MigrationReport, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	backup, err := s.backupWithRotation(ctx, "repair")
-	if err != nil {
-		return MigrationReport{}, err
-	}
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO meta(key,value) VALUES('last_migration_backup',?)
-		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, backup); err != nil {
-		return MigrationReport{}, err
-	}
+	// migrateSchema created the required pre-change snapshot when any v4
+	// repair was necessary. Never take the backup after mutating the database.
 	report.SchemaVersion = s.schemaVersionLocked(ctx)
 	s.pendingMigration = false
-	report.Backup = backup
+	report.Backup = s.metaValueLocked(ctx, "last_migration_backup")
 	report.FTSTokenizer = s.metaValueLocked(ctx, "fts_tokenizer")
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries`).Scan(&report.Total)
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM entries WHERE status='active'`).Scan(&report.Active)

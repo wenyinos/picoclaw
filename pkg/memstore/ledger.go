@@ -93,16 +93,22 @@ func openForgetLedger(path string, allowCreate bool) (*ForgetLedger, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("memstore: ledger dir: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	dsn := path
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	dsn += separator + "_txlock=immediate"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("memstore: ledger open: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	for _, pragma := range []string{
+		"PRAGMA busy_timeout=5000",
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA synchronous=FULL", // the ledger must survive a host crash
-		"PRAGMA busy_timeout=5000",
 	} {
 		if _, err := db.Exec(pragma); err != nil {
 			_ = db.Close()
@@ -146,31 +152,35 @@ func openForgetLedger(path string, allowCreate bool) (*ForgetLedger, error) {
 }
 
 func (l *ForgetLedger) loadOrCreateIdentity(allowCreate bool) error {
-	uuid, err := l.meta("ledger_uuid")
+	tx, err := l.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return err
 	}
-	keyB64, err := l.meta("hmac_key")
-	if err != nil {
-		return err
-	}
-	keyID, err := l.meta("key_id")
-	if err != nil {
+	defer func() { _ = tx.Rollback() }()
+
+	var uuid, keyB64, keyID string
+	if err := tx.QueryRow(
+		`SELECT
+		   COALESCE(MAX(CASE WHEN key='ledger_uuid' THEN value END),''),
+		   COALESCE(MAX(CASE WHEN key='hmac_key' THEN value END),''),
+		   COALESCE(MAX(CASE WHEN key='key_id' THEN value END),'')
+		 FROM ledger_meta WHERE key IN ('ledger_uuid','hmac_key','key_id')`).
+		Scan(&uuid, &keyB64, &keyID); err != nil {
 		return err
 	}
 	if uuid != "" && keyB64 != "" && keyID != "" {
 		key, decErr := base64.StdEncoding.DecodeString(keyB64)
-		if decErr == nil && len(key) == 32 {
-			l.uuid, l.keyID, l.key = uuid, keyID, key
-			return nil
+		if decErr != nil || len(key) != 32 {
+			return fmt.Errorf("memstore: forget ledger identity is corrupt (unreadable HMAC key); restore the ledger backup")
 		}
-		return fmt.Errorf("memstore: forget ledger identity is corrupt (unreadable HMAC key); restore the ledger backup")
+		l.uuid, l.keyID, l.key = uuid, keyID, key
+		return tx.Rollback()
 	}
 	if uuid != "" || keyB64 != "" || keyID != "" {
 		return fmt.Errorf("memstore: forget ledger identity is incomplete; restore the ledger backup")
 	}
 	var journalRows int
-	if err := l.db.QueryRow(`SELECT COUNT(*) FROM forget_journal`).Scan(&journalRows); err != nil {
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM forget_journal`).Scan(&journalRows); err != nil {
 		return err
 	}
 	if !allowCreate || journalRows > 0 {
@@ -178,18 +188,16 @@ func (l *ForgetLedger) loadOrCreateIdentity(allowCreate bool) error {
 			"memstore: forget ledger has no usable identity and %d journal row(s); refusing to create a new identity",
 			journalRows)
 	}
-	// First use of a brand-new ledger: issue the identity exactly once.
+
+	// First use of a brand-new ledger: issue the identity exactly once. The
+	// ledger DSN uses _txlock=immediate, so concurrent first opens serialize
+	// here and the second one observes the committed identity above.
 	newUUID := randomUUID()
 	newKey := make([]byte, 32)
 	if _, err := rand.Read(newKey); err != nil {
 		return fmt.Errorf("memstore: ledger key: %w", err)
 	}
 	newKeyID := "k_" + newUUID[:8]
-	tx, err := l.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
 	for k, v := range map[string]string{
 		"ledger_uuid": newUUID,
 		"hmac_key":    base64.StdEncoding.EncodeToString(newKey),
@@ -197,8 +205,7 @@ func (l *ForgetLedger) loadOrCreateIdentity(allowCreate bool) error {
 		"created_at":  fmt.Sprintf("%d", time.Now().UnixMilli()),
 	} {
 		if _, err := tx.Exec(
-			`INSERT INTO ledger_meta(key,value) VALUES(?,?)
-			 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, k, v); err != nil {
+			`INSERT INTO ledger_meta(key,value) VALUES(?,?)`, k, v); err != nil {
 			return err
 		}
 	}
@@ -271,7 +278,33 @@ func (l *ForgetLedger) RecordIntent(ctx context.Context, in ForgetIntent) (Forge
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	res, err := l.db.ExecContext(ctx,
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ForgetIntent{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var existing ForgetIntent
+	err = tx.QueryRowContext(ctx,
+		`SELECT seq,ledger_uuid,request_id,namespace,domain_id,scope_json,selector_type,
+		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at
+		 FROM forget_journal WHERE request_id=? ORDER BY seq LIMIT 1`, in.RequestID).
+		Scan(&existing.Seq, &existing.LedgerUUID, &existing.RequestID, &existing.Namespace,
+			&existing.DomainID, &existing.ScopeJSON, &existing.SelectorType,
+			&existing.SelectorDigest, &existing.HashVersion, &existing.KeyID,
+			&existing.TargetManifest, &existing.Status, &existing.AppliedSeq, &existing.CreatedAt)
+	if err == nil {
+		if existing.DomainID != in.DomainID || existing.SelectorDigest != in.SelectorDigest ||
+			existing.TargetManifest != in.TargetManifest {
+			return ForgetIntent{}, fmt.Errorf("memstore: request_id %q already names a different forget intent", in.RequestID)
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ForgetIntent{}, err
+	}
+
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO forget_journal
 		 (ledger_uuid,request_id,namespace,domain_id,scope_json,selector_type,selector_digest,
 		  hash_version,key_id,target_manifest,status,applied_seq,created_at)
@@ -283,6 +316,9 @@ func (l *ForgetLedger) RecordIntent(ctx context.Context, in ForgetIntent) (Forge
 		return ForgetIntent{}, err
 	}
 	in.Seq, _ = res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return ForgetIntent{}, err
+	}
 	return in, nil
 }
 
@@ -380,6 +416,15 @@ func (l *ForgetLedger) AllDigests(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+func (l *ForgetLedger) watermark(ctx context.Context) (maxSeq, maxAppliedSeq, pending int64, err error) {
+	err = l.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(seq),0),
+		        COALESCE(MAX(CASE WHEN status='applied' THEN applied_seq END),0),
+		        COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0)
+		 FROM forget_journal`).Scan(&maxSeq, &maxAppliedSeq, &pending)
+	return maxSeq, maxAppliedSeq, pending, err
+}
+
 // VerifyLedgerBackup compares a ledger backup with the active ledger identity.
 // Restoring a database with a ledger from another identity would make every
 // historical HMAC selector unusable, so this check is explicit.
@@ -408,12 +453,30 @@ func (s *Store) VerifyLedgerBackup(backupPath string) (map[string]any, error) {
 	}
 	defer backup.Close()
 	match := backup.UUID() == s.ledger.UUID() && backup.KeyID() == s.ledger.KeyID()
+	backupSeq, backupApplied, backupPending, err := backup.watermark(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	activeSeq, activeApplied, activePending, err := s.ledger.watermark(context.Background())
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]any{
-		"backup_uuid":   backup.UUID(),
-		"backup_key_id": backup.KeyID(),
-		"active_uuid":   s.ledger.UUID(),
-		"active_key_id": s.ledger.KeyID(),
-		"match":         match,
+		"backup_uuid":        backup.UUID(),
+		"backup_key_id":      backup.KeyID(),
+		"backup_max_seq":     backupSeq,
+		"backup_applied_seq": backupApplied,
+		"backup_pending":     backupPending,
+		"active_uuid":        s.ledger.UUID(),
+		"active_key_id":      s.ledger.KeyID(),
+		"active_max_seq":     activeSeq,
+		"active_applied_seq": activeApplied,
+		"active_pending":     activePending,
+		"identity_match":     match,
+		"match":              match,
+		"watermark_equal":    backupSeq == activeSeq && backupPending == activePending,
+		"backup_is_older":    backupSeq < activeSeq,
+		"backup_is_newer":    backupSeq > activeSeq,
 	}
 	if !match {
 		return out, fmt.Errorf("memstore: ledger backup identity does not match the active ledger")

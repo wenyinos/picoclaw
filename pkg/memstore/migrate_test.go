@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -333,13 +334,10 @@ func TestSchemaV4SelfHeal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Drop a derived table and an index: the next open must stay unusable
-	// until an explicit migration heals it, without touching entry/source data.
+	// A missing unique index is derived state and can be healed without
+	// touching entry/source data.
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`DROP TABLE memory_jobs`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`DROP INDEX ux_entries_hash`); err != nil {
@@ -361,8 +359,8 @@ func TestSchemaV4SelfHeal(t *testing.T) {
 	if _, err := s2.ApplyMigration(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !s2.tableExistsLocked(ctx, "memory_jobs") {
-		t.Fatal("memory_jobs not healed")
+	if !s2.objectExistsLocked(ctx, "index", "ux_entries_hash") {
+		t.Fatal("ux_entries_hash not healed")
 	}
 	e, err := s2.Get(ctx, "e1")
 	if err != nil {
@@ -377,6 +375,66 @@ func TestSchemaV4SelfHeal(t *testing.T) {
 	}
 	if status.NeedsSchemaMigration {
 		t.Fatalf("self-heal left status dirty: %+v", status)
+	}
+}
+
+func TestV4MissingObligationTableRequiresRestore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memory.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE memory_jobs`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	if !s2.PendingMigration() {
+		t.Fatal("missing memory_jobs must open fail-closed")
+	}
+	if _, err := s2.ApplyMigration(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "non_repairable") {
+		t.Fatalf("repair error = %v, want non_repairable", err)
+	}
+	if s2.tableExistsLocked(context.Background(), "memory_jobs") {
+		t.Fatal("empty memory_jobs must not be fabricated")
+	}
+}
+
+func TestFreshBootstrapIsAtomicAndStartsAtV4(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memory.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if s.openedSchema != CurrentSchemaVersion || s.PendingMigration() {
+		t.Fatalf("fresh schema=%d pending=%v", s.openedSchema, s.PendingMigration())
+	}
+	var version string
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != "4" {
+		t.Fatalf("schema_version=%q", version)
+	}
+	if !s.ftsCompleteLocked(ctx, s.detectFTS(ctx)) {
+		t.Fatal("fresh bootstrap left FTS incomplete")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
