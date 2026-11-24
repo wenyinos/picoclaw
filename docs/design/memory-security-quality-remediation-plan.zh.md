@@ -1131,10 +1131,28 @@ Dashboard 的指标不能将 `done` 作为唯一健康标准；必须同时显�
 
 | 项目 | 实际实现 | 保留边界 |
 |---|---|---|
-| pending ledger 自动对账 | 幂等 intent、pending/blocked 状态、只读审计已实现 | 无 actor/批准的旧 pending 不自动 replay；“主事务失败”自动 worker 仍需人工维护 |
+| pending ledger 自动对账 | 后台 worker 已实现：有主库操作的 intent 只补 MarkApplied；有 actor + expected revision 的 intent 按 manifest 重放并入队 cleanup；修订冲突 blocked | 无 actor/批准的历史 pending 保持 pending 并只报告，不自动删除 |
 | 每 locator 清理回执 | `already_absent/outcome_unknown` 字段、blocked 语义、双后端合并已实现 | 未新增持久回执表；内置后端无法证明“崩溃前已删”时保守报 unavailable/blocked |
 | 多域 relationship | 跨域拒绝/fail-closed、legacy 单域 | 复合主键与完整 domain 注入仍为后续 RFC |
 | 历史 forget | `memory forget-audit` 只读报告 | 无 domain 的 content hash 不自动补账本或删除 |
-| G7 质量测量 | 合成正例/负例/禁止命中/TTL/layer/预算门禁 | 未提交真实私密评测集或固定设备 FTS benchmark |
+| G7 质量测量 | 合成正例/负例/禁止命中/TTL/layer/预算门禁；FTS trigram 与 LIKE 同一查询集的命中/禁止命中/延迟/索引占用测量已提交 | 小样本微基准，不代表生产库存、并发或移动设备；真实私密评测集不入库 |
 
 这些差异已在 0.7.20 发布说明“已知边界”中公开，不把未实现能力写成已完成。
+
+### 24.5 发布后补测：pending worker 与 FTS/LIKE
+
+发布门禁复核后补齐两项明确缺口：
+
+1. **G3-03 pending intent 后台对账**  
+   `Store.ReconcilePendingIntents` 已接入 gateway 的 forget cleanup worker：
+   - 主库存在同 request ID 的 forget/replay 操作时，只重试账本 `MarkApplied`；
+   - 无主库操作时，只有带可信 actor、expected revision 和 manifest 的 intent 才重放并重新入队 cleanup；
+   - 修订变化/域不匹配进入 `blocked`；
+   - 无 actor/批准的旧 intent 保持 pending，只计数报告，不自动删除。  
+   回归测试：`TestReconcilePendingIntentReplaysApprovedManifest`、`DoesNotReplayUnapproved`、`BlocksChangedRevision`，以及 AgentLoop worker 集成测试。
+
+2. **G7-04 FTS/LIKE 同查询集测量**  
+   新增 `TestFTSLikeComparisonMeasurement`，对 1/2/3/4 字与乱码查询同时执行 FTS5 trigram 和 LIKE，记录命中、禁止命中、延迟与 `entries_fts` 占用。报告见：
+   - [中文测量报告](memory-fts-like-measurement-0.7.20.zh.md)
+   - [English measurement report](memory-fts-like-measurement-0.7.20.md)  
+   小样本结论：1–2 字查询 FTS 为 0、LIKE 正常；3–4 字两通道命中一致；禁止命中为 0。保留混合通道，不据此更换 tokenizer。
