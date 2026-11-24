@@ -79,6 +79,20 @@ func (e *CompactionEngine) Compact(ctx context.Context, convID int64, input Comp
 		if _, loaded := e.condensing.LoadOrStore(convID, struct{}{}); !loaded {
 			go func() {
 				defer e.condensing.Delete(convID)
+				sessionKey, lookupErr := e.store.GetSessionKeyByConversation(e.shutdownCtx, convID)
+				if lookupErr != nil {
+					logger.WarnCF("seahorse", "condensed compaction: session lookup failed", map[string]any{
+						"conv_id": convID, "error": lookupErr.Error(),
+					})
+					return
+				}
+				lockFor := e.sessionLock
+				if lockFor == nil {
+					lockFor = fallbackSessionMutex
+				}
+				mu := lockFor(sessionKey)
+				mu.Lock()
+				defer mu.Unlock()
 				e.runCondensedLoop(e.shutdownCtx, convID)
 			}()
 		}

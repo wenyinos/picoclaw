@@ -7,15 +7,21 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/tools"
+	toolshared "github.com/sipeed/picoclaw/pkg/tools/shared"
 )
 
 // GrepTool searches summaries and messages for matching content.
 type GrepTool struct {
-	engine *RetrievalEngine
+	engine    *RetrievalEngine
+	authorize ConversationResolver
 }
 
-func NewGrepTool(engine *RetrievalEngine) *GrepTool {
-	return &GrepTool{engine: engine}
+func NewGrepTool(engine *RetrievalEngine, resolvers ...ConversationResolver) *GrepTool {
+	tool := &GrepTool{engine: engine}
+	if len(resolvers) > 0 {
+		tool.authorize = resolvers[0]
+	}
+	return tool
 }
 
 func (t *GrepTool) Name() string {
@@ -41,10 +47,12 @@ Parameters:
 - scope: "both" (default), "summary", or "message" - what to search
 - role: "user", "assistant", or omit for all - filter by message role
 - last: Time shortcut like "6h", "7d", "2w", "1m" (hours/days/weeks/months)
-- all_conversations: Search all conversations (default: current only)
+- all_conversations: Not supported; must be false or omitted
 - since: ISO8601 timestamp, content after this time
 - before: ISO8601 timestamp, content before this time
 - limit: Max results (default: 20)
+
+The search is always limited to the current trusted conversation.
 
 Returns:
 {
@@ -64,8 +72,7 @@ Examples:
   {"pattern": "bug AND login"}
   {"pattern": "%snake%"}
   {"pattern": "project", "scope": "summary"}
-  {"pattern": "error", "role": "assistant", "last": "7d"}
-  {"pattern": "error", "all_conversations": true}`
+  {"pattern": "error", "role": "assistant", "last": "7d"}`
 }
 
 func (t *GrepTool) Parameters() map[string]any {
@@ -92,7 +99,7 @@ func (t *GrepTool) Parameters() map[string]any {
 			},
 			"all_conversations": map[string]any{
 				"type":        "boolean",
-				"description": "Search across all conversations (default: searches current conversation only)",
+				"description": "Not supported; must be false or omitted",
 			},
 			"since": map[string]any{
 				"type":        "string",
@@ -117,7 +124,26 @@ func (t *GrepTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		return tools.ErrorResult("Missing required 'pattern' argument. Example: {\"pattern\": \"authentication\"}")
 	}
 
-	input := GrepInput{Pattern: pattern}
+	conversationID, err := resolveToolConversation(
+		ctx,
+		t.authorize,
+		toolshared.ToolAgentID(ctx),
+		toolshared.ToolSessionKey(ctx),
+	)
+	if err != nil {
+		return tools.ErrorResult(err.Error())
+	}
+
+	if allConv, ok := args["all_conversations"].(bool); ok && allConv {
+		return tools.ErrorResult(
+			"all_conversations is not available to this tool; search is limited to the current conversation",
+		)
+	}
+
+	input := GrepInput{
+		Pattern:        pattern,
+		ConversationID: conversationID,
+	}
 
 	if scope, ok := args["scope"].(string); ok && scope != "" {
 		input.Scope = scope
@@ -127,9 +153,6 @@ func (t *GrepTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 	}
 	if last, ok := args["last"].(string); ok && last != "" {
 		input.Last = last
-	}
-	if allConv, ok := args["all_conversations"].(bool); ok {
-		input.AllConversations = allConv
 	}
 	if limit, ok := args["limit"].(float64); ok {
 		input.Limit = int(limit)

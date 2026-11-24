@@ -38,7 +38,8 @@ func TestRetrievalGrepSummaries(t *testing.T) {
 
 	// FTS5 search (trigram, needs >= 3 chars)
 	results, err := r.Grep(ctx, GrepInput{
-		Pattern: "数据库连",
+		Pattern:        "数据库连",
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep: %v", err)
@@ -49,7 +50,8 @@ func TestRetrievalGrepSummaries(t *testing.T) {
 
 	// LIKE search with wildcard
 	results, err = r.Grep(ctx, GrepInput{
-		Pattern: "%endpoint%",
+		Pattern:        "%endpoint%",
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep LIKE: %v", err)
@@ -67,7 +69,8 @@ func TestRetrievalGrepMessages(t *testing.T) {
 	s.AddMessage(ctx, convID, "user", "unrelated content here", 5)
 
 	results, err := r.Grep(ctx, GrepInput{
-		Pattern: "testing",
+		Pattern:        "testing",
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep: %v", err)
@@ -128,8 +131,9 @@ func TestRetrievalGrepWithTimeFilter(t *testing.T) {
 
 	// Search with time filter
 	results, err := r.Grep(ctx, GrepInput{
-		Pattern: "auth",
-		Since:   &before,
+		Pattern:        "auth",
+		Since:          &before,
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep: %v", err)
@@ -210,7 +214,8 @@ func TestRetrievalGrepRoleFilter(t *testing.T) {
 
 	// Search all roles
 	allResults, err := r.Grep(ctx, GrepInput{
-		Pattern: "alpha",
+		Pattern:        "alpha",
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep: %v", err)
@@ -221,8 +226,9 @@ func TestRetrievalGrepRoleFilter(t *testing.T) {
 
 	// Search user only
 	userResults, err := r.Grep(ctx, GrepInput{
-		Pattern: "alpha",
-		Role:    "user",
+		Pattern:        "alpha",
+		Role:           "user",
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep: %v", err)
@@ -236,8 +242,9 @@ func TestRetrievalGrepRoleFilter(t *testing.T) {
 
 	// Search assistant only
 	assistantResults, err := r.Grep(ctx, GrepInput{
-		Pattern: "alpha",
-		Role:    "assistant",
+		Pattern:        "alpha",
+		Role:           "assistant",
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep: %v", err)
@@ -259,8 +266,9 @@ func TestRetrievalGrepWithLast(t *testing.T) {
 
 	// Test that Last parameter is converted to Since
 	results, err := r.Grep(ctx, GrepInput{
-		Pattern: "testing",
-		Last:    "1d", // last 1 day
+		Pattern:        "testing",
+		Last:           "1d", // last 1 day
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep: %v", err)
@@ -293,9 +301,10 @@ func TestRetrievalGrepRoleFilterWithSummaries(t *testing.T) {
 	// Search with role filter and scope=both (default), using LIKE mode (%)
 	// This should NOT error even though summaries don't have role column
 	bothResults, err := r.Grep(ctx, GrepInput{
-		Pattern: "%testing%", // LIKE mode to trigger the bug
-		Role:    "user",
-		Scope:   "both",
+		Pattern:        "%testing%", // LIKE mode to trigger the bug
+		Role:           "user",
+		Scope:          "both",
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep with role and scope=both: %v", err)
@@ -336,9 +345,10 @@ func TestRetrievalGrepTotalCounts(t *testing.T) {
 
 	// Search with limit smaller than total
 	results, err := r.Grep(ctx, GrepInput{
-		Pattern: "%testing%", // LIKE mode
-		Scope:   "both",
-		Limit:   2,
+		Pattern:        "%testing%", // LIKE mode
+		Scope:          "both",
+		Limit:          2,
+		ConversationID: convID,
 	})
 	if err != nil {
 		t.Fatalf("Grep: %v", err)
@@ -358,5 +368,33 @@ func TestRetrievalGrepTotalCounts(t *testing.T) {
 	}
 	if results.TotalMessages != 5 {
 		t.Errorf("expected TotalMessages=5, got %d", results.TotalMessages)
+	}
+}
+
+func TestGrepRequiresTrustedConversation(t *testing.T) {
+	r, _, _ := newTestRetrieval(t)
+	_, err := r.Grep(context.Background(), GrepInput{Pattern: "anything"})
+	if err == nil {
+		t.Fatal("expected error when neither conversation nor all-conversations is set")
+	}
+}
+
+func TestExpandMessagesInConversationFiltersForeignIDs(t *testing.T) {
+	r, s, convID := newTestRetrieval(t)
+	ctx := context.Background()
+
+	trusted, _ := s.AddMessage(ctx, convID, "user", "trusted", 10)
+	otherConv, _ := s.GetOrCreateConversation(ctx, "test:retrieval-other")
+	foreign, _ := s.AddMessage(ctx, otherConv.ConversationID, "user", "foreign", 10)
+
+	result, err := r.ExpandMessagesInConversation(ctx, convID, []int64{trusted.ID, foreign.ID})
+	if err != nil {
+		t.Fatalf("ExpandMessagesInConversation: %v", err)
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("Messages = %d, want 1", len(result.Messages))
+	}
+	if result.Messages[0].Content != "trusted" {
+		t.Fatalf("Content = %q, want trusted", result.Messages[0].Content)
 	}
 }

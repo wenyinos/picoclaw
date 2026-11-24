@@ -6,15 +6,21 @@ import (
 	"fmt"
 
 	"github.com/sipeed/picoclaw/pkg/tools"
+	toolshared "github.com/sipeed/picoclaw/pkg/tools/shared"
 )
 
 // ExpandTool recovers full message content by ID.
 type ExpandTool struct {
-	engine *RetrievalEngine
+	engine    *RetrievalEngine
+	authorize ConversationResolver
 }
 
-func NewExpandTool(engine *RetrievalEngine) *ExpandTool {
-	return &ExpandTool{engine: engine}
+func NewExpandTool(engine *RetrievalEngine, resolvers ...ConversationResolver) *ExpandTool {
+	tool := &ExpandTool{engine: engine}
+	if len(resolvers) > 0 {
+		tool.authorize = resolvers[0]
+	}
+	return tool
 }
 
 func (t *ExpandTool) Name() string {
@@ -82,7 +88,17 @@ func (t *ExpandTool) Execute(ctx context.Context, args map[string]any) *tools.To
 		}
 	}
 
-	result, err := t.engine.ExpandMessages(ctx, messageIDs)
+	conversationID, err := resolveToolConversation(
+		ctx,
+		t.authorize,
+		toolshared.ToolAgentID(ctx),
+		toolshared.ToolSessionKey(ctx),
+	)
+	if err != nil {
+		return tools.ErrorResult(err.Error())
+	}
+
+	result, err := t.engine.ExpandMessagesInConversation(ctx, conversationID, messageIDs)
 	if err != nil {
 		return tools.ErrorResult("Expand failed: " + err.Error())
 	}

@@ -169,9 +169,10 @@ func (p *Pipeline) CallLLM(
 	if logger.GetLevel() <= logger.DEBUG {
 		logger.DebugCF("agent", "Full LLM request",
 			map[string]any{
-				"iteration":     iteration,
-				"messages_json": formatMessagesForLog(exec.callMessages),
-				"tools_json":    formatToolsForLog(exec.providerToolDefs),
+				"iteration":       iteration,
+				"messages_count":  len(exec.callMessages),
+				"messages_digest": logSafeDigest(formatMessagesForLog(exec.callMessages)),
+				"tools_json":      formatToolsForLog(exec.providerToolDefs),
 			})
 	}
 
@@ -213,6 +214,7 @@ func (p *Pipeline) CallLLM(
 			if err != nil {
 				return nil, err
 			}
+			sessionDerived := exec.summary != "" || messagesCarryMemoryContext(messagesForCall)
 			callOpts := shallowCloneLLMOptions(exec.llmOpts)
 			delete(callOpts, "thinking_level")
 			candidateTools := toolDefsForCall
@@ -248,7 +250,7 @@ func (p *Pipeline) CallLLM(
 			exec.suppressReasoning = shouldSuppressReasoningFor(candidateThinking)
 			// Every candidate — primary, fallback and retry — passes the same
 			// recipient policy before the request leaves the process.
-			if err := p.checkMemoryEgress(candidate.Provider, candidate.Model); err != nil {
+			if err := p.checkMemoryEgressFor(candidate.Provider, candidate.Model, sessionDerived); err != nil {
 				return nil, err
 			}
 			return candidateProvider.Chat(ctx, messagesForCall, candidateTools, candidate.Model, callOpts)
@@ -299,11 +301,18 @@ func (p *Pipeline) CallLLM(
 		}
 		// The single-provider branch is also a real send point. Without this
 		// check, a deployment without fallbacks bypassed the recipient policy.
-		if err := p.checkActiveCandidateEgress(exec); err != nil {
+		if err := p.checkActiveCandidateEgressFor(
+			exec,
+			exec.summary != "" || messagesCarryMemoryContext(messagesForCall),
+		); err != nil {
 			return nil, err
 		}
 		if len(exec.activeCandidates) == 0 && exec.activeModelConfig != nil {
-			if err := p.checkMemoryEgress(exec.activeModelConfig.Provider, exec.llmModel); err != nil {
+			if err := p.checkMemoryEgressFor(
+				exec.activeModelConfig.Provider,
+				exec.llmModel,
+				exec.summary != "" || messagesCarryMemoryContext(messagesForCall),
+			); err != nil {
 				return nil, err
 			}
 		}
@@ -343,6 +352,11 @@ func (p *Pipeline) CallLLM(
 
 		errMsg := strings.ToLower(err.Error())
 		retryReason, isTransientError := transientLLMRetryReason(err)
+		// Recipient policy denial is final: no retry, no fallback, no second
+		// provider call for the same turn.
+		if errors.Is(err, ErrMemoryEgressDenied) {
+			break
+		}
 		isContextError := !isTransientError && (strings.Contains(errMsg, "context_length_exceeded") ||
 			strings.Contains(errMsg, "context window") ||
 			strings.Contains(errMsg, "context_window") ||
@@ -610,13 +624,14 @@ func (p *Pipeline) CallLLM(
 	)
 
 	llmResponseFields := map[string]any{
-		"agent_id":       ts.agent.ID,
-		"iteration":      iteration,
-		"content_chars":  len(exec.response.Content),
-		"tool_calls":     len(exec.response.ToolCalls),
-		"reasoning":      exec.response.Reasoning,
-		"target_channel": al.targetReasoningChannelID(ts.channel),
-		"channel":        ts.channel,
+		"agent_id":         ts.agent.ID,
+		"iteration":        iteration,
+		"content_chars":    len(exec.response.Content),
+		"tool_calls":       len(exec.response.ToolCalls),
+		"reasoning_chars":  len(exec.response.Reasoning),
+		"reasoning_digest": logSafeDigest(exec.response.Reasoning),
+		"target_channel":   al.targetReasoningChannelID(ts.channel),
+		"channel":          ts.channel,
 	}
 	if exec.response.Usage != nil {
 		llmResponseFields["prompt_tokens"] = exec.response.Usage.PromptTokens

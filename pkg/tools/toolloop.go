@@ -31,6 +31,26 @@ type ToolLoopConfig struct {
 	MediaResolver func(messages []providers.Message) []providers.Message
 }
 
+// LLMCallGuard is checked before every provider call made by RunToolLoop.
+// Errors must stop the loop without calling the provider.
+type LLMCallGuard func(ctx context.Context, model string) error
+
+type llmCallGuardCtxKey struct{}
+
+// WithLLMCallGuard attaches a send-point policy check to a tool context. The
+// guard is inherited by subagent goroutines that reuse this context.
+func WithLLMCallGuard(ctx context.Context, guard LLMCallGuard) context.Context {
+	if guard == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, llmCallGuardCtxKey{}, guard)
+}
+
+func llmCallGuardFromContext(ctx context.Context) LLMCallGuard {
+	guard, _ := ctx.Value(llmCallGuardCtxKey{}).(LLMCallGuard)
+	return guard
+}
+
 // ToolLoopResult contains the result of running the tool loop.
 type ToolLoopResult struct {
 	Content    string
@@ -87,6 +107,11 @@ func RunToolLoop(
 		callMessages := messages
 		if config.MediaResolver != nil && iteration > 1 {
 			callMessages = config.MediaResolver(messages)
+		}
+		if guard := llmCallGuardFromContext(ctx); guard != nil {
+			if err := guard(ctx, config.Model); err != nil {
+				return nil, err
+			}
 		}
 		response, err := config.Provider.Chat(ctx, callMessages, providerToolDefs, config.Model, llmOpts)
 		if err != nil {

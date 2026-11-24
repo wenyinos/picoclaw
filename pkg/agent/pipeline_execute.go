@@ -542,15 +542,7 @@ toolLoop:
 			)
 			pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer pubCancel()
-			_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
-				Context: bus.InboundContext{
-					Channel:  "system",
-					ChatID:   fmt.Sprintf("%s:%s", ts.channel, ts.chatID),
-					ChatType: "direct",
-					SenderID: fmt.Sprintf("async:%s", asyncToolName),
-				},
-				Content: content,
-			})
+			_ = al.bus.PublishInbound(pubCtx, asyncFollowUpInboundMessage(ts, asyncToolName, content))
 		}
 
 		toolStart := time.Now()
@@ -568,6 +560,10 @@ toolLoop:
 			ts.sessionKey,
 			ts.opts.Dispatch.SessionScope,
 		)
+		execCtx = tools.WithLLMCallGuard(execCtx, func(_ context.Context, model string) error {
+			providerName, _ := agentPrimaryRecipient(ts.agent)
+			return checkMemoryEgressFor(p.Cfg, providerName, model, true)
+		})
 		toolResult := ts.agent.Tools.ExecuteWithContext(
 			execCtx,
 			toolName,
@@ -862,4 +858,57 @@ toolLoop:
 		"agent_id": ts.agent.ID, "iteration": iteration,
 	})
 	return ToolControlContinue
+}
+
+const asyncFollowUpSenderPrefix = "async:"
+
+// asyncFollowUpInboundMessage preserves the originating chat identity and
+// session so the follow-up cannot be mistaken for a different private chat.
+// The sender remains marked as an async tool so memory extraction can skip
+// session-derived text that has no trusted domain/source provenance.
+func asyncFollowUpInboundMessage(ts *turnState, toolName, content string) bus.InboundMessage {
+	chatType := "unknown"
+	channel, chatID, sessionKey := "", "", ""
+	if ts != nil {
+		channel = ts.channel
+		chatID = ts.chatID
+		sessionKey = ts.sessionKey
+		if ts.opts.Dispatch.InboundContext != nil {
+			if value := strings.TrimSpace(ts.opts.Dispatch.InboundContext.ChatType); value != "" {
+				chatType = value
+			}
+		}
+	}
+	if strings.TrimSpace(channel) == "" {
+		// Keep the internal follow-up path for sessions with no routable chat
+		// (CLI/tests) instead of publishing a context-less inbound message.
+		channel = "system"
+		if ts != nil {
+			chatID = fmt.Sprintf("%s:%s", ts.channel, ts.chatID)
+		}
+	}
+	senderID := asyncFollowUpSenderPrefix + toolName
+	return bus.InboundMessage{
+		Context: bus.InboundContext{
+			Channel:  channel,
+			ChatID:   chatID,
+			ChatType: chatType,
+			SenderID: senderID,
+		},
+		Content:    fmt.Sprintf("[System: %s] %s", senderID, content),
+		SessionKey: sessionKey,
+		Channel:    channel,
+		ChatID:     chatID,
+	}
+}
+
+func isAsyncFollowUpTurn(ts *turnState) bool {
+	if ts == nil {
+		return false
+	}
+	senderID := strings.TrimSpace(ts.opts.Dispatch.SenderID())
+	if senderID == "" {
+		senderID = strings.TrimSpace(ts.opts.SenderID)
+	}
+	return strings.HasPrefix(senderID, asyncFollowUpSenderPrefix)
 }

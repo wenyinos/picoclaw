@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
 	"github.com/sipeed/picoclaw/pkg/seahorse"
+	"github.com/sipeed/picoclaw/pkg/session"
 )
 
 // seahorseTestProvider implements providers.LLMProvider for seahorse tests.
@@ -389,6 +392,26 @@ func TestSeahorseToProviderMessagesToolResult(t *testing.T) {
 
 // --- providerToCompleteFn tests ---
 
+func newSeahorseCompleteTestLoop(t *testing.T, provider providers.LLMProvider, model string) (*AgentLoop, func()) {
+	t.Helper()
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: t.TempDir(),
+				ModelName: model,
+			},
+		},
+	}
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), provider)
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		al.Close()
+		t.Fatal("expected default agent")
+	}
+	agent.Model = model
+	return al, func() { al.Close() }
+}
+
 func TestProviderToCompleteFn(t *testing.T) {
 	var capturedMessages []providers.Message
 	var capturedModel string
@@ -403,7 +426,9 @@ func TestProviderToCompleteFn(t *testing.T) {
 		},
 	}
 
-	completeFn := providerToCompleteFn(mp, "test-model-v1")
+	al, cleanup := newSeahorseCompleteTestLoop(t, mp, "test-model-v1")
+	defer cleanup()
+	completeFn := providerToCompleteFn(al)
 	result, err := completeFn(context.Background(), "Summarize this text", seahorse.CompleteOptions{
 		MaxTokens:   500,
 		Temperature: 0.3,
@@ -474,10 +499,110 @@ func TestProviderToCompleteFnError(t *testing.T) {
 		},
 	}
 
-	completeFn := providerToCompleteFn(mp, "test-model")
+	al, cleanup := newSeahorseCompleteTestLoop(t, mp, "test-model")
+	defer cleanup()
+	completeFn := providerToCompleteFn(al)
 	_, err := completeFn(context.Background(), "test prompt", seahorse.CompleteOptions{})
 	if err == nil {
 		t.Error("expected error from canceled context")
+	}
+}
+
+func TestProviderToCompleteFnEgressDenied(t *testing.T) {
+	calls := 0
+	mp := &seahorseTestProvider{
+		chatFn: func(ctx context.Context, messages []providers.Message, tools []providers.ToolDefinition, model string, options map[string]any) (*providers.LLMResponse, error) {
+			calls++
+			return &providers.LLMResponse{Content: "should not be called"}, nil
+		},
+	}
+
+	al, cleanup := newSeahorseCompleteTestLoop(t, mp, "test-model")
+	defer cleanup()
+	cfg := al.GetConfig()
+	cfg.Memory.Enabled = false
+	cfg.Memory.BudgetTokens = 0
+	cfg.Memory.AllowedChatRecipients = []string{"openai/allowed-model"}
+	agent := al.registry.GetDefaultAgent()
+	agent.Candidates = []providers.FallbackCandidate{
+		{Provider: "openai", Model: "denied-model"},
+	}
+
+	completeFn := providerToCompleteFn(al)
+	_, err := completeFn(context.Background(), "summarize private conversation", seahorse.CompleteOptions{})
+	if !errors.Is(err, ErrMemoryEgressDenied) {
+		t.Fatalf("completeFn error = %v, want ErrMemoryEgressDenied", err)
+	}
+	if calls != 0 {
+		t.Fatalf("summary provider calls = %d, want 0", calls)
+	}
+}
+
+func TestResolveTrustedConversationTwoAgents(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: workspace,
+				ModelName: "test-model",
+			},
+			List: []config.AgentConfig{
+				{ID: "main", Default: true, Workspace: workspace},
+				{ID: "support", Workspace: workspace},
+			},
+		},
+	}
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &seahorseTestProvider{})
+	defer al.Close()
+
+	mainAgent, ok := al.registry.GetAgent("main")
+	if !ok || mainAgent == nil {
+		t.Fatal("missing main agent")
+	}
+	supportAgent, ok := al.registry.GetAgent("support")
+	if !ok || supportAgent == nil {
+		t.Fatal("missing support agent")
+	}
+
+	mainKey := session.BuildOpaqueSessionKey("agent:main:test:private")
+	supportKey := session.BuildOpaqueSessionKey("agent:support:test:private")
+	ensureSessionMetadata(mainAgent.Sessions, mainKey, &session.SessionScope{
+		Version: 1,
+		AgentID: "main",
+		Channel: "telegram",
+	}, nil)
+	ensureSessionMetadata(supportAgent.Sessions, supportKey, &session.SessionScope{
+		Version: 1,
+		AgentID: "support",
+		Channel: "telegram",
+	}, nil)
+
+	engine, err := seahorse.NewEngine(seahorse.Config{DBPath: filepath.Join(workspace, "sessions", "seahorse.db")}, nil)
+	if err != nil {
+		t.Fatalf("NewEngine: %v", err)
+	}
+	defer engine.Close()
+	ctx := context.Background()
+	mainConv, _ := engine.GetRetrieval().Store().GetOrCreateConversation(ctx, mainKey)
+	supportConv, _ := engine.GetRetrieval().Store().GetOrCreateConversation(ctx, supportKey)
+
+	mgr := &seahorseContextManager{engine: engine, al: al}
+	conversationID, err := mgr.resolveTrustedConversation(ctx, "main", mainKey)
+	if err != nil || conversationID != mainConv.ConversationID {
+		t.Fatalf("main resolution = %d/%v, want %d", conversationID, err, mainConv.ConversationID)
+	}
+	conversationID, err = mgr.resolveTrustedConversation(ctx, "support", supportKey)
+	if err != nil || conversationID != supportConv.ConversationID {
+		t.Fatalf("support resolution = %d/%v, want %d", conversationID, err, supportConv.ConversationID)
+	}
+	if _, err := mgr.resolveTrustedConversation(ctx, "support", mainKey); err == nil {
+		t.Fatal("cross-agent session must be rejected")
+	}
+
+	orphanKey := session.BuildOpaqueSessionKey("agent:main:test:orphan")
+	engine.GetRetrieval().Store().GetOrCreateConversation(ctx, orphanKey)
+	if _, err := mgr.resolveTrustedConversation(ctx, "main", orphanKey); err == nil {
+		t.Fatal("session without trusted ownership metadata must be rejected")
 	}
 }
 

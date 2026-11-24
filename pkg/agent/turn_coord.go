@@ -480,6 +480,13 @@ func (al *AgentLoop) askSideQuestion(
 		if !forceModel || strings.TrimSpace(model) == "" {
 			model = providerModel
 		}
+		providerName := candidate.Provider
+		if strings.TrimSpace(providerName) == "" {
+			providerName, _ = agentPrimaryRecipient(agent)
+		}
+		if err := checkMemoryEgressFor(al.GetConfig(), providerName, model, true); err != nil {
+			return nil, err
+		}
 		callOpts := llmOpts
 		settings := thinkingSettingsFromModelConfig(modelCfg)
 		sideSuppressReasoning = shouldSuppressReasoningFor(settings)

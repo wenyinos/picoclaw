@@ -400,12 +400,35 @@ func (s *Store) GetMessageCount(ctx context.Context, convID int64) (int, error) 
 
 // GetMessageByID retrieves a single message by ID.
 func (s *Store) GetMessageByID(ctx context.Context, messageID int64) (*Message, error) {
+	return s.getMessageByID(ctx, 0, messageID)
+}
+
+// GetMessageByIDInConversation is the authorized lookup used by model-facing
+// tools: the conversation predicate is part of the SQL query.
+func (s *Store) GetMessageByIDInConversation(
+	ctx context.Context,
+	conversationID int64,
+	messageID int64,
+) (*Message, error) {
+	if conversationID <= 0 {
+		return nil, fmt.Errorf("conversation id is required")
+	}
+	return s.getMessageByID(ctx, conversationID, messageID)
+}
+
+func (s *Store) getMessageByID(ctx context.Context, conversationID, messageID int64) (*Message, error) {
 	var msg Message
 	var createdAt string
+	query := "SELECT message_id, conversation_id, role, content, model_name, reasoning_content, token_count, created_at FROM messages WHERE message_id = ?"
+	args := []any{messageID}
+	if conversationID > 0 {
+		query += " AND conversation_id = ?"
+		args = append(args, conversationID)
+	}
 	err := s.db.QueryRowContext(
 		ctx,
-		"SELECT message_id, conversation_id, role, content, model_name, reasoning_content, token_count, created_at FROM messages WHERE message_id = ?",
-		messageID,
+		query,
+		args...,
 	).Scan(&msg.ID, &msg.ConversationID, &msg.Role, &msg.Content, &msg.ModelName, &msg.ReasoningContent, &msg.TokenCount, &createdAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("message %d not found", messageID)
@@ -808,6 +831,140 @@ func (s *Store) UpsertContextItems(ctx context.Context, convID int64, items []Co
 func (s *Store) ClearContextItems(ctx context.Context, convID int64) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM context_items WHERE conversation_id = ?", convID)
 	return err
+}
+
+// GetSessionKeyByConversation returns the stable session key for a local
+// conversation id, used to reacquire its write lock in async workers.
+func (s *Store) GetSessionKeyByConversation(ctx context.Context, convID int64) (string, error) {
+	var sessionKey string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT session_key FROM conversations WHERE conversation_id=?`, convID).Scan(&sessionKey)
+	return sessionKey, err
+}
+
+// DeleteMessagesByIDs removes specific messages from one conversation together
+// with their parts, context items and every summary that depended on them.
+// Parent summaries are deleted transitively because their generated text may
+// contain the removed child content.
+func (s *Store) DeleteMessagesByIDs(ctx context.Context, convID int64, messageIDs []int64) (int, error) {
+	if convID <= 0 || len(messageIDs) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	seen := map[int64]bool{}
+	ids := make([]int64, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, convID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	summarySet := map[string]bool{}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT DISTINCT summary_id FROM summary_messages WHERE message_id IN (`+ph+`)`, int64Args(ids)...)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var summaryID string
+		if err := rows.Scan(&summaryID); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		summarySet[summaryID] = true
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	// Parents include child content; remove ancestors transitively.
+	for changed := true; changed; {
+		changed = false
+		// Delete any parent that has an affected descendant.
+		affected := make([]any, 0, len(summarySet))
+		for id := range summarySet {
+			affected = append(affected, id)
+		}
+		if len(affected) == 0 {
+			break
+		}
+		aph := strings.TrimSuffix(strings.Repeat("?,", len(affected)), ",")
+		arows, err := tx.QueryContext(ctx,
+			`SELECT DISTINCT parent_summary_id FROM summary_parents WHERE summary_id IN (`+aph+`)`, affected...)
+		if err != nil {
+			return 0, err
+		}
+		for arows.Next() {
+			var parent string
+			if err := arows.Scan(&parent); err != nil {
+				_ = arows.Close()
+				return 0, err
+			}
+			if !summarySet[parent] {
+				summarySet[parent] = true
+				changed = true
+			}
+		}
+		_ = arows.Close()
+	}
+
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM context_items WHERE conversation_id=? AND message_id=?`, convID, id); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM message_parts WHERE message_id=?`, id); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM summary_messages WHERE message_id=?`, id); err != nil {
+			return 0, err
+		}
+	}
+	for summaryID := range summarySet {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM context_items WHERE summary_id=?`, summaryID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM summary_parents WHERE summary_id=? OR parent_summary_id=?`,
+			summaryID, summaryID); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM summaries WHERE summary_id=?`, summaryID); err != nil {
+			return 0, err
+		}
+	}
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM messages WHERE conversation_id=? AND message_id IN (`+ph+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+func int64Args(ids []int64) []any {
+	out := make([]any, len(ids))
+	for i, id := range ids {
+		out[i] = id
+	}
+	return out
 }
 
 // DeleteMessagesAfterID deletes all messages with ID > afterID for a conversation.

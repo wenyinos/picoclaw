@@ -78,6 +78,7 @@ type CompactionEngine struct {
 	condensing     sync.Map // map[int64]struct{} — dedup for async condensed goroutines
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
+	sessionLock    func(string) *sync.Mutex
 }
 
 // Assembler handles budget-aware context assembly (defined in short_assembler.go).
@@ -223,6 +224,15 @@ func fnv32(key string) uint32 {
 	return h
 }
 
+var fallbackSessionShards [numSessionShards]struct {
+	mu sync.Mutex
+}
+
+func fallbackSessionMutex(sessionKey string) *sync.Mutex {
+	h := fnv32(sessionKey)
+	return &fallbackSessionShards[h%numSessionShards].mu
+}
+
 // getSessionMutex returns the sharded mutex for a session key.
 func (e *Engine) getSessionMutex(sessionKey string) *sync.Mutex {
 	h := fnv32(sessionKey)
@@ -336,6 +346,9 @@ func (e *Engine) Compact(ctx context.Context, sessionKey string, input CompactIn
 	if e.shouldIgnoreSession(sessionKey) || e.isStatelessSession(sessionKey) {
 		return &CompactResult{}, nil
 	}
+	mu := e.getSessionMutex(sessionKey)
+	mu.Lock()
+	defer mu.Unlock()
 
 	conv, err := e.store.GetOrCreateConversation(ctx, sessionKey)
 	if err != nil {
@@ -352,6 +365,9 @@ func (e *Engine) CompactUntilUnder(ctx context.Context, sessionKey string, budge
 	if e.shouldIgnoreSession(sessionKey) || e.isStatelessSession(sessionKey) {
 		return &CompactResult{}, nil
 	}
+	mu := e.getSessionMutex(sessionKey)
+	mu.Lock()
+	defer mu.Unlock()
 
 	conv, err := e.store.GetOrCreateConversation(ctx, sessionKey)
 	if err != nil {
@@ -375,6 +391,7 @@ func (e *Engine) initCompactionOnce() {
 				complete:       e.complete,
 				shutdownCtx:    shutdownCtx,
 				shutdownCancel: shutdownCancel,
+				sessionLock:    e.getSessionMutex,
 			}
 		}
 	}
@@ -399,6 +416,9 @@ func (e *Engine) IngestMessages(ctx context.Context, sessionKey string, messages
 // ClearSession removes all stored data for a session (messages, summaries, context).
 // If the session has no prior seahorse record, it is a no-op.
 func (e *Engine) ClearSession(ctx context.Context, sessionKey string) error {
+	mu := e.getSessionMutex(sessionKey)
+	mu.Lock()
+	defer mu.Unlock()
 	conv, err := e.store.GetConversationBySessionKey(ctx, sessionKey)
 	if err != nil {
 		return err
@@ -407,6 +427,22 @@ func (e *Engine) ClearSession(ctx context.Context, sessionKey string) error {
 		return nil // session never ingested, nothing to clear
 	}
 	return e.store.ClearConversation(ctx, conv.ConversationID)
+}
+
+// DeleteMessagesBySession removes specific messages under the same session lock
+// used by ingest and compaction.
+func (e *Engine) DeleteMessagesBySession(ctx context.Context, sessionKey string, ids []int64) (int, error) {
+	mu := e.getSessionMutex(sessionKey)
+	mu.Lock()
+	defer mu.Unlock()
+	conv, err := e.store.GetConversationBySessionKey(ctx, sessionKey)
+	if err != nil {
+		return 0, err
+	}
+	if conv == nil {
+		return 0, nil
+	}
+	return e.store.DeleteMessagesByIDs(ctx, conv.ConversationID, ids)
 }
 
 // Bootstrap reconciles a session's messages with the database.

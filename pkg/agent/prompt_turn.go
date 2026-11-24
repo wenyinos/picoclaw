@@ -10,7 +10,9 @@ import (
 )
 
 // chatKindFromType maps the host-provided chat type to the memory permission
-// vocabulary. Unknown types stay empty (private-compatible maintenance view).
+// vocabulary. Missing or unknown types with a real chat context fail closed to
+// "public" so private memory can neither be read nor learned from that turn.
+// An empty context keeps the CLI/maintenance view.
 func chatKindFromType(in *bus.InboundContext) string {
 	if in == nil {
 		return ""
@@ -23,6 +25,9 @@ func chatKindFromType(in *bus.InboundContext) string {
 	case "direct", "private":
 		return "private"
 	default:
+		if strings.TrimSpace(in.Channel) != "" || strings.TrimSpace(in.ChatID) != "" {
+			return "public"
+		}
 		return ""
 	}
 }

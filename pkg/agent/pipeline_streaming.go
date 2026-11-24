@@ -80,7 +80,10 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 	var streamErr error
 	// Egress policy is checked before the actual stream handoff, not only at
 	// turn start: a revoked or unlisted recipient must not receive the prompt.
-	if err := p.checkActiveCandidateEgress(exec); err != nil {
+	if err := p.checkActiveCandidateEgressFor(
+		exec,
+		exec.summary != "" || messagesCarryMemoryContext(messagesForCall),
+	); err != nil {
 		return nil, true, err
 	}
 	if eventProvider, ok := exec.activeProvider.(providers.StreamingEventProvider); ok {

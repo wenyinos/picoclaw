@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -15,6 +16,20 @@ import (
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/tokenizer"
 )
+
+type seahorseSessionKeyCtxKey struct{}
+
+func withSeahorseSessionKey(ctx context.Context, sessionKey string) context.Context {
+	if strings.TrimSpace(sessionKey) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, seahorseSessionKeyCtxKey{}, sessionKey)
+}
+
+func seahorseSessionKeyFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(seahorseSessionKeyCtxKey{}).(string)
+	return value
+}
 
 // seahorseContextManager adapts seahorse.Engine to agent.ContextManager.
 type seahorseContextManager struct {
@@ -35,7 +50,7 @@ func newSeahorseContextManager(_ json.RawMessage, al *AgentLoop) (ContextManager
 	dbPath := agent.Workspace + "/sessions/seahorse.db"
 
 	// Create CompleteFn from provider
-	completeFn := providerToCompleteFn(agent.Provider, agent.Model)
+	completeFn := providerToCompleteFn(al)
 
 	// Create engine
 	engine, err := seahorse.NewEngine(seahorse.Config{
@@ -53,8 +68,8 @@ func newSeahorseContextManager(_ json.RawMessage, al *AgentLoop) (ContextManager
 
 	// Register seahorse tools with the agent's tool registry
 	retrieval := mgr.engine.GetRetrieval()
-	al.RegisterTool(seahorse.NewGrepTool(retrieval))
-	al.RegisterTool(seahorse.NewExpandTool(retrieval))
+	al.RegisterTool(seahorse.NewGrepTool(retrieval, mgr.resolveTrustedConversation))
+	al.RegisterTool(seahorse.NewExpandTool(retrieval, mgr.resolveTrustedConversation))
 
 	// Bootstrap all existing sessions at startup
 	if agent.Sessions != nil {
@@ -67,10 +82,21 @@ func newSeahorseContextManager(_ json.RawMessage, al *AgentLoop) (ContextManager
 	return mgr, nil
 }
 
-// providerToCompleteFn wraps providers.LLMProvider as a seahorse.CompleteFn.
-func providerToCompleteFn(provider providers.LLMProvider, model string) seahorse.CompleteFn {
+// providerToCompleteFn wraps the owning agent's provider as a
+// seahorse.CompleteFn. The provider is resolved per call from the trusted
+// session context so a background summary never reuses another agent's (or a
+// stale default agent's) recipient identity.
+func providerToCompleteFn(al *AgentLoop) seahorse.CompleteFn {
 	return func(ctx context.Context, prompt string, opts seahorse.CompleteOptions) (string, error) {
-		resp, err := provider.Chat(
+		agent := al.seahorseSummaryAgent(ctx)
+		if agent == nil || agent.Provider == nil {
+			return "", fmt.Errorf("seahorse: summary provider is unavailable")
+		}
+		providerName, model := agentPrimaryRecipient(agent)
+		if err := checkMemoryEgressFor(al.GetConfig(), providerName, model, true); err != nil {
+			return "", err
+		}
+		resp, err := agent.Provider.Chat(
 			ctx,
 			[]providers.Message{{Role: "user", Content: prompt}},
 			nil, // no tools for summarization
@@ -86,6 +112,69 @@ func providerToCompleteFn(provider providers.LLMProvider, model string) seahorse
 		}
 		return resp.Content, nil
 	}
+}
+
+// seahorseSummaryAgent resolves the agent that owns the conversation being
+// summarized. Without a trusted session key it falls back to the current
+// default agent, never to a captured provider snapshot.
+func (al *AgentLoop) seahorseSummaryAgent(ctx context.Context) *AgentInstance {
+	if al == nil || al.registry == nil {
+		return nil
+	}
+	if sessionKey := seahorseSessionKeyFromContext(ctx); sessionKey != "" {
+		if agent := al.agentForSession(sessionKey); agent != nil {
+			return agent
+		}
+	}
+	return al.registry.GetDefaultAgent()
+}
+
+// resolveTrustedConversation is the seahorse tool-side authorization boundary.
+// It proves that the session belongs to the tool context's agent and maps it
+// to exactly one conversation. Missing or conflicting ownership fails closed.
+func (m *seahorseContextManager) resolveTrustedConversation(
+	ctx context.Context,
+	agentID, sessionKey string,
+) (int64, error) {
+	agentID = strings.TrimSpace(agentID)
+	sessionKey = strings.TrimSpace(sessionKey)
+	if agentID == "" || sessionKey == "" {
+		return 0, fmt.Errorf("trusted agent and session identity are required")
+	}
+	if m == nil || m.al == nil || m.al.registry == nil {
+		return 0, fmt.Errorf("agent registry is unavailable")
+	}
+
+	owners := 0
+	for _, candidateID := range m.al.registry.ListAgentIDs() {
+		agent, ok := m.al.registry.GetAgent(candidateID)
+		if !ok || agent == nil || agent.Sessions == nil {
+			continue
+		}
+		resolved := session.ResolveAgentID(agent.Sessions, sessionKey)
+		if resolved == "" {
+			continue
+		}
+		if !strings.EqualFold(resolved, agentID) {
+			return 0, fmt.Errorf("session belongs to a different agent")
+		}
+		if !strings.EqualFold(agent.ID, resolved) {
+			continue
+		}
+		owners++
+	}
+	if owners != 1 {
+		return 0, fmt.Errorf("cannot prove exactly one owner for this session")
+	}
+
+	conversation, err := m.engine.GetRetrieval().Store().GetConversationBySessionKey(ctx, sessionKey)
+	if err != nil {
+		return 0, err
+	}
+	if conversation == nil {
+		return 0, fmt.Errorf("conversation not found for this session")
+	}
+	return conversation.ConversationID, nil
 }
 
 // Assemble builds budget-aware context from seahorse SQLite.
@@ -109,7 +198,7 @@ func (m *seahorseContextManager) Assemble(ctx context.Context, req *AssembleRequ
 		effectiveBudget = budget / 2
 	}
 
-	result, err := m.engine.Assemble(ctx, req.SessionKey, seahorse.AssembleInput{
+	result, err := m.engine.Assemble(withSeahorseSessionKey(ctx, req.SessionKey), req.SessionKey, seahorse.AssembleInput{
 		Budget: effectiveBudget,
 	})
 	if err != nil {
@@ -134,11 +223,11 @@ func (m *seahorseContextManager) Compact(ctx context.Context, req *CompactReques
 	// For retry (LLM overflow), use aggressive CompactUntilUnder to guarantee
 	// context shrinks below budget (spec lines ~1410).
 	if req.Reason == ContextCompressReasonRetry && req.Budget > 0 {
-		_, err := m.engine.CompactUntilUnder(ctx, req.SessionKey, req.Budget)
+		_, err := m.engine.CompactUntilUnder(withSeahorseSessionKey(ctx, req.SessionKey), req.SessionKey, req.Budget)
 		return err
 	}
 
-	_, err := m.engine.Compact(ctx, req.SessionKey, seahorse.CompactInput{
+	_, err := m.engine.Compact(withSeahorseSessionKey(ctx, req.SessionKey), req.SessionKey, seahorse.CompactInput{
 		Force:  req.Reason == ContextCompressReasonRetry,
 		Budget: &req.Budget,
 	})

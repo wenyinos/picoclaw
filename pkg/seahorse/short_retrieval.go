@@ -42,12 +42,38 @@ func ParseLastDuration(s string) (time.Duration, error) {
 	}
 }
 
+// ConversationResolver maps trusted tool session identity to the conversation
+// the caller is allowed to read. It is supplied by the agent runtime; the
+// seahorse package cannot resolve agent ownership on its own.
+type ConversationResolver func(ctx context.Context, agentID, sessionKey string) (int64, error)
+
+// resolveToolConversation requires both identity fields and a non-zero
+// conversation. Any gap fails closed rather than falling back to a global
+// search.
+func resolveToolConversation(ctx context.Context, resolver ConversationResolver, agentID, sessionKey string) (int64, error) {
+	if strings.TrimSpace(agentID) == "" || strings.TrimSpace(sessionKey) == "" {
+		return 0, fmt.Errorf("seahorse: trusted tool session identity is required")
+	}
+	if resolver == nil {
+		return 0, fmt.Errorf("seahorse: conversation authorization is unavailable")
+	}
+	conversationID, err := resolver(ctx, agentID, sessionKey)
+	if err != nil {
+		return 0, fmt.Errorf("seahorse: conversation authorization failed: %w", err)
+	}
+	if conversationID <= 0 {
+		return 0, fmt.Errorf("seahorse: no authorized conversation for this session")
+	}
+	return conversationID, nil
+}
+
 // GrepInput controls search across summaries and messages.
 type GrepInput struct {
 	Pattern          string     `json:"pattern"`
 	Scope            string     `json:"scope,omitempty"` // "both" (default), "summary", or "message"
 	Role             string     `json:"role,omitempty"`  // "user", "assistant", or "" (all)
 	AllConversations bool       `json:"allConversations,omitempty"`
+	ConversationID   int64      `json:"conversationId,omitempty"`
 	Since            *time.Time `json:"since,omitempty"`
 	Before           *time.Time `json:"before,omitempty"`
 	Last             string     `json:"last,omitempty"` // shortcut: "6h", "7d", "2w", "1m"
@@ -96,6 +122,9 @@ func (r *RetrievalEngine) Grep(ctx context.Context, input GrepInput) (*GrepResul
 	if input.Pattern == "" {
 		return nil, fmt.Errorf("grep: pattern is required")
 	}
+	if !input.AllConversations && input.ConversationID <= 0 {
+		return nil, fmt.Errorf("grep: trusted conversation is required unless all_conversations is set")
+	}
 
 	limit := input.Limit
 	if limit == 0 {
@@ -124,6 +153,7 @@ func (r *RetrievalEngine) Grep(ctx context.Context, input GrepInput) (*GrepResul
 		Mode:             mode,
 		Role:             input.Role,
 		AllConversations: input.AllConversations,
+		ConversationID:   input.ConversationID,
 		Since:            since,
 		Before:           input.Before,
 		Limit:            limit,
@@ -190,13 +220,15 @@ func (r *RetrievalEngine) Grep(ctx context.Context, input GrepInput) (*GrepResul
 
 	// Add hint if no results
 	if len(result.Summaries) == 0 && len(result.Messages) == 0 {
-		result.Hint = "No matches. Try: %keyword% for fuzzy search, or all_conversations: true"
+		result.Hint = "No matches. Try: %keyword% for fuzzy search"
 	}
 
 	return result, nil
 }
 
-// ExpandMessages retrieves full message content by IDs.
+// ExpandMessages retrieves full message content by IDs. It is an
+// administrative/diagnostic API: callers handling model input must use
+// ExpandMessagesInConversation so IDs cannot escape the trusted conversation.
 func (r *RetrievalEngine) ExpandMessages(ctx context.Context, messageIDs []int64) (*ExpandMessagesResult, error) {
 	result := &ExpandMessagesResult{
 		Messages: make([]Message, 0, len(messageIDs)),
@@ -204,6 +236,33 @@ func (r *RetrievalEngine) ExpandMessages(ctx context.Context, messageIDs []int64
 
 	for _, msgID := range messageIDs {
 		msg, err := r.store.GetMessageByID(ctx, msgID)
+		if err != nil {
+			continue
+		}
+		result.Messages = append(result.Messages, *msg)
+		result.TokenCount += msg.TokenCount
+	}
+
+	return result, nil
+}
+
+// ExpandMessagesInConversation retrieves messages only when they belong to the
+// authorized conversation. The conversation predicate is part of the SQL
+// query, not a post-fetch filter on model-supplied IDs.
+func (r *RetrievalEngine) ExpandMessagesInConversation(
+	ctx context.Context,
+	conversationID int64,
+	messageIDs []int64,
+) (*ExpandMessagesResult, error) {
+	if conversationID <= 0 {
+		return nil, fmt.Errorf("expand: trusted conversation is required")
+	}
+	result := &ExpandMessagesResult{
+		Messages: make([]Message, 0, len(messageIDs)),
+	}
+
+	for _, msgID := range messageIDs {
+		msg, err := r.store.GetMessageByIDInConversation(ctx, conversationID, msgID)
 		if err != nil {
 			continue
 		}

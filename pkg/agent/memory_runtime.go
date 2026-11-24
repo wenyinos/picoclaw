@@ -12,21 +12,22 @@ import (
 
 func memstoreConfigFrom(cfg config.MemoryConfig) memstore.Config {
 	return memstore.Config{
-		Enabled:               cfg.Enabled,
-		DBPath:                cfg.DBPath,
-		BudgetTokens:          cfg.BudgetTokens,
-		AutoExtract:           cfg.AutoExtract,
-		ExtractModel:          cfg.ExtractModel,
-		PrivateChannelExclusions:       append([]string(nil), cfg.PrivateChannelExclusions...),
-		InjectFictional:       cfg.InjectFictional,
-		ReviewRequired:        cfg.ReviewRequired,
-		EpisodicRetentionDays: cfg.EpisodicRetentionDays,
+		Enabled:                  cfg.Enabled,
+		DBPath:                   cfg.DBPath,
+		BudgetTokens:             cfg.BudgetTokens,
+		AutoExtract:              cfg.AutoExtract,
+		ExtractModel:             cfg.ExtractModel,
+		PrivateChannelExclusions: append([]string(nil), cfg.PrivateChannelExclusions...),
+		InjectFictional:          cfg.InjectFictional,
+		ReviewRequired:           cfg.ReviewRequired,
+		EpisodicRetentionDays:    cfg.EpisodicRetentionDays,
 	}
 }
 
 // sharedChatKind reports whether this turn arrived from a group or public
 // chat. Shared conversations must never feed the personal long-term profile:
-// the text belongs to the group, not to the owner (0.7.3).
+// the text belongs to the group, not to the owner (0.7.3). A chat context with
+// a missing or unknown ChatType fails closed as shared.
 func sharedChatKind(ts *turnState) bool {
 	if ts == nil {
 		return false
@@ -38,8 +39,18 @@ func sharedChatKind(ts *turnState) bool {
 	switch strings.ToLower(strings.TrimSpace(req.InboundContext.ChatType)) {
 	case "group", "channel", "public":
 		return true
+	case "direct", "private":
+		return false
 	}
-	return false
+	return strings.TrimSpace(req.InboundContext.Channel) != "" ||
+		strings.TrimSpace(req.InboundContext.ChatID) != ""
+}
+
+// shouldAutoExtractMemory reports whether the turn text has trusted private
+// provenance. Shared/unknown chats and session-derived async follow-ups are
+// excluded from automatic learning.
+func shouldAutoExtractMemory(ts *turnState) bool {
+	return !sharedChatKind(ts) && !isAsyncFollowUpTurn(ts)
 }
 
 // extractMemoryAsync applies conservative rule-based extraction after a turn.

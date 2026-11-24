@@ -292,6 +292,11 @@ func (m *legacyContextManager) retryLLMCall(
 ) (*providers.LLMResponse, error) {
 	const llmTemperature = 0.3
 
+	providerName, model := agentPrimaryRecipient(agent)
+	if err := checkMemoryEgressFor(m.al.GetConfig(), providerName, model, true); err != nil {
+		return nil, err
+	}
+
 	var resp *providers.LLMResponse
 	var err error
 
@@ -303,7 +308,7 @@ func (m *legacyContextManager) retryLLMCall(
 				ctx,
 				[]providers.Message{{Role: "user", Content: prompt}},
 				nil,
-				agent.Model,
+				model,
 				map[string]any{
 					"max_tokens":       agent.MaxTokens,
 					"temperature":      llmTemperature,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -16,9 +17,9 @@ func TestExpandToolByMessageIDs(t *testing.T) {
 	msg2, _ := s.AddMessage(ctx, conv.ConversationID, "assistant", "second message", 10)
 
 	re := &RetrievalEngine{store: s}
-	tool := NewExpandTool(re)
+	tool := NewExpandTool(re, fixedConversationResolver(conv.ConversationID))
 
-	result := tool.Execute(ctx, map[string]any{
+	result := tool.Execute(seahorseToolContext("main", conv.SessionKey), map[string]any{
 		"message_ids": []any{fmt.Sprintf("%d", msg1.ID), fmt.Sprintf("%d", msg2.ID)},
 	})
 
@@ -73,9 +74,9 @@ func TestExpandToolWithParts(t *testing.T) {
 	msg, _ := s.AddMessageWithParts(ctx, conv.ConversationID, "assistant", parts, 50)
 
 	re := &RetrievalEngine{store: s}
-	tool := NewExpandTool(re)
+	tool := NewExpandTool(re, fixedConversationResolver(conv.ConversationID))
 
-	result := tool.Execute(ctx, map[string]any{
+	result := tool.Execute(seahorseToolContext("main", conv.SessionKey), map[string]any{
 		"message_ids": []any{fmt.Sprintf("%d", msg.ID)},
 	})
 
@@ -132,5 +133,44 @@ func TestExpandToolWithParts(t *testing.T) {
 	}
 	if !foundToolResult {
 		t.Error("missing tool_result part")
+	}
+}
+
+func TestExpandToolRejectsForeignConversation(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	trusted, _ := s.GetOrCreateConversation(ctx, "agent:main:test:expand-trusted")
+	other, _ := s.GetOrCreateConversation(ctx, "agent:main:test:expand-other")
+
+	trustedMsg, _ := s.AddMessage(ctx, trusted.ConversationID, "user", "trusted content", 5)
+	otherMsg, _ := s.AddMessage(ctx, other.ConversationID, "user", "foreign secret content", 5)
+
+	tool := NewExpandTool(&RetrievalEngine{store: s}, fixedConversationResolver(trusted.ConversationID))
+	result := tool.Execute(
+		seahorseToolContext("main", trusted.SessionKey),
+		map[string]any{"message_ids": []any{
+			fmt.Sprintf("%d", trustedMsg.ID),
+			fmt.Sprintf("%d", otherMsg.ID),
+		}},
+	)
+	if result.IsError {
+		t.Fatalf("expand failed: %s", result.ForLLM)
+	}
+	if !strings.Contains(result.ForLLM, "trusted content") {
+		t.Fatalf("trusted message missing: %s", result.ForLLM)
+	}
+	if strings.Contains(result.ForLLM, "foreign secret content") {
+		t.Fatalf("expand leaked a foreign conversation message: %s", result.ForLLM)
+	}
+}
+
+func TestExpandToolRejectsMissingIdentity(t *testing.T) {
+	s := openTestStore(t)
+	tool := NewExpandTool(&RetrievalEngine{store: s}, fixedConversationResolver(1))
+	result := tool.Execute(context.Background(), map[string]any{
+		"message_ids": []any{"1"},
+	})
+	if !result.IsError {
+		t.Fatal("expected error when tool session identity is missing")
 	}
 }
