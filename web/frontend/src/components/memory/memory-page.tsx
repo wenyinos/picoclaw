@@ -9,6 +9,7 @@ import {
   type MemoryCommitment,
   type MemoryDomain,
   type MemoryEntry,
+  type MemoryJob,
   type MemoryLedgerHealth,
   type MemoryMigrationReport,
   type MemoryMigrationStatus,
@@ -140,6 +141,7 @@ function GovernanceTab({
   const [health, setHealth] = useState<MemoryLedgerHealth | null>(null)
   const [plans, setPlans] = useState<MemoryChangePlan[]>([])
   const [jobStats, setJobStats] = useState<Record<string, number>>({})
+  const [jobs, setJobs] = useState<MemoryJob[]>([])
   const [domains, setDomains] = useState<MemoryDomain[]>([])
   const [commitments, setCommitments] = useState<MemoryCommitment[]>([])
   const [clusters, setClusters] = useState<MemoryCluster[]>([])
@@ -158,6 +160,7 @@ function GovernanceTab({
     ])
     setHealth(h)
     setPlans(p.plans)
+    setJobs(j.jobs)
     setJobStats(j.stats)
     setDomains(d.domains)
     setCommitments(c.commitments)
@@ -179,6 +182,13 @@ function GovernanceTab({
   }
 
   const replay = async () => {
+    if (
+      !window.confirm(
+        "重放账本会按历史 manifest 删除恢复后再次出现的条目与派生数据。仅在恢复旧备份后使用。确认执行？",
+      )
+    ) {
+      return
+    }
     try {
       const r = await memoryApi.replayForget()
       onNotice(`账本重放完成：删除 ${r.removed} 条复活数据`)
@@ -219,7 +229,11 @@ function GovernanceTab({
               {health.path} · key {health.key_id}
             </div>
             <div>
-              待清理义务：{health.pending ?? 0} 条；账本 UUID：{health.ledger_uuid}
+              未 applied 账本意图：{health.pending ?? 0} 条；账本 UUID：
+              {health.ledger_uuid}
+            </div>
+            <div className="text-muted-foreground text-xs">
+              清理积压以下方 cleanup job 为准；主库 applied 不等于会话副本已清除。
             </div>
             <div>
               <Button size="sm" variant="outline" onClick={replay}>
@@ -276,6 +290,21 @@ function GovernanceTab({
             ))
           )}
         </div>
+        {jobs.length > 0 && (
+          <div className="mt-3 flex flex-col gap-2 text-sm">
+            {jobs.map((job) => (
+              <div key={job.job_id} className="rounded-md border p-2">
+                <div className="break-all">
+                  {job.kind} · {job.state} · attempts {job.attempts}
+                </div>
+                <div className="text-muted-foreground text-xs break-all">
+                  {job.job_id}
+                  {job.last_error ? ` · ${job.last_error}` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-lg border p-4">
@@ -1109,17 +1138,17 @@ function MigrationTab({
           </Button>
           {status && !status.needs_migration && (
             <span className="text-sm text-emerald-600">
-              数据库已是最新；按钮会重新备份并校验。
+              数据库 Schema 已是最新；仅在实际变更前创建新备份。
             </span>
           )}
           {status?.needs_migration && (
             <span className="text-muted-foreground text-sm">
-              {status.needs_schema_migration
-                ? "需要 schema 升级"
-                : "需要数据迁移"}
-              {status.needs_data_migration
-                ? ` · ${status.empty_predicate} 条空 predicate`
-                : ""}
+              {status.needs_schema_migration ? "需要 schema 迁移/修复" : ""}
+            </span>
+          )}
+          {status && status.empty_predicate > 0 && (
+            <span className="text-muted-foreground text-sm">
+              数据质量提示：{status.empty_predicate} 条空 predicate（不阻塞迁移）
             </span>
           )}
         </div>

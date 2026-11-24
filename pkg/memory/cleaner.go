@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/sipeed/picoclaw/pkg/memstore"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -46,6 +47,9 @@ func (c *LocatorCleaner) CleanLocators(
 	// Group by session so each file is read, verified and rewritten once.
 	bySession := map[string][]memstore.SourceLocator{}
 	for _, loc := range locators {
+		if strings.HasPrefix(loc.RootType, "seahorse.") {
+			continue // another backend owns this locator
+		}
 		if loc.SessionKey == "" || loc.EvidenceHMAC == "" {
 			out.Unavailable++
 			out.Details = append(out.Details,

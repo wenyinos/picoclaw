@@ -985,8 +985,11 @@ func (s *Store) MigrationStatus(ctx context.Context) (MigrationStatus, error) {
 	if info, err := os.Stat(s.path); err == nil {
 		st.DBSize = info.Size()
 	}
-	st.NeedsDataMigration = st.EmptyPredicate > 0
-	st.NeedsMigration = st.NeedsSchemaMigration || st.NeedsDataMigration
+	// Empty predicates are a data-quality signal, not an actionable schema
+	// migration. Keeping this false prevents a permanent banner that the v4
+	// segment cannot clear.
+	st.NeedsDataMigration = false
+	st.NeedsMigration = st.NeedsSchemaMigration
 	return st, nil
 }
 
