@@ -1059,6 +1059,58 @@ func (s *JSONLStore) SetHistory(
 	return s.rewriteJSONL(sessionKey, history)
 }
 
+// MutateHistory atomically reads, mutates and rewrites one session while
+// holding its shard lock. Pending appends are flushed first, so cleanup sees
+// the same history an active writer would.
+func (s *JSONLStore) MutateHistory(
+	ctx context.Context,
+	sessionKey string,
+	fn func([]providers.Message) ([]providers.Message, error),
+) error {
+	if fn == nil {
+		return fmt.Errorf("memory: nil history mutation")
+	}
+	l := s.sessionLock(sessionKey)
+	l.Lock()
+	defer l.Unlock()
+
+	if err := s.flushLocked(sessionKey); err != nil {
+		return err
+	}
+	meta, err := s.readMeta(sessionKey)
+	if err != nil {
+		return err
+	}
+	history, err := readMessages(s.jsonlPath(sessionKey), meta.Skip)
+	if err != nil {
+		return err
+	}
+	history, err = fn(history)
+	if err != nil {
+		return err
+	}
+	history = messageutil.FilterInvalidHistoryMessages(history)
+	now := time.Now()
+	if meta.CreatedAt.IsZero() {
+		meta.CreatedAt = now
+	}
+	meta.Skip = 0
+	meta.Count = len(history)
+	meta.UpdatedAt = now
+	for i := range history {
+		if history[i].CreatedAt == nil {
+			history[i].CreatedAt = &now
+		}
+	}
+	if err := s.writeMeta(sessionKey, meta); err != nil {
+		return err
+	}
+	if err := s.rewriteJSONL(sessionKey, history); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Compact physically rewrites the JSONL file, dropping all logically
 // skipped lines. This reclaims disk space that accumulates after
 // repeated TruncateHistory calls.

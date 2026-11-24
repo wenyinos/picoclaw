@@ -173,6 +173,9 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 	if err := prepareAddInput(&in); err != nil {
 		return nil, err
 	}
+	if err := s.prepareEvidenceRoot(&in); err != nil {
+		return nil, err
+	}
 
 	now := time.Now().UnixMilli()
 	requestID := auditRequest(ctx)
@@ -312,18 +315,8 @@ func (s *Store) Forget(ctx context.Context, id string, dryRun bool) (*ForgetPrev
 		`DELETE FROM supersedes WHERE entry_id=? OR superseded_id=?`, id, id); err != nil {
 		return nil, err
 	}
-	if len(clusters) > 0 {
-		args := []any{now, now}
-		for _, c := range clusters {
-			args = append(args, c)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE memory_summary_versions SET status='invalidated', superseded_at=?,
-			 invalidated_at=?
-			 WHERE status='active' AND cluster_id IN (`+placeholders(len(clusters))+`)`,
-			args...); err != nil {
-			return nil, err
-		}
+	if err := s.redactSummariesForEntryTx(ctx, tx, id, clusters, now); err != nil {
+		return nil, err
 	}
 	// Relationship copies must go with the fact they were derived from.
 	for _, key := range relKeys {
@@ -387,9 +380,10 @@ func (s *Store) relationshipKeysForEntryLocked(ctx context.Context, entryID, pre
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, key := range relationshipKeysForPredicate(predicate, subject) {
-		keys[key] = true
-	}
+	// Predicate fallback is intentionally not used for deletion: a manually
+	// edited nickname/birthday can share the predicate without being derived
+	// from this entry. Legacy copies without provenance stay visible and are
+	// reported as unverifiable instead of being erased by guesswork.
 	out := make([]string, 0, len(keys))
 	for key := range keys {
 		out = append(out, key)
@@ -397,30 +391,9 @@ func (s *Store) relationshipKeysForEntryLocked(ctx context.Context, entryID, pre
 	return out, nil
 }
 
-// relationshipKeysForPredicate maps extractor predicates to the relationship
-// keys they mirror. subject narrows nickname copies to the right side.
-func relationshipKeysForPredicate(predicate, subject string) []string {
-	switch strings.TrimSpace(predicate) {
-	case "nickname":
-		switch strings.TrimSpace(subject) {
-		case "user":
-			return []string{"user_name"}
-		case "ai":
-			return []string{"ai_name"}
-		default:
-			return []string{"user_name", "ai_name"}
-		}
-	case "birthday":
-		return []string{"birthday"}
-	case "anniversary":
-		return []string{"anniversary"}
-	}
-	return nil
-}
-
-// ReplayForget re-applies every forget obligation from the independent ledger
-// to entries that came back after restoring an older backup. It matches by
-// versioned HMAC, so a restored database never needs the deleted text.
+// ReplayForget re-applies forget obligations from the independent ledger after
+// an older database is restored. It acts only on the manifest's entry IDs and
+// domain, never on a database-wide content-hash scan.
 func (s *Store) ReplayForget(ctx context.Context) (int, error) {
 	if err := s.checkReady(); err != nil {
 		return 0, err
@@ -432,33 +405,33 @@ func (s *Store) ReplayForget(ctx context.Context) (int, error) {
 	if s.ledger == nil {
 		return 0, fmt.Errorf("memstore: forget ledger unavailable")
 	}
-	digests, err := s.ledger.AllDigests(ctx)
+	intents, err := s.ledger.AllIntents(ctx)
 	if err != nil {
 		return 0, err
 	}
-	if len(digests) == 0 {
-		return 0, nil
+	type replayIntent struct {
+		intent   ForgetIntent
+		manifest ForgetTargetManifest
+		clusters map[string][]string
 	}
-	digestSet := make(map[string]bool, len(digests))
-	for _, d := range digests {
-		digestSet[d] = true
-	}
-
-	// Relationship keys from journal manifests are needed because the entry
-	// rows that would have pointed at them no longer exist.
-	relKeys := map[string]bool{}
-	intents, err := s.ledger.Recent(ctx, 500)
-	if err != nil {
-		return 0, err
-	}
-	for _, in := range intents {
-		m, mErr := ParseManifest(in.TargetManifest)
-		if mErr != nil {
+	replayable := make([]replayIntent, 0, len(intents))
+	for _, intent := range intents {
+		manifest, parseErr := ParseManifest(intent.TargetManifest)
+		if parseErr != nil || len(manifest.EntryIDs) == 0 {
 			continue
 		}
-		for _, key := range m.RelationshipKeys {
-			relKeys[key] = true
+		clusters := map[string][]string{}
+		for _, id := range manifest.EntryIDs {
+			cs, clusterErr := s.clusterIDsLocked(ctx, id)
+			if clusterErr != nil {
+				return 0, clusterErr
+			}
+			clusters[id] = cs
 		}
+		replayable = append(replayable, replayIntent{intent: intent, manifest: manifest, clusters: clusters})
+	}
+	if len(replayable) == 0 {
+		return 0, nil
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -467,66 +440,68 @@ func (s *Store) ReplayForget(ctx context.Context) (int, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Collect ids first: the single SQLite connection cannot run Exec while a
-	// result set is still open.
-	type candidate struct {
-		id   string
-		text string
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT id, text FROM entries`)
-	if err != nil {
-		return 0, err
-	}
-	var candidates []candidate
-	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.id, &c.text); err != nil {
-			_ = rows.Close()
-			return 0, err
-		}
-		candidates = append(candidates, c)
-	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-
+	now := time.Now().UnixMilli()
 	total := 0
-	for _, c := range candidates {
-		digest, _, _ := s.ledger.Digest(c.text)
-		if !digestSet[digest] {
-			continue
+	appliedSeqs := make([]int64, 0, len(replayable))
+	for _, item := range replayable {
+		domainID := strings.TrimSpace(item.intent.DomainID)
+		if domainID == "" {
+			domainID = DomainLegacyUnassigned
 		}
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM supersedes WHERE entry_id=? OR superseded_id=?`, c.id, c.id); err != nil {
+		affected := 0
+		for _, id := range item.manifest.EntryIDs {
+			if err := s.redactSummariesForEntryTx(ctx, tx, id, item.clusters[id], now); err != nil {
+				return total, err
+			}
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM supersedes WHERE entry_id=? OR superseded_id=?`, id, id); err != nil {
+				return total, err
+			}
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM relationship_state WHERE source_event_id=?`, "entry:"+id); err != nil {
+				return total, err
+			}
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM relationship_state_history WHERE source_event_id=?`, "entry:"+id); err != nil {
+				return total, err
+			}
+			res, err := tx.ExecContext(ctx,
+				`DELETE FROM entries WHERE id=? AND domain_id=?`, id, domainID)
+			if err != nil {
+				return total, err
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				affected += int(n)
+			}
+		}
+		if affected > 0 {
+			total += affected
+			if err := s.logOperation(ctx, tx, OperationLog{
+				Operation: "replay_forget", Reason: "ledger manifest replay",
+				AffectedCount: affected, CreatedAt: now,
+				RequestID: item.intent.RequestID, ReasonCode: "recovery",
+			}); err != nil {
+				return total, err
+			}
+		}
+		if err := enqueueCleanupJobTx(ctx, tx, item.intent.RequestID, MarshalManifest(item.manifest)); err != nil {
 			return total, err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM entries WHERE id=?`, c.id); err != nil {
-			return total, err
-		}
-		total++
+		appliedSeqs = append(appliedSeqs, item.intent.Seq)
 	}
-	for key := range relKeys {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM relationship_state WHERE key=?`, key); err != nil {
-			return total, err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM relationship_state_history WHERE key=?`, key); err != nil {
-			return total, err
-		}
-	}
-	if total > 0 || len(relKeys) > 0 {
-		if err := s.logOperation(ctx, tx, OperationLog{
-			Operation: "replay_forget", Reason: "ledger replay", AffectedCount: total,
-			CreatedAt: time.Now().UnixMilli(), ReasonCode: "recovery",
-		}); err != nil {
-			return total, err
-		}
+	if total > 0 {
 		if err := s.bumpRevision(ctx, tx); err != nil {
 			return total, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return total, err
+	}
+	revision := s.revision.Load()
+	for _, seq := range appliedSeqs {
+		if err := s.ledger.MarkApplied(ctx, seq, revision); err != nil {
+			return total, fmt.Errorf("memstore: mark replay applied: %w", err)
+		}
 	}
 	return total, nil
 }
@@ -598,6 +573,35 @@ func (s *Store) clusterIDsLocked(ctx context.Context, entryID string) ([]string,
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// redactSummariesForEntryTx removes direct evidence rows and invalidates every
+// active summary containing the entry, clearing generated text/claims. The
+// invalidated row keeps only version metadata as a tombstone.
+func (s *Store) redactSummariesForEntryTx(ctx context.Context, tx *sql.Tx, entryID string, clusters []string, now int64) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_summary_evidence WHERE entry_id=?`, entryID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM memory_dependencies
+		 WHERE (parent_kind='entry' AND parent_id=?) OR (child_kind='entry' AND child_id=?)`,
+		entryID, entryID); err != nil {
+		return err
+	}
+	if len(clusters) == 0 {
+		return nil
+	}
+	args := []any{now, now}
+	for _, c := range clusters {
+		args = append(args, c)
+	}
+	_, err := tx.ExecContext(ctx,
+		`UPDATE memory_summary_versions
+		 SET status='invalidated', superseded_at=?, invalidated_at=?,
+		     summary='', claims='[]'
+		 WHERE status='active' AND cluster_id IN (`+placeholders(len(clusters))+`)`,
+		args...)
+	return err
 }
 
 func (s *Store) activeSummaryCountLocked(ctx context.Context, clusters []string) int {

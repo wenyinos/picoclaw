@@ -106,7 +106,7 @@ func TestForgetCascadesAndBlocksResurrection(t *testing.T) {
 	// ReplayForget removes a restored copy.
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO entries (`+entryColumns+`) VALUES (`+entryPlaceholders+`)`,
-		"restored", "real", "profile", "user", "all", "user", "偏好", "隐私", "",
+		id, "real", "profile", "user", "all", "user", "偏好", "隐私", "",
 		"用户不希望保留这条记忆", Normalize("用户不希望保留这条记忆"), hash, int64(0), "", "",
 		1, 0.9, 0.0, 0.0, 0.8, "active", nil, nil, now, now, nil, 0, "{}",
 		PrecisionUnknown, "", "user_stated", nil, nil, 0,

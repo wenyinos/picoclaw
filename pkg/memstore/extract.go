@@ -88,6 +88,7 @@ func (s *Store) ExtractTurnAt(
 			in.SourceType = SourceInferred
 		}
 		in.SessionKey = sessionKey
+		in.EvidenceRootType = "jsonl.content"
 		in.Audience = "private"
 		if in.Confidence == 0 {
 			in.Confidence = 0.8

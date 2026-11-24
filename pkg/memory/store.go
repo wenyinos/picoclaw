@@ -43,3 +43,10 @@ type Store interface {
 	// Close releases any resources held by the store.
 	Close() error
 }
+
+// HistoryMutator performs a read-verify-rewrite cycle while holding the same
+// per-session lock used by appends. Cleanup must use this instead of
+// GetHistory followed by SetHistory.
+type HistoryMutator interface {
+	MutateHistory(ctx context.Context, key string, fn func([]providers.Message) ([]providers.Message, error)) error
+}

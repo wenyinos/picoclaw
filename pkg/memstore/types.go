@@ -346,6 +346,10 @@ type AddInput struct {
 	OriginRevision      int64
 	ConfirmationEventID string
 	EvidenceRoot        string
+	// EvidenceRootType is an internal host-derived locator kind
+	// (jsonl.content, jsonl.reasoning, jsonl.tool_text, seahorse.text...).
+	// Public DTOs never accept it.
+	EvidenceRootType string
 }
 
 // AddResult reports how a write was resolved.

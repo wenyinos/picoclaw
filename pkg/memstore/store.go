@@ -586,12 +586,45 @@ func (s *Store) forgottenTx(ctx context.Context, tx *sql.Tx, hash, text string) 
 	return false, nil
 }
 
+func (s *Store) prepareEvidenceRoot(in *AddInput) error {
+	if strings.TrimSpace(in.EvidenceRoot) != "" {
+		if _, ok := parseEvidenceRoot(in.EvidenceRoot); !ok {
+			return fmt.Errorf("memstore: malformed evidence root")
+		}
+		return nil
+	}
+	if strings.TrimSpace(in.EvidenceText) == "" {
+		return nil
+	}
+	sourced := in.SourceType == SourceInferred || in.SessionKey != "" || in.OriginEventID != ""
+	if s.ledger == nil {
+		if sourced {
+			return fmt.Errorf("memstore: sourced write needs a healthy forget ledger for its evidence root")
+		}
+		return nil
+	}
+	rootType := strings.TrimSpace(in.EvidenceRootType)
+	if rootType == "" {
+		rootType = "manual.evidence"
+	}
+	digest, keyID, _ := s.ledger.Digest(in.EvidenceText)
+	root, err := encodeEvidenceRoot(rootType, keyID, digest)
+	if err != nil {
+		return err
+	}
+	in.EvidenceRoot = root
+	return nil
+}
+
 // Add inserts or merges a memory after exact/near duplicate and conflict checks.
 func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	if err := s.checkReady(); err != nil {
 		return nil, err
 	}
 	if err := prepareAddInput(&in); err != nil {
+		return nil, err
+	}
+	if err := s.prepareEvidenceRoot(&in); err != nil {
 		return nil, err
 	}
 	now := time.Now().UnixMilli()

@@ -349,6 +349,15 @@ func (l *ForgetLedger) Pending(ctx context.Context) ([]ForgetIntent, error) {
 		 FROM forget_journal WHERE status='pending' ORDER BY seq`)
 }
 
+// AllIntents returns every journal intent in sequence order. Replay must not
+// silently stop after an arbitrary recent window.
+func (l *ForgetLedger) AllIntents(ctx context.Context) ([]ForgetIntent, error) {
+	return l.queryIntents(ctx,
+		`SELECT seq,ledger_uuid,request_id,namespace,domain_id,scope_json,selector_type,
+		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at
+		 FROM forget_journal ORDER BY seq`)
+}
+
 // Recent returns the newest intents for the dashboard.
 func (l *ForgetLedger) Recent(ctx context.Context, limit int) ([]ForgetIntent, error) {
 	if limit <= 0 || limit > 500 {

@@ -190,7 +190,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 			Subject: subject, Predicate: predicate, Facet: facet, Value: value,
 			SupersedesID: supersedesID, EmotionalWeight: emotionalWeight, Valence: valence,
 			Audience: "private", SourceType: memstore.SourceInferred, EvidenceText: text,
-			SessionKey: mc.SessionKey,
+			SessionKey: mc.SessionKey, EvidenceRootType: "jsonl.tool_text",
 			// Model-driven writes stay in the isolated legacy partition and
 			// the classifier can only raise protection, never lower it.
 			DomainID:    memstore.DomainLegacyUnassigned,
@@ -281,7 +281,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		res, err := svc.Correct(ctx, mc, id, memstore.AddInput{
 			Text: text, Realm: realm, Layer: layer, Predicate: predicate, Facet: facet,
 			Value: value, SourceType: memstore.SourceInferred, EvidenceText: text,
-			SessionKey: mc.SessionKey,
+			SessionKey: mc.SessionKey, EvidenceRootType: "jsonl.tool_text",
 		})
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory correct failed: %v", err))

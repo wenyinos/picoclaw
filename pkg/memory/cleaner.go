@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/sipeed/picoclaw/pkg/memstore"
@@ -34,7 +35,15 @@ func (c *LocatorCleaner) CleanLocators(
 	if c == nil || c.store == nil || c.digest == nil {
 		return out, fmt.Errorf("memory: cleaner is not configured")
 	}
-	// Group by session so each file is read and written once.
+	mutator, ok := c.store.(HistoryMutator)
+	if !ok {
+		out.Unavailable = len(locators)
+		out.Details = append(out.Details,
+			"session backend does not provide an atomic history mutation")
+		return out, nil
+	}
+
+	// Group by session so each file is read, verified and rewritten once.
 	bySession := map[string][]memstore.SourceLocator{}
 	for _, loc := range locators {
 		if loc.SessionKey == "" || loc.EvidenceHMAC == "" {
@@ -47,69 +56,104 @@ func (c *LocatorCleaner) CleanLocators(
 	}
 
 	for sessionKey, locs := range bySession {
-		history, err := c.store.GetHistory(ctx, sessionKey)
+		matched := make([]bool, len(locs))
+		removed := 0
+		err := mutator.MutateHistory(ctx, sessionKey, func(history []providers.Message) ([]providers.Message, error) {
+			keep := make([]providers.Message, 0, len(history))
+			for _, msg := range history {
+				remove := false
+				for i, loc := range locs {
+					if c.matches(msg, loc) {
+						matched[i] = true
+						remove = true
+					}
+				}
+				if remove {
+					removed++
+					continue
+				}
+				keep = append(keep, msg)
+			}
+			return keep, nil
+		})
 		if err != nil {
 			out.Unavailable += len(locs)
 			out.Details = append(out.Details,
-				fmt.Sprintf("session %q: %v", sessionKey, err))
+				fmt.Sprintf("session %q: atomic rewrite failed: %v", sessionKey, err))
 			continue
 		}
-		remove := make([]bool, len(history))
-		matched := map[string]bool{}
-		for i, msg := range history {
-			for _, loc := range locs {
-				if loc.EvidenceHMAC == "" || matched[loc.EvidenceHMAC] {
-					continue
-				}
-				if c.matches(msg, loc.EvidenceHMAC) {
-					remove[i] = true
-					matched[loc.EvidenceHMAC] = true
-					break
-				}
-			}
-		}
-		for _, loc := range locs {
-			if !matched[loc.EvidenceHMAC] {
+		for i, loc := range locs {
+			if !matched[i] {
 				out.Unavailable++
 				out.Details = append(out.Details,
-					fmt.Sprintf("session %q: message content no longer matches (unverifiable)", sessionKey))
+					fmt.Sprintf("session %q: root %s no longer matches (unverifiable)",
+						sessionKey, rootLabel(loc)))
 			}
 		}
-		kept := make([]providers.Message, 0, len(history))
-		removed := 0
-		for i, msg := range history {
-			if remove[i] {
-				removed++
-				continue
-			}
-			kept = append(kept, msg)
+		if removed > 0 {
+			out.Removed += removed
+			out.Sessions++
 		}
-		if removed == 0 {
-			continue
-		}
-		if err := c.store.SetHistory(ctx, sessionKey, kept); err != nil {
-			out.Unavailable += len(locs)
-			out.Details = append(out.Details,
-				fmt.Sprintf("session %q: rewrite failed: %v", sessionKey, err))
-			continue
-		}
-		_ = c.store.Compact(ctx, sessionKey)
-		out.Removed += removed
-		out.Sessions++
 	}
 	return out, nil
 }
 
-func (c *LocatorCleaner) matches(msg providers.Message, want string) bool {
-	if msg.Content != "" {
-		if d := c.digest(msg.Content); d == want {
+func rootLabel(loc memstore.SourceLocator) string {
+	if loc.RootType != "" {
+		return loc.RootType
+	}
+	return "legacy-content"
+}
+
+func (c *LocatorCleaner) matches(msg providers.Message, loc memstore.SourceLocator) bool {
+	want := loc.EvidenceHMAC
+	if want == "" {
+		return false
+	}
+	switch loc.RootType {
+	case "jsonl.reasoning":
+		return msg.ReasoningContent != "" && c.digest(msg.ReasoningContent) == want
+	case "jsonl.tool_args":
+		for _, call := range msg.ToolCalls {
+			if call.Function != nil && call.Function.Arguments != "" &&
+				c.digest(call.Function.Arguments) == want {
+				return true
+			}
+		}
+		return false
+	case "jsonl.tool_text":
+		for _, call := range msg.ToolCalls {
+			if call.Function == nil || call.Function.Arguments == "" {
+				continue
+			}
+			var args map[string]any
+			if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+				continue
+			}
+			for _, value := range args {
+				if text, ok := value.(string); ok && text != "" && c.digest(text) == want {
+					return true
+				}
+			}
+		}
+		return false
+	case "jsonl.tool_result":
+		return msg.Content != "" && c.digest(msg.Content) == want
+	default:
+		// Legacy locators were built from the whole evidence text. Match both
+		// complete message fields; never compare a fragment with a longer field.
+		if msg.Content != "" && c.digest(msg.Content) == want {
 			return true
 		}
-	}
-	if msg.ReasoningContent != "" {
-		if d := c.digest(msg.ReasoningContent); d == want {
+		if msg.ReasoningContent != "" && c.digest(msg.ReasoningContent) == want {
 			return true
 		}
+		for _, call := range msg.ToolCalls {
+			if call.Function != nil && call.Function.Arguments != "" &&
+				c.digest(call.Function.Arguments) == want {
+				return true
+			}
+		}
+		return false
 	}
-	return false
 }

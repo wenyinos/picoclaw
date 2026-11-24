@@ -122,6 +122,29 @@ func TestLedgerReplaysAcrossRestore(t *testing.T) {
 	if restored.Action != "added" {
 		t.Fatalf("bypass add action = %q", restored.Action)
 	}
+	// A real restore keeps the original ID. Rewrite the simulation rows to the
+	// ID recorded in the ledger manifest.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys=ON`); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE entries SET id=? WHERE id=?`, added.Entry.ID, restored.Entry.ID); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE sources SET entry_id=? WHERE entry_id=?`, added.Entry.ID, restored.Entry.ID); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM memory_operations WHERE operation='forget'`); err != nil {
 		t.Fatal(err)
 	}
