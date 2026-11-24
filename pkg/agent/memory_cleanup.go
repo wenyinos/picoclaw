@@ -9,7 +9,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	sessionmem "github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/memstore"
-	"github.com/sipeed/picoclaw/pkg/seahorse"
 	"github.com/sipeed/picoclaw/pkg/session"
 )
 
@@ -97,12 +96,7 @@ func (al *AgentLoop) runForgetCleanup(ctx context.Context) {
 		defer fallback.Close()
 		cleaners = append(cleaners, sessionmem.NewLocatorCleaner(fallback, digest))
 	}
-	al.mu.RLock()
-	cm := al.contextManager
-	al.mu.RUnlock()
-	if mgr, ok := cm.(*seahorseContextManager); ok && mgr != nil && mgr.engine != nil {
-		cleaners = append(cleaners, seahorse.NewLocatorCleaner(mgr.engine, digest))
-	}
+	cleaners = append(cleaners, al.seahorseCleanersForCleanup(digest)...)
 
 	run := func() {
 		runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
