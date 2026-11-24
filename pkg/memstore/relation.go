@@ -118,6 +118,16 @@ func (s *Store) ExpandOneHop(ctx context.Context, seeds []Entry, perSeed int, fi
 			q += ` AND e.scope=?`
 			args = append(args, filter.Scope)
 		}
+		if filter.Layer != "" {
+			q += ` AND e.layer=?`
+			args = append(args, filter.Layer)
+		} else if !filter.AllLayers {
+			q += ` AND e.layer IN ('relationship','episodic','procedural')`
+		}
+		if filter.ExcludeExpired {
+			q += ` AND (e.expires_at IS NULL OR e.expires_at > ?)`
+			args = append(args, s.now())
+		}
 		q += ` ORDER BY r.confidence DESC, r.created_at DESC LIMIT ?`
 		args = append(args, perSeed)
 		rows, err := s.db.QueryContext(ctx, q, args...)
@@ -167,6 +177,16 @@ func (s *Store) ExpandOneHop(ctx context.Context, seeds []Entry, perSeed int, fi
 			if filter.Scope != "" && target.Scope != filter.Scope {
 				continue
 			}
+			if filter.Layer != "" && target.Layer != filter.Layer {
+				continue
+			}
+			if !filter.AllLayers && filter.Layer == "" &&
+				target.Layer != LayerRelationship && target.Layer != LayerEpisodic && target.Layer != LayerProcedural {
+				continue
+			}
+			if filter.ExcludeExpired && target.ExpiresAt != nil && *target.ExpiresAt <= s.now() {
+				continue
+			}
 			if !audienceAllowed(target.Audience, filter.Channel, filter.PrivateChannelExclusions) {
 				continue
 			}
@@ -213,13 +233,17 @@ func (s *Store) LoadCapsuleFor(
 	}
 	var c Cluster
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id,realm,title,topic,status,created_at,updated_at FROM memory_clusters WHERE id=?`,
-		clusterID).Scan(&c.ID, &c.Realm, &c.Title, &c.Topic, &c.Status, &c.CreatedAt, &c.UpdatedAt)
+		`SELECT id,realm,title,topic,status,created_at,updated_at,domain_id
+		 FROM memory_clusters WHERE id=?`,
+		clusterID).Scan(&c.ID, &c.Realm, &c.Title, &c.Topic, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.DomainID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CapsuleResult{}, fmt.Errorf("memstore: capsule %q not found", clusterID)
 	}
 	if err != nil {
 		return CapsuleResult{}, err
+	}
+	if c.DomainID != "" && c.DomainID != DomainLegacyUnassigned {
+		return CapsuleResult{}, fmt.Errorf("memstore: multi-domain capsules are not supported by this runtime")
 	}
 	result := CapsuleResult{ID: c.ID, Title: c.Title}
 	if c.Realm == RealmFictional {
@@ -262,6 +286,12 @@ func (s *Store) LoadCapsuleFor(
 			continue
 		}
 		if e.Realm == RealmFictional && !injectFictional {
+			continue
+		}
+		if e.DomainID != "" && e.DomainID != DomainLegacyUnassigned {
+			continue
+		}
+		if e.ExpiresAt != nil && *e.ExpiresAt <= s.now() {
 			continue
 		}
 		if !audienceAllowedForChat(e.Audience, chatKind, channel, privateChannels) {

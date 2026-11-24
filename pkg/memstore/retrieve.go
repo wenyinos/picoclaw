@@ -93,6 +93,12 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 		where = append(where, "e.audience=?")
 		args = append(args, opts.Audience)
 	}
+	if !admin || opts.ExcludeExpired {
+		if opts.ExcludeExpired {
+			where = append(where, "(e.expires_at IS NULL OR e.expires_at > ?)")
+			args = append(args, s.now())
+		}
+	}
 	if !admin {
 		// Empty domain is not "all domains": callers without an ownership
 		// binding read only the isolated legacy partition.
@@ -401,7 +407,8 @@ func (s *Store) BuildFixedContextFor(
 	}
 	profile, _ := s.List(ctx, SearchOptions{
 		Status: StatusActive, Layer: LayerProfile, Limit: 40,
-		DomainID: DomainLegacyUnassigned,
+		DomainID: DomainLegacyUnassigned, Channel: channel, ChatKindHint: chatKind,
+		PrivateChannelExclusions: privateChannels, ExcludeExpired: true,
 	})
 	now := s.now()
 	var profileLines []string
@@ -423,19 +430,24 @@ func (s *Store) BuildFixedContextFor(
 		parts = append(parts, "## 用户画像\n"+strings.Join(profileLines, "\n"))
 	}
 
-	base := trimToBudget(parts, budget, "# Memory\n\n")
+	// Base content may not consume the whole fixed block; boundaries need an
+	// explicit share and everything is counted against one target.
+	baseBudget := budget * 70 / 100
+	if baseBudget < 100 {
+		baseBudget = 100
+	}
+	base := trimToBudget(parts, baseBudget, "# Memory\n\n")
 	usage.BaseTokens = EstimateTokens(base)
 
-	// Boundaries are a safety block: they get their own cap and are counted
-	// in the total, instead of silently doubling the fixed budget.
-	boundaryBudget := budget * 30 / 100
-	if boundaryBudget < 200 {
-		boundaryBudget = 200
+	boundaryBudget := budget - usage.BaseTokens
+	if boundaryBudget < 0 {
+		boundaryBudget = 0
 	}
 	usage.BoundaryBudget = boundaryBudget
 	boundaries, _ := s.List(ctx, SearchOptions{
 		Status: StatusActive, Layer: LayerBoundary, Limit: 30,
-		DomainID: DomainLegacyUnassigned,
+		DomainID: DomainLegacyUnassigned, Channel: channel, ChatKindHint: chatKind,
+		PrivateChannelExclusions: privateChannels, ExcludeExpired: true,
 	})
 	sort.SliceStable(boundaries, func(i, j int) bool {
 		if boundaries[i].PinnedCore != boundaries[j].PinnedCore {
@@ -504,17 +516,15 @@ func (s *Store) BuildRetrievalContextFor(
 	injectFictional bool,
 	privateChannels []string,
 ) string {
-	if s == nil || strings.TrimSpace(query) == "" {
+	if s == nil || strings.TrimSpace(query) == "" || budget <= 0 {
 		return ""
-	}
-	if budget <= 0 {
-		budget = 600
 	}
 	opts := SearchOptions{
 		Query: query, Channel: channel, Limit: 200, IncludeFic: injectFictional,
 		PrivateChannelExclusions: privateChannels,
 		ChatKindHint:             chatKind,
 		DomainID:                 DomainLegacyUnassigned,
+		ExcludeExpired:           true,
 	}
 	entries, err := s.Search(ctx, opts)
 	if err != nil {

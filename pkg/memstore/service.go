@@ -106,6 +106,7 @@ func (svc *MemoryService) Search(ctx context.Context, mc MemoryContext, opts Sea
 	opts.DomainID = mc.DomainID
 	opts.Channel = firstNonEmpty(opts.Channel, mc.Channel)
 	opts.ChatKindHint = mc.ChatKind
+	opts.ExcludeExpired = true
 	if len(opts.PrivateChannelExclusions) == 0 {
 		opts.PrivateChannelExclusions = svc.cfg.PrivateChannelExclusions
 	}

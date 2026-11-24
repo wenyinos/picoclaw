@@ -980,7 +980,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 		// by audience/channel here, where the current channel is known.
 		fixedUsage := memstore.FixedUsage{}
 		if cb.longTerm != nil && cb.longTermCfg.Enabled {
-			fixedBudget := cb.longTermCfg.BudgetTokens * 45 / 100
+			fixedBudget := cb.longTermCfg.BudgetTokens * 50 / 100
 			if fixedBudget <= 0 {
 				fixedBudget = 600
 			}
@@ -1007,8 +1007,8 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 
 		if cb.longTerm != nil && cb.longTermCfg.Enabled && strings.TrimSpace(req.CurrentMessage) != "" {
 			budget := cb.longTermCfg.BudgetTokens - fixedUsage.TotalTokens
-			if budget < 200 {
-				budget = 200
+			if budget < 0 {
+				budget = 0
 			}
 			if retrieval := cb.longTerm.BuildRetrievalContextFor(
 				context.Background(), req.CurrentMessage, req.Channel, req.ChatKind, budget,

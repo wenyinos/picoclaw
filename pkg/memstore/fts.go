@@ -53,7 +53,7 @@ func (s *Store) searchFTS(ctx context.Context, query string, limit int, filter s
 	if limit <= 0 {
 		limit = 50
 	}
-	where := `entries_fts MATCH ? AND e.status='active'`
+	where := `entries_fts MATCH ?`
 	if strings.TrimSpace(filter) != "" {
 		where += ` AND ` + filter
 	}
@@ -94,8 +94,7 @@ func (s *Store) searchLike(ctx context.Context, term string, limit int, filter s
 		limit = 50
 	}
 	like := "%" + term + "%"
-	where := `e.status='active'
-		   AND (e.text LIKE ? OR e.value LIKE ? OR e.subject LIKE ? OR e.predicate LIKE ? OR e.facet LIKE ?)`
+	where := `(e.text LIKE ? OR e.value LIKE ? OR e.subject LIKE ? OR e.predicate LIKE ? OR e.facet LIKE ?)`
 	if strings.TrimSpace(filter) != "" {
 		where += ` AND ` + filter
 	}

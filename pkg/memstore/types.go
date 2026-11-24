@@ -284,11 +284,13 @@ type ForgetPreview struct {
 
 // FixedUsage accounts for the fixed prompt block and the boundary block.
 type FixedUsage struct {
-	BaseTokens     int `json:"base_tokens"`
-	BoundaryTokens int `json:"boundary_tokens"`
-	TotalTokens    int `json:"total_tokens"`
-	BoundaryBudget int `json:"boundary_budget"`
-	BoundaryCut    int `json:"boundary_cut"`
+	BaseTokens     int  `json:"base_tokens"`
+	BoundaryTokens int  `json:"boundary_tokens"`
+	TotalTokens    int  `json:"total_tokens"`
+	BoundaryBudget int  `json:"boundary_budget"`
+	BoundaryCut    int  `json:"boundary_cut"`
+	OverflowTokens int  `json:"overflow_tokens"`
+	CoreOverflow   bool `json:"core_overflow"`
 }
 
 // AddInput is the input to Store.Add.
@@ -387,6 +389,9 @@ type SearchOptions struct {
 	// ChatKindHint lets a caller declare a shared chat (group/public) without
 	// a channel name; private memory is then filtered in SQL.
 	ChatKindHint string
+	// ExcludeExpired applies TTL visibility in SQL. Request/prompt paths set
+	// it; explicit admin and history views may include expired rows.
+	ExcludeExpired bool
 }
 
 // Overview is the dashboard payload.

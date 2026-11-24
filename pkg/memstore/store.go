@@ -1090,6 +1090,16 @@ func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
 		where = append(where, "facet=?")
 		args = append(args, opts.Facet)
 	}
+	if opts.ExcludeExpired {
+		where = append(where, "(expires_at IS NULL OR expires_at > ?)")
+		args = append(args, s.now())
+	}
+	if opts.ChatKindHint != "" || opts.Channel != "" {
+		audience, audienceArgs := audienceSQLFor(
+			opts.ChatKindHint, opts.Channel, opts.PrivateChannelExclusions)
+		where = append(where, audience)
+		args = append(args, audienceArgs...)
+	}
 	if q := strings.TrimSpace(opts.Query); q != "" {
 		where = append(where, "(text LIKE ? OR value LIKE ? OR subject LIKE ? OR predicate LIKE ? OR facet LIKE ?)")
 		like := "%" + q + "%"
@@ -1105,7 +1115,7 @@ func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
 	}
 	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+entryColumns+` FROM entries WHERE `+strings.Join(where, " AND ")+
+		`SELECT `+entryColumns+` FROM entries e WHERE `+strings.Join(where, " AND ")+
 			` ORDER BY importance DESC, updated_at DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, err
