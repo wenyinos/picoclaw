@@ -25,7 +25,20 @@
 
 PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home server, or a $10 board. It connects to the chat apps and model providers you already use, executes tools, and keeps a workspace you own.
 
-**0.7 adds the memory V4 foundation: ownership domains, an independent forget ledger, and evidence-bound summaries.** Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation. The result is an assistant that can maintain a relationship over months without turning its prompt into an ever-growing transcript.
+**0.7.10 is the current stable release.** The 0.7 line turns the memory V4 foundation into a governed, fail-closed memory system: ownership domains, an independent forget ledger with backups, evidence-bound summaries, and a send-point egress gate. Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation.
+
+### 0.7 progress
+
+| Version | Status | Main work |
+|---|---|---|
+| 0.7.0 | released | Schema v4, domains/bindings/grants, independent forget ledger, source events, summary evidence, commitments/recalls, durable jobs |
+| 0.7.1 | released | Initial egress gate for fallback/streaming, JSONL forget cleanup, governance dashboard |
+| 0.7.2 | released | Explicit migration; v3/missing-object v4 databases open fail-closed |
+| 0.7.3 | released | Private-channel opt-out semantics; group/public chats skipped by extraction |
+| 0.7.4 | released | Deprecated `private_channels` compatibility; fixes the 0.7.3 startup block |
+| 0.7.10 | current stable | Chat-kind enforcement across prompts/tools, tool governance, storage-level secret rejection, single-provider egress, ledger backup/verify, FTS/LIKE permission before `LIMIT`, Correct/summary/cleanup consistency |
+
+There is no schema change after v4; 0.7.10 is a security and governance release. Remaining boundaries are explicit: external LLM extraction, embeddings/vector retrieval, MMR, Seahorse per-message cleanup, proactive delivery scheduling, and owner/actor binding are not wired.
 
 ### Memory that lasts
 
@@ -34,15 +47,17 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 - **Real vs. fictional isolation**: role-play and story settings are stored separately and are never mixed into the user's real profile. A write firewall keeps dialogue and setting documents out of `real/profile`.
 - **Human review queue**: uncertain memories wait in `pending_review` and are not injected until approved.
 - **Governance loop**: `inspect / confirm / correct / archive / restore / forget`. Content changes create a new version, pinned core memories refuse silent overwrites, and forgetting also removes the relationship-state copies (nicknames, birthdays) that feed the prompt block.
-- **Forget ledger**: `forget` journals the obligation to an independent `forget-ledger.db` before touching the database. Restoring an older backup does not resurrect forgotten content; `replay-forget` matches versioned HMACs.
-- **Permission domains**: entries carry a `domain_id`; dedupe, auto-replace and capsule reads never merge different domains. Unknown legacy rows stay in `legacy_unassigned` until an owner claims them.
-- **Evidence-bound summaries**: manual topic/stage clusters, one claim per source, and invalidate-on-change with a generation counter. Summaries are revocable views, never authoritative facts.
+- **Forget ledger**: `forget` journals the obligation to an independent `forget-ledger.db` before touching the database. Restoring an older backup does not resurrect forgotten content; `replay-forget` matches versioned HMACs. A missing or damaged ledger keeps reads available but fails `forget` closed, and migration/repair backups include both the database and the ledger.
+- **Permission domains and chat kinds**: entries carry a `domain_id`; dedupe, auto-replace and capsule reads never merge different domains. Group/public chats only see audience `""`/`all` in prompts and the `memory` tool, even on channels that are otherwise private.
+- **Governed model tools**: `add / search / inspect / confirm / correct / archive / restore / forget preview / update_state` go through `MemoryService` with the trusted domain, channel and chat kind. Passwords, verification codes, API keys and private keys are rejected at `Store.Add`, not at one caller.
+- **Evidence-bound summaries**: manual topic/stage clusters, one claim per source, a generation + membership check before publishing, and invalidate-on-change. Summaries are revocable views, never authoritative facts.
 - **Time semantics**: today/yesterday/last week/last summer are parsed deterministically into `date / range / approximate / planned`; approximate phrases never get a fabricated day.
-- **Hybrid retrieval**: anchor (facet/predicate/title), FTS5, LIKE, temporal overlap, and one-hop relation expansion. Visibility is applied in SQL before `LIMIT`, so an invisible row cannot starve a visible one.
-- **Scene capsules**: `load_capsule` returns the T0 writing rules in one call (full or compact); capsules use the real request channel and return empty for public chats.
+- **Hybrid retrieval**: anchor (facet/predicate/title), FTS5, LIKE, temporal overlap, and one-hop relation expansion. Visibility is applied in SQL before `LIMIT`, including the FTS and LIKE channels, so an invisible row cannot starve a visible one.
+- **Scene capsules**: `load_capsule` returns the T0 writing rules in one call (full or compact); capsules use the real request channel and return empty for public/group chats.
 - **Real budget accounting**: fixed, boundary and retrieval blocks are counted separately, and `memory audit` prints the measured tokens.
-- **Schema v4 migration**: one segment from v3 to v4 with a `VACUUM INTO` backup. Databases older than v3 must be upgraded with 0.6.x first; see [Memory schema v4](docs/reference/memory-schema-v4.md).
-- **Channel visibility (opt-out)**: private memories are visible in every channel by default; exclude the ones you do not want in the settings page (checkboxes, all checked by default). Group chats never see them.
+- **Schema v4 migration**: one explicit segment from v3 to v4 with `VACUUM INTO` snapshots of both the database and the ledger. Databases older than v3 must be upgraded with 0.6.x first; see [Memory schema v4](docs/reference/memory-schema-v4.md).
+- **Egress gate**: when `memory.allowed_chat_recipients` is non-empty, every actual provider call — primary, fallback, retry, streaming — must match the list or return the non-retryable `memory egress denied`.
+- **Channel visibility (opt-out)**: private memories are visible in every channel by default; exclude the ones you do not want in the settings page (checkboxes, all checked by default). Group/public chats never see them in prompts or tools.
 
 ### A dashboard for the relationship
 
@@ -60,17 +75,17 @@ The launcher includes a dedicated **Memory** page at `/memory`:
 
 - The workspace contains no machine-specific absolute paths.
 - `agents.defaults.workspace` accepts a relative value such as `"workspace"`, resolved against `PICOCLAW_HOME`.
-- `memory.db` is self-contained; stop the process, copy the directory, and start it on another machine.
+- `memory.db` and `forget-ledger.db` are self-contained; stop the process, copy the memory directory, and start it on another machine. Restore the pair together.
 - Sessions are append-only JSONL and are written asynchronously, so saving history stays off the response path.
 
 ### Faster, quieter responses
 
-0.5 also tightens the streaming path: intermediate Pico frames are throttled, the final frame is published before session persistence and compaction, WebSocket writes have deadlines, provider connections are pooled, and session appends are batched. On a local Pico WebSocket test the first visible frame arrives in under a millisecond; model time dominates.
+The 0.5 streaming work also tightened the streaming path: intermediate Pico frames are throttled, the final frame is published before session persistence and compaction, WebSocket writes have deadlines, provider connections are pooled, and session appends are batched. On a local Pico WebSocket test the first visible frame arrives in under a millisecond; model time dominates.
 
 ### Runs almost anywhere
 
 - x86_64, ARM64, ARMv7, RISC-V, LoongArch.
-- Linux/mipsle is not published in 0.5: the pure-Go SQLite driver does not support MIPS32.
+- Linux/mipsle is not published: the pure-Go SQLite driver does not support MIPS32.
 - Linux, macOS, Windows, Android/Termux, Docker.
 - OpenAI-compatible APIs, Anthropic, Gemini, Bedrock, Azure, local models, and more.
 - Telegram, Discord, Slack, Feishu, WeCom, QQ, Matrix, IRC, MQTT, and a native Pico WebSocket UI.
@@ -79,7 +94,7 @@ The launcher includes a dedicated **Memory** page at `/memory`:
 
 ## Core capabilities
 
-The 0.5 memory work sits alongside PicoClaw's original assistant features:
+The 0.7 memory work sits alongside PicoClaw's original assistant features:
 
 - **Chat channels** — Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, DingTalk, LINE, Matrix, IRC, MQTT, VK, and the native Pico WebSocket UI. See [Chat apps](docs/guides/chat-apps.md).
 - **Model providers** — OpenAI-compatible APIs, Anthropic, Gemini, Bedrock, Azure, OAuth providers, and local runtimes; fallback chains and a light model for side questions. See [Providers](docs/guides/providers.md).
@@ -166,6 +181,8 @@ picoclaw memory inspect <id>
 picoclaw memory rebuild-fts
 picoclaw memory forget <id> --yes
 picoclaw memory replay-forget
+picoclaw memory cleanup
+picoclaw memory ledger-verify --backup <path>
 picoclaw memory capsule --preset t0_compact
 picoclaw memory import --from /path/to/old-workspace
 picoclaw memory audit
@@ -209,7 +226,7 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
    picoclaw memory migrate
    ```
 
-   The migration is idempotent. It adds the v4 governance columns and tables, rebuilds `sources` field by field, creates the isolated `legacy_unassigned` domain, replaces the exact-fingerprint index with a per-domain one, rebuilds FTS when missing, and writes a rotated `memory/backups/memory.db.bak-*` file (the newest two are kept). The removed v1/v2/v3 repairs are not replayed.
+   The migration is idempotent. It adds the v4 governance columns and tables, rebuilds `sources` field by field, creates the isolated `legacy_unassigned` domain, replaces the exact-fingerprint index with a per-domain one, rebuilds FTS when missing, and writes rotated `memory/backups/memory.db.bak-*` and `forget-ledger.db.bak-*` snapshots (the newest two of each are kept). The removed v1/v2/v3 repairs are not replayed.
 
 4. **Verify**
 
@@ -225,7 +242,8 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 Notes:
 
-- The v0.4.6 tag remains available; install 0.7.0 to get schema v4, the forget ledger and the Launcher migration page.
+- The v0.4.6 tag remains available; install 0.7.10 to get schema v4, the fail-closed forget ledger, ledger verification and the Launcher migration page.
+- After restoring a database backup, verify the ledger pair with `picoclaw memory ledger-verify --backup <forget-ledger snapshot>` before replaying forgets.
 - Historical 0.3.x → 0.4.0 guide: [migration/0.4.0.md](docs/migration/0.4.0.md).
 - The old `MEMORY.md` is only an import source; raw session history stays in `workspace/sessions/*.jsonl`.
 - `memory.db` is WAL-mode SQLite; stop the process before copying the workspace, or run `picoclaw memory audit` once to checkpoint an idle store.
@@ -249,7 +267,8 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 - [Online documentation](https://wenyinos.github.io/picoclaw/)
 - [Project poster](docs/assets/picoclaw-poster.png)
 - [Long-term memory](docs/guides/memory.md) · [中文](docs/guides/memory.zh.md)
-- [Migrating from 0.3.x / 0.4.x to 0.5.x](docs/migration/0.5.10.md)
+- [Migrating to 0.7.x / memory schema v4](docs/reference/memory-schema-v4.md)
+- [Historical 0.5.x migration](docs/migration/0.5.10.md)
 - [Changelog](CHANGELOG.md)
 - [Configuration](docs/guides/configuration.md)
 - [Routing and sessions](docs/guides/routing-guide.md)
@@ -261,7 +280,7 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 
 ## About this repository
 
-This repository maintains PicoClaw 0.5.10 with the SQLite memory V3 system (evidence chain, governance, hybrid retrieval, scene capsules), QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
+This repository maintains PicoClaw 0.7.10 with the SQLite memory V4 system (permission domains, independent forget ledger, evidence-bound summaries, chat-kind enforcement, governed tools, hybrid retrieval and scene capsules), QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
 
 ## License
 

@@ -25,7 +25,20 @@
 
 PicoClaw 是一个可以运行在笔记本、家庭服务器或十美元开发板上的自托管 AI 助手。它接入你现有的聊天应用和模型服务，能执行工具，并把数据保存在你自己的 workspace 里。
 
-**0.5 围绕长期记忆与关系连续性设计，0.5.10 加入记忆 V3。** 不再让模型反复改写一个 Markdown 文件，而是把记忆以结构化条目存进 SQLite，自动去重、处理冲突、区分真实事实与角色扮演，并且只把当前对话相关的部分注入提示词。这样助手可以维持数月的关系与上下文，而不会让提示词变成越来越长的流水账。
+**0.7.10 是当前稳定版本。** 0.7 系列把记忆 V4 从基础结构推进到可治理、故障关闭的闭环：归属域、带备份的独立遗忘账本、证据约束摘要和发送点门禁。不再让模型反复改写 Markdown 文件，而是把记忆以结构化条目存进 SQLite，自动去重、处理冲突、区分真实事实与角色扮演，并且只把当前对话相关的部分注入提示词。
+
+### 0.7 进度
+
+| 版本 | 状态 | 主要内容 |
+|---|---|---|
+| 0.7.0 | 已发布 | Schema v4、域/绑定/许可、独立遗忘账本、来源事件、摘要证据、承诺/回忆、持久任务 |
+| 0.7.1 | 已发布 | fallback/流式发送点门禁基础、JSONL 遗忘清理、治理工作台 |
+| 0.7.2 | 已发布 | 显式迁移；v3/缺对象 v4 数据库故障关闭 |
+| 0.7.3 | 已发布 | 私密渠道排除制；群聊/公开会话不参与自动抽取 |
+| 0.7.4 | 已发布 | 恢复 deprecated `private_channels`，修复 0.7.3 启动阻断 |
+| 0.7.10 | 当前稳定版 | chat kind 贯穿提示词/工具、工具统一治理、存储层秘密禁入、单 Provider 发送门禁、账本备份/校验、FTS/LIKE 权限前置、Correct/摘要/清理一致性 |
+
+v4 之后没有 Schema 变更；0.7.10 是安全与治理修复版本。剩余边界已明确：外部 LLM 抽取、embedding/向量检索、MMR、Seahorse 逐条清理、主动投递调度、owner/actor binding 尚未接线。
 
 ### 能长期保存的记忆
 
@@ -33,13 +46,17 @@ PicoClaw 是一个可以运行在笔记本、家庭服务器或十美元开发�
 - **分层记忆**：用户画像、关系状态（称呼、阶段、纪念日、边界）、事件记忆、流程知识和版本化人设。
 - **真实与虚构隔离**：角色扮演和故事设定单独保存，不会混入真实用户画像；写入防火墙会拦住台词和设定稿。
 - **人工审核队列**：不确定的记忆进入 `pending_review`，审核通过前不注入提示词。
-- **治理闭环**：`inspect / confirm / correct / archive / restore / forget`。`forget` 会级联清理来源、关系和胶囊成员，并用内容指纹阻止同一句话被重新抽取。
+- **独立遗忘账本**：`forget` 先写 `forget-ledger.db`，再修改主库；恢复旧备份不会复活已遗忘内容，`replay-forget` 按版本化 HMAC 重新匹配。账本缺失或身份损坏时读取仍可用，但 `forget` 故障关闭；迁移/修复备份同时保存主库与账本。
+- **权限域与 chat kind**：条目带 `domain_id`，去重、自动替换和胶囊读取不跨域；群聊/公开会话在提示词与 `memory` 工具中只允许 audience 为空或 `all`。
+- **工具统一治理**：`add / search / inspect / confirm / correct / archive / restore / forget 预览 / update_state` 经 `MemoryService` 携带可信 domain、channel 与 chat kind；密码、验证码、API Key、私钥在 `Store.Add` 层直接拒绝。
+- **证据约束摘要**：手工主题/阶段簇、逐 claim 绑定来源、发布前校验 generation 与 cluster 成员、变更即失效。摘要是可撤销视图，不是权威事实。
 - **时间语义**：今天/昨天/上周/去年夏天等短语被确定性地解析为 `date / range / approximate / planned`；近似时间不伪造单日。
-- **混合检索**：Anchor（facet/predicate/标题）、FTS5、LIKE、时间重叠和 1-Hop 关系扩展；两字中文查询自动回退 LIKE。
-- **场景胶囊**：`load_capsule` 一次取回 T0 写作铁律（完整版或紧凑版），公开渠道整体返回空。
+- **混合检索**：Anchor（facet/predicate/标题）、FTS5、LIKE、时间重叠和 1-Hop 关系扩展；FTS/LIKE 的权限过滤也进入 SQL `LIMIT` 之前，不可见记录不会挤掉合法命中。
+- **场景胶囊**：`load_capsule` 一次取回 T0 写作铁律（完整版或紧凑版），按真实 chat kind/渠道隔离，公开或群聊整体返回空。
 - **真实预算记账**：固定块、边界块、检索块分别计数，`memory audit` 打印实测 token。
-- **Schema v3 迁移**：在 `/memory` 一键升级，先 `VACUUM INTO` 备份；v1 数据库在同一事务里走完 v2 → v3，重复执行安全。
-- **私密渠道过滤**：亲密记忆只注入到你标记为私密的渠道。
+- **Schema v4 迁移**：仅 v3 → v4 单段显式迁移，先 `VACUUM INTO` 备份主库与账本；v1/v2 必须先用 0.6.x 升到 v3。
+- **发送点门禁**：`memory.allowed_chat_recipients` 非空时，主调用、fallback、重试和流式调用都必须匹配，否则返回不可重试的 `memory egress denied`。
+- **渠道可见性（排除制）**：默认所有渠道可读私密记忆，在设置页排除个别渠道；群聊/公开会话在提示词和工具中始终不可见。
 
 ### 面向关系的控制台
 
@@ -57,17 +74,17 @@ Launcher 新增独立的 **记忆** 页面（`/memory`）：
 
 - workspace 内部不保存机器相关的绝对路径。
 - `agents.defaults.workspace` 支持相对路径 `"workspace"`，运行时按 `PICOCLAW_HOME` 解析。
-- `memory.db` 自包含；停止进程后复制整个目录即可换机器运行。
+- `memory.db` 与 `forget-ledger.db` 自包含；停止进程后复制整个 memory 目录即可换机器运行，恢复时两者必须成对使用。
 - 会话使用追加式 JSONL，并异步落盘，不阻塞消息返回。
 
 ### 更快、更安静的回答
 
-0.5 同时收紧了流式链路：Pico 中间帧限流，最终帧在会话保存和压缩之前发布，WebSocket 写操作有超时，模型连接池复用，会话追加批量落盘。本机 Pico WebSocket 测试中首个可见帧在 1ms 内到达，主要延迟来自模型本身。
+0.5 的流式优化仍然保留：Pico 中间帧限流，最终帧在会话保存和压缩之前发布，WebSocket 写操作有超时，模型连接池复用，会话追加批量落盘。本机 Pico WebSocket 测试中首个可见帧在 1ms 内到达，主要延迟来自模型本身。
 
 ### 几乎随处可跑
 
 - x86_64、ARM64、ARMv7、RISC-V、LoongArch。
-- 0.5 不再发布 Linux/mipsle：纯 Go SQLite 驱动不支持 MIPS32。
+- 不发布 Linux/mipsle：纯 Go SQLite 驱动不支持 MIPS32。
 - Linux、macOS、Windows、Android/Termux、Docker。
 - OpenAI 兼容接口、Anthropic、Gemini、Bedrock、Azure、本地模型等。
 - Telegram、Discord、Slack、飞书、企业微信、QQ、Matrix、IRC、MQTT，以及原生 Pico WebSocket 界面。
@@ -76,7 +93,7 @@ Launcher 新增独立的 **记忆** 页面（`/memory`）：
 
 ## 核心能力
 
-0.5 的记忆能力建立在 PicoClaw 原有功能之上：
+0.7 的记忆能力建立在 PicoClaw 原有功能之上：
 
 - **聊天渠道** — Telegram、Discord、Slack、飞书/Lark、企业微信、微信、QQ、钉钉、LINE、Matrix、IRC、MQTT、VK，以及原生 Pico WebSocket 界面。见[聊天应用](../guides/chat-apps.zh.md)。
 - **模型服务** — OpenAI 兼容接口、Anthropic、Gemini、Bedrock、Azure、OAuth 服务和本地模型；支持 fallback 链和侧问题轻量模型。见[模型配置](../guides/providers.zh.md)。
@@ -141,7 +158,7 @@ CGO_ENABLED=0 go build -tags goolm,stdjson ./...
     "db_path": "memory/memory.db",
     "budget_tokens": 1200,
     "auto_extract": true,
-    "private_channels": ["pico"],
+    "private_channel_exclusions": [],
     "inject_fictional": false,
     "review_required": true,
     "episodic_retention_days": 365
@@ -156,11 +173,14 @@ SQLite 数据库是唯一的运行时记忆源。PicoClaw 运行时永远不会�
 ### 记忆 CLI
 
 ```bash
+picoclaw memory migrate
 picoclaw memory repair --dry-run
 picoclaw memory inspect <id>
 picoclaw memory rebuild-fts
 picoclaw memory forget <id> --yes
 picoclaw memory replay-forget
+picoclaw memory cleanup
+picoclaw memory ledger-verify --backup <path>
 picoclaw memory capsule --preset t0_compact
 picoclaw memory import --from /path/to/old-workspace
 picoclaw memory audit
@@ -174,9 +194,9 @@ picoclaw memory render
 
 ---
 
-## 迁移到 0.7.0
+## 迁移到 0.7.10
 
-0.7 仍以 `workspace/memory/memory.db` 为唯一事实源，并把 schema 从 v3 单段升级到 v4。v1 / v2 数据库不会被就地升级：先用 0.6.x 打开一次升到 v3，再升级到 0.7.0。首次打开会先做 `VACUUM INTO` 备份，再升级表结构；迁移在 `/memory` → “数据库迁移”执行，或运行 `picoclaw memory migrate`。完整步骤见 [Memory Schema v4](../reference/memory-schema-v4.zh.md)。
+0.7 仍以 `workspace/memory/memory.db` 为唯一事实源，并把 schema 从 v3 单段升级到 v4。**0.7.2 起不再在启动时自动迁移**：已有 v3 数据库（或缺对象的 v4 库）以故障关闭模式打开，普通读写返回 `schema migration required`，直到运行 `picoclaw memory migrate` 或使用 `/memory` → “数据库迁移”。v1 / v2 数据库不会被就地升级：先用 0.6.x 打开一次升到 v3。完整步骤见 [Memory Schema v4](../reference/memory-schema-v4.zh.md)。
 
 1. **停止服务**
 
@@ -190,7 +210,7 @@ picoclaw memory render
    cp -a ~/.picoclaw/workspace ~/.picoclaw/workspace.backup-$(date +%F)
    ```
 
-3. **启动 0.7.0 并打开迁移页**
+3. **启动 0.7.10 并打开迁移页**
 
    ```bash
    systemctl --user start picoclaw picoclaw-launcher
@@ -202,7 +222,7 @@ picoclaw memory render
    picoclaw memory migrate
    ```
 
-   迁移是幂等的：新增 v4 治理列与表、逐字段重建 `sources`、建立隔离域 `legacy_unassigned`、把精确指纹索引改为域内唯一、缺失时重建 FTS，并在 `memory/backups/` 轮转备份（保留最新 2 份）。已删除的 v1 → v2 → v3 修复不会重放。
+   迁移是幂等的：新增 v4 治理列与表、逐字段重建 `sources`、建立隔离域 `legacy_unassigned`、把精确指纹索引改为域内唯一、缺失时重建 FTS，并在 `memory/backups/` 轮转生成 `memory.db.bak-*` 与 `forget-ledger.db.bak-*` 快照（各保留最新 2 份）。已删除的 v1 → v2 → v3 修复不会重放。
 
 4. **验证**
 
@@ -218,7 +238,8 @@ picoclaw memory render
 
 说明：
 
-- v0.4.6 tag 仍然保留；安装 0.5.10 才能获得 schema v3 和 Launcher 迁移页。
+- v0.4.6 tag 仍然保留；安装 0.7.10 才能获得 schema v4、故障关闭的遗忘账本、账本校验和 Launcher 迁移页。
+- 恢复数据库备份后，先用 `picoclaw memory ledger-verify --backup <账本快照>` 校验主库与账本身份，再重放遗忘。
 - 历史 0.3.x → 0.4.0 迁移文档：[migration/0.4.0.zh.md](../migration/0.4.0.zh.md)。
 - 旧 `MEMORY.md` 只作为导入源；原始会话历史仍在 `workspace/sessions/*.jsonl`。
 - `memory.db` 是 WAL 模式 SQLite；复制 workspace 前先停进程，或运行一次 `picoclaw memory audit` checkpoint。
@@ -241,7 +262,8 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 - [在线文档](https://wenyinos.github.io/picoclaw/)
 - [项目海报](../assets/picoclaw-poster.png)
 - [长期记忆](../guides/memory.zh.md) · [English](../guides/memory.md)
-- [从 0.3.x / 0.4.x 迁移到 0.5.x](../migration/0.5.10.zh.md)
+- [迁移到 0.7.x / Schema v4](../reference/memory-schema-v4.zh.md)
+- [历史 0.5.x 迁移](../migration/0.5.10.zh.md)
 - [变更日志](https://github.com/wenyinos/picoclaw/blob/main/CHANGELOG.md)
 - [配置指南](../guides/configuration.zh.md)
 - [路由与会话](../guides/routing-guide.md)
@@ -253,7 +275,7 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 
 ## 关于本仓库
 
-本仓库维护 PicoClaw 0.5.10，包含 SQLite 记忆 V3（证据链、治理闭环、混合检索、场景胶囊）、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
+本仓库维护 PicoClaw 0.7.10，包含 SQLite 记忆 V4（权限域、独立遗忘账本、证据约束摘要、chat kind 强制、工具治理、混合检索与场景胶囊）、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
 
 ## 许可证
 
