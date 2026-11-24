@@ -71,7 +71,7 @@ picoclaw memory inspect <entry-id>                                      # source
 picoclaw memory ledger-verify --backup memory/backups/forget-ledger.db.bak-<timestamp>  # match: true
 ```
 
-`ledger-verify` compares the backup UUID/key_id with the active ledger; a mismatch exits non-zero and must not be used for forget replay.
+`ledger-verify` compares the backup UUID/key_id with the active ledger and reports backup/active max seq, applied seq and pending counts; a mismatch exits non-zero and must not be used for forget replay.
 
 ## Rollback
 
@@ -83,6 +83,11 @@ picoclaw memory ledger-verify --backup memory/backups/forget-ledger.db.bak-<time
 - Since 0.7.10, migration/repair backups include both the database and the
   ledger snapshots. Restore them as a pair and verify with
   `picoclaw memory ledger-verify --backup <ledger snapshot>`.
+- Since 0.7.20, every actual migration/v4 repair creates a new backup before
+  writing, and a fresh database bootstraps in one transaction. `replay-forget`
+  is dry-run by default and follows manifest entry IDs plus domains; use
+  `--yes` to execute. Historical operations are audit-only through
+  `picoclaw memory forget-audit`; no ledger rows or deletions are fabricated.
 - Keep `forget-ledger.db` and its HMAC key with the database. A missing ledger
   or damaged identity disables destructive memory operations instead of silently
   creating an empty ledger or dropping obligations.
@@ -94,11 +99,12 @@ picoclaw memory ledger-verify --backup memory/backups/forget-ledger.db.bak-<time
 | v1/v2 database | Refused with an explicit message; no partial write |
 | Newer schema than the binary | Refused before any DDL |
 | Interrupted migration | Transaction rolls back; next open retries |
-| Missing v4 table/column | Healed on next open by the same segment |
+| Missing index/trigger/FTS | Repaired by the explicit idempotent segment after a backup |
+| Missing business/obligation/audit table | Returns `non_repairable`; restore a backup instead of creating an empty table |
 | Missing ledger | Memory reads keep working; `forget` fails closed |
 | Damaged ledger identity | Memory reads keep working; `forget`/`replay-forget` fail closed; identity is not reset |
 | Journal written, main DB not cleaned | Ledger replay on startup |
-| Main DB restored from backup | `POST /api/memory/ledger/replay` or `picoclaw memory replay-forget` |
+| Main DB restored from backup | `POST /api/memory/ledger/replay` or `picoclaw memory replay-forget --yes`; inspect the dry run first |
 
 ## What is not migrated
 

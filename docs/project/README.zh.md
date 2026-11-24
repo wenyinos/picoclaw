@@ -25,7 +25,7 @@
 
 PicoClaw 是一个可以运行在笔记本、家庭服务器或十美元开发板上的自托管 AI 助手。它接入你现有的聊天应用和模型服务，能执行工具，并把数据保存在你自己的 workspace 里。
 
-**0.7.10 是当前稳定版本。** 0.7 系列把记忆 V4 从基础结构推进到可治理、故障关闭的闭环：归属域、带备份的独立遗忘账本、证据约束摘要和发送点门禁。不再让模型反复改写 Markdown 文件，而是把记忆以结构化条目存进 SQLite，自动去重、处理冲突、区分真实事实与角色扮演，并且只把当前对话相关的部分注入提示词。
+**0.7.20 是当前稳定版本。** 0.7 系列把记忆 V4 从基础结构推进到可治理、故障关闭的闭环：归属域、带备份的独立遗忘账本、证据约束摘要，以及覆盖主调用、fallback、`/btw`、子代理和后台摘要的发送点门禁。不再让模型反复改写 Markdown 文件，而是把记忆以结构化条目存进 SQLite，自动去重、处理冲突、区分真实事实与角色扮演，并且只把当前对话相关的部分注入提示词。
 
 ### 0.7 进度
 
@@ -36,9 +36,10 @@ PicoClaw 是一个可以运行在笔记本、家庭服务器或十美元开发�
 | 0.7.2 | 已发布 | 显式迁移；v3/缺对象 v4 数据库故障关闭 |
 | 0.7.3 | 已发布 | 私密渠道排除制；群聊/公开会话不参与自动抽取 |
 | 0.7.4 | 已发布 | 恢复 deprecated `private_channels`，修复 0.7.3 启动阻断 |
-| 0.7.10 | 当前稳定版 | chat kind 贯穿提示词/工具、工具统一治理、存储层秘密禁入、单 Provider 发送门禁、账本备份/校验、FTS/LIKE 权限前置、Correct/摘要/清理一致性 |
+| 0.7.10 | 已发布 | chat kind 贯穿提示词/工具、工具统一治理、存储层秘密禁入、单 Provider 发送门禁、账本备份/校验、FTS/LIKE 权限前置、Correct/摘要/清理一致性 |
+| 0.7.20 | 当前稳定版 | Correct 墓碑强制、模型治理收口到 owner、严格写入 DTO、审计 actor/request、原子新库初始化与修复前备份、Seahorse 会话隔离和逐条清理、来源根证据、全发送点门禁、TTL/层过滤前置 |
 
-v4 之后没有 Schema 变更；0.7.10 是安全与治理修复版本。剩余边界已明确：外部 LLM 抽取、embedding/向量检索、MMR、Seahorse 逐条清理、主动投递调度、owner/actor binding 尚未接线。
+v4 之后没有 Schema 变更；0.7.20 是安全、恢复与清理修复版本。剩余边界已明确：外部 LLM 抽取、embedding/向量检索、MMR、历史 pending 账本自动对账、主动投递调度、完整多域 relationship、长文分块与时间抽取尚未接线。
 
 ### 能长期保存的记忆
 
@@ -46,16 +47,17 @@ v4 之后没有 Schema 变更；0.7.10 是安全与治理修复版本。剩余�
 - **分层记忆**：用户画像、关系状态（称呼、阶段、纪念日、边界）、事件记忆、流程知识和版本化人设。
 - **真实与虚构隔离**：角色扮演和故事设定单独保存，不会混入真实用户画像；写入防火墙会拦住台词和设定稿。
 - **人工审核队列**：不确定的记忆进入 `pending_review`，审核通过前不注入提示词。
-- **独立遗忘账本**：`forget` 先写 `forget-ledger.db`，再修改主库；恢复旧备份不会复活已遗忘内容，`replay-forget` 按版本化 HMAC 重新匹配。账本缺失或身份损坏时读取仍可用，但 `forget` 故障关闭；迁移/修复备份同时保存主库与账本。
+- **独立遗忘账本**：`forget` 先写 `forget-ledger.db`，再修改主库；恢复旧备份不会复活已遗忘内容，`replay-forget` 按 manifest entry ID 与权限域重放，不再全库扫描正文哈希。账本缺失或身份损坏时读取仍可用，但 `forget` 故障关闭；迁移/修复备份同时保存主库与账本；`memory forget-audit` 可只读审计历史操作。
 - **权限域与 chat kind**：条目带 `domain_id`，去重、自动替换和胶囊读取不跨域；群聊/公开会话在提示词与 `memory` 工具中只允许 audience 为空或 `all`。
-- **工具统一治理**：`add / search / inspect / confirm / correct / archive / restore / forget 预览 / update_state` 经 `MemoryService` 携带可信 domain、channel 与 chat kind；密码、验证码、API Key、私钥在 `Store.Add` 层直接拒绝。
+- **工具统一治理**：模型仅保留 `add / search / inspect / 非核心 correct / legacy capsule / forget 预览` 白名单，全部经 `MemoryService` 携带可信 domain、channel 与 chat kind；确认、归档/恢复、关系状态以及任何 force/pinned/boundary 变更只能由 owner 执行；密码、验证码、API Key、私钥在 `Store.Add` 层直接拒绝。
 - **证据约束摘要**：手工主题/阶段簇、逐 claim 绑定来源、发布前校验 generation 与 cluster 成员、变更即失效。摘要是可撤销视图，不是权威事实。
 - **时间语义**：今天/昨天/上周/去年夏天等短语被确定性地解析为 `date / range / approximate / planned`；近似时间不伪造单日。
 - **混合检索**：Anchor（facet/predicate/标题）、FTS5、LIKE、时间重叠和 1-Hop 关系扩展；FTS/LIKE 的权限过滤也进入 SQL `LIMIT` 之前，不可见记录不会挤掉合法命中。
 - **场景胶囊**：`load_capsule` 一次取回 T0 写作铁律（完整版或紧凑版），按真实 chat kind/渠道隔离，公开或群聊整体返回空。
 - **真实预算记账**：固定块、边界块、检索块分别计数，`memory audit` 打印实测 token。
 - **Schema v4 迁移**：仅 v3 → v4 单段显式迁移，先 `VACUUM INTO` 备份主库与账本；v1/v2 必须先用 0.6.x 升到 v3。
-- **发送点门禁**：`memory.allowed_chat_recipients` 非空时，主调用、fallback、重试和流式调用都必须匹配，否则返回不可重试的 `memory egress denied`。
+- **发送点门禁**：`memory.allowed_chat_recipients` 非空时，携带记忆或会话派生内容的主调用、fallback、重试、流式、`/btw`、子代理与后台摘要都必须匹配，否则返回不可重试的 `memory egress denied`；策略拒绝后不会静默改投。
+- **跨存储遗忘清理**：JSONL 与 Seahorse 都先验证完整来源根再删除，覆盖重复消息、工具调用文本和依赖被删消息的摘要；无法核验的片段保持 `partial/unavailable`，不猜测删除。
 - **渠道可见性（排除制）**：默认所有渠道可读私密记忆，在设置页排除个别渠道；群聊/公开会话在提示词和工具中始终不可见。
 
 ### 面向关系的控制台
@@ -194,7 +196,7 @@ picoclaw memory render
 
 ---
 
-## 迁移到 0.7.10
+## 迁移到 0.7.20
 
 0.7 仍以 `workspace/memory/memory.db` 为唯一事实源，并把 schema 从 v3 单段升级到 v4。**0.7.2 起不再在启动时自动迁移**：已有 v3 数据库（或缺对象的 v4 库）以故障关闭模式打开，普通读写返回 `schema migration required`，直到运行 `picoclaw memory migrate` 或使用 `/memory` → “数据库迁移”。v1 / v2 数据库不会被就地升级：先用 0.6.x 打开一次升到 v3。完整步骤见 [Memory Schema v4](../reference/memory-schema-v4.zh.md)。
 
@@ -210,7 +212,7 @@ picoclaw memory render
    cp -a ~/.picoclaw/workspace ~/.picoclaw/workspace.backup-$(date +%F)
    ```
 
-3. **启动 0.7.10 并打开迁移页**
+3. **启动 0.7.20 并打开迁移页**
 
    ```bash
    systemctl --user start picoclaw picoclaw-launcher
@@ -238,7 +240,7 @@ picoclaw memory render
 
 说明：
 
-- v0.4.6 tag 仍然保留；安装 0.7.10 才能获得 schema v4、故障关闭的遗忘账本、账本校验和 Launcher 迁移页。
+- v0.4.6 tag 仍然保留；安装 0.7.20 才能获得 schema v4、故障关闭的遗忘账本、账本校验、跨存储清理和 Launcher 迁移页。
 - 恢复数据库备份后，先用 `picoclaw memory ledger-verify --backup <账本快照>` 校验主库与账本身份，再重放遗忘。
 - 历史 0.3.x → 0.4.0 迁移文档：[migration/0.4.0.zh.md](../migration/0.4.0.zh.md)。
 - 旧 `MEMORY.md` 只作为导入源；原始会话历史仍在 `workspace/sessions/*.jsonl`。
@@ -275,7 +277,7 @@ PicoClaw 支持 OpenAI 兼容接口，以及 Anthropic、Gemini、Bedrock、Azur
 
 ## 关于本仓库
 
-本仓库维护 PicoClaw 0.7.10，包含 SQLite 记忆 V4（权限域、独立遗忘账本、证据约束摘要、chat kind 强制、工具治理、混合检索与场景胶囊）、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
+本仓库维护 PicoClaw 0.7.20，包含 SQLite 记忆 V4（权限域、独立遗忘账本、证据约束摘要、owner-only 治理、JSONL/Seahorse 来源根清理、完整发送点门禁、混合检索与场景胶囊）、QQ 通道修复和 OpenCode Go session header 支持。发布二进制由本仓库构建。
 
 ## 许可证
 

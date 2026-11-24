@@ -66,7 +66,7 @@ picoclaw memory inspect <entry-id>                                      # source
 picoclaw memory ledger-verify --backup memory/backups/forget-ledger.db.bak-<时间戳>  # match: true
 ```
 
-`ledger-verify` 比对备份与当前账本的 UUID/key_id；不一致时返回非零退出码，不能用于重放遗忘。
+`ledger-verify` 比对备份与当前账本的 UUID/key_id，并输出 backup/active max seq、applied seq 与 pending 数量；身份不一致时返回非零退出码，不能用于重放遗忘。
 
 ## 回滚
 
@@ -75,6 +75,9 @@ picoclaw memory ledger-verify --backup memory/backups/forget-ledger.db.bak-<时�
   只恢复快照会让快照之后遗忘的内容复活。
 - 0.7.10 起迁移/修复生成的备份同时包含主库与账本快照；两者必须成对恢复，并用
   `picoclaw memory ledger-verify --backup <账本快照>` 校验身份。
+- 0.7.20 起所有实际迁移/v4 修复都在写入前创建新备份；全新库初始化在单事务内完成。
+  `replay-forget` 默认 dry-run，按 manifest entry ID + domain 执行，需要 `--yes`。
+  历史 forget 用 `picoclaw memory forget-audit` 只读审计，不自动补账本或删除。
 - `forget-ledger.db` 及其 HMAC 密钥必须与数据库一起备份；账本缺失或身份损坏时
   破坏性记忆操作按故障关闭处理，不会静默新建空账本或丢掉遗忘义务。
 
@@ -85,11 +88,12 @@ picoclaw memory ledger-verify --backup memory/backups/forget-ledger.db.bak-<时�
 | v1/v2 数据库 | 明确拒绝，不产生半迁移 |
 | 数据库版本高于二进制 | 在任何 DDL 之前拒绝 |
 | 迁移中断 | 事务回滚，下次打开重试 |
-| 缺 v4 表/列 | 下次打开由同一段自愈 |
+| 缺索引/触发器/FTS | 显式备份后由同一段幂等逻辑修复 |
+| 缺业务/义务/审计表 | 返回 `non_repairable`，必须恢复备份，不创建空表 |
 | 账本缺失 | 记忆读取可用，`forget` 故障关闭 |
 | 账本身份损坏 | 记忆读取可用，`forget`/`replay-forget` 故障关闭，不重置身份 |
 | 账本已写、主库未清理 | 启动时按账本重放 |
-| 主库恢复自旧备份 | `POST /api/memory/ledger/replay` 或 `picoclaw memory replay-forget` |
+| 主库恢复自旧备份 | `POST /api/memory/ledger/replay` 或 `picoclaw memory replay-forget --yes`；先 dry-run 检查 |
 
 ## 不迁移的内容
 

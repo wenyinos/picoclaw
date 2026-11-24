@@ -93,7 +93,7 @@ schema v3 新增：
 
 `memory` 工具的 search 默认查全部 layer，支持 `realm` / `layer` / `predicate` / `facet` / `status` 过滤。0.7 起它使用真实请求渠道，与注入共用同一套可见性规则：`audience=private` 的记忆对所有未排除的渠道可见（`private_channel_exclusions`），群聊/公开会话永远不可见。提示词注入使用更窄的检索路径：只取 active 的 relationship / episodic / procedural，按相关性过滤，并继续执行 audience / 渠道 / fictional 隔离。relationship 条目单次最多注入 2 条，避免长关系设定挤掉事件和流程。
 
-0.7.10 起，`memory` 工具的写入、确认、纠正、归档/恢复、遗忘预览和关系状态更新统一经过 `MemoryService`，并携带可信 domain / channel / chat kind；群聊写入个人记忆或关系状态会被拒绝。密码、验证码、API Key、私钥在 `Store.Add` 层直接拒绝，工具、API、自动抽取和导入都不能绕过。
+0.7.20 起，模型只保留 `add / search / inspect / 非核心 correct / legacy capsule / forget 预览` 白名单，全部经过 `MemoryService` 并携带可信 domain / channel / chat kind。`confirm`、归档/恢复、所有关系状态写入，以及任何 force/pinned/boundary 变更都只能由 owner 在 dashboard 或 CLI 执行；模型不能创建执行计划。密码、验证码、API Key、私钥在 `Store.Add` 层直接拒绝，工具、API、自动抽取和导入都不能绕过；英文 `password/passwd/bearer/常见 token 格式` 同样拦截。
 
 FTS/LIKE 的 status/domain/realm/audience 过滤进入 SQL 后再应用候选上限；不可见记录不会先占满 100 条候选、再把合法记忆挤掉。
 
@@ -105,7 +105,7 @@ FTS/LIKE 的 status/domain/realm/audience 过滤进入 SQL 后再应用候选上
 4. **时间通道**：相对时间短语转成区间，与 `event_at` 或 `valid_from/valid_to` 求重叠。
 5. **1-Hop**：从 Top 种子沿 related/caused/fulfilled/next_scene 扩展，目标节点重新做 status / realm / scope / audience 校验。
 
-固定块、边界块、检索块分别记账。边界块有独立上限（`max(200, 固定预算*30%)`），至少保留 1 条，并计入总账，不再静默突破预算。
+固定块、边界块、检索块共用一个总目标预算：基础内容最多使用 70%，剩余额度给边界与检索；固定块耗尽预算时检索为 0，不再强制注入最低 200 token。过期条目在 Search、FTS/LIKE、时间、1-hop 和 capsule 中都在 SQL 过滤阶段排除。核心 boundary 不做静默丢弃，溢出通过 `FixedUsage` 的 overflow/cut 指标暴露。
 
 ## 数据库迁移（schema v4）
 
@@ -126,15 +126,18 @@ FTS/LIKE 的 status/domain/realm/audience 过滤进入 SQL 后再应用候选上
 - 先写 `VACUUM INTO` 备份到 `memory/backups/`：主库与 `forget-ledger.db` 各生成一份快照，各自只保留最新 2 份。
 - 重复执行安全；当前版本的库第二次运行报告零变更。
 - FTS5 在事务前探测；缺失的投影会重建，完全没有 FTS5 时记录 `none`，不会导致数据库打不开。
-- 缺失的 v4 表/列由同一段幂等逻辑自愈。
+- 可重建的索引、触发器和 FTS 由同一段幂等逻辑修复；`entries/sources/memory_operations/memory_jobs/memory_change_plans` 等业务、义务或审计表丢失时返回 `non_repairable`，必须恢复备份，不能创建空表冒充修复。
+- 0.7.20 起全新空库的 base+v4 建表、默认域、revision 与 `schema_version` 在同一事务完成；部分初始化不会留下“假 v4”。
 - 已删除的 v3 数据修复（硬编码改判、生日恢复）不会重放；仍需这些修复的库请先运行 0.6.x。
 
-`forget-ledger.db` 与 `memory.db` 同目录、使用独立 HMAC 密钥。0.7.10 起：
+`forget-ledger.db` 与 `memory.db` 同目录、使用独立 HMAC 密钥。0.7.20 起：
 
 - 迁移/修复备份会同时保存主库与账本快照；恢复时必须成对使用。
 - 已有 v4 库的账本缺失、key 损坏或身份字段不完整时，读取仍可用，但 `forget` / `replay-forget` 故障关闭，不会静默创建新账本或重置身份。
-- 全新数据库和 v3 → v4 迁移允许创建第一份账本。
-- 恢复后用 `picoclaw memory ledger-verify --backup <账本快照>` 校验 UUID/key_id 是否匹配当前库；不一致时返回非零退出码，不能继续用它重放遗忘。
+- 全新数据库和 v3 → v4 迁移允许创建第一份账本；并发首次打开通过 `_txlock=immediate` 保证只产生一个身份。
+- `replay-forget` 只按账本 manifest 的 entry ID + domain 删除，不再全库扫描正文哈希；恢复后不会误删同文的其他域。默认 dry-run，`--yes` 才执行。
+- `memory forget-audit` 只读报告历史 forget 操作，不自动补账本或删除；历史 `content_hash` 没有 domain，不能用于自动清理。
+- 恢复后用 `picoclaw memory ledger-verify --backup <账本快照>` 校验 UUID/key_id 与 seq/pending 水位；身份不一致返回非零退出码，不能继续用它重放遗忘。
 
 可以在 `/memory` 的“数据库迁移”页一键执行，也可以运行：
 
@@ -163,8 +166,9 @@ picoclaw memory migrate
 picoclaw memory repair --dry-run
 picoclaw memory inspect <id>
 picoclaw memory rebuild-fts
-picoclaw memory forget <id> [--yes]
-picoclaw memory replay-forget
+picoclaw memory forget <id> [--yes --expected-revision <r>]
+picoclaw memory forget-audit --limit 1000
+picoclaw memory replay-forget [--yes]
 picoclaw memory cleanup          # 消费 forget_cleanup；gateway 启动时也会自动运行
 picoclaw memory ledger-verify --backup <账本快照>
 picoclaw memory capsule --preset t0_compact
@@ -176,7 +180,18 @@ picoclaw memory export --out memories.jsonl
 picoclaw memory render   # 可选 Markdown 导出，不会被运行时读回
 ```
 
-`memory import` 是唯一会读取旧 `MEMORY.md` 的命令；运行时不读取。`memory forget` 不带 `--yes` 时只预览；`memory replay-forget` 用于从旧备份恢复后重新应用遗忘墓碑。`memory cleanup` 对 JSONL 做精确 HMAC 匹配；无 locator 或无法核验的任务会保持 `blocked`，不会以 `done` 表示完整清除。
+`memory import` 是唯一会读取旧 `MEMORY.md` 的命令；运行时不读取。`memory forget` 不带 `--yes` 时只预览；真实删除必须同时提供预览中的 `--expected-revision`，修订变化会冲突。`memory replay-forget` 默认 dry-run，`--yes` 才按 manifest 重放。`memory cleanup` 必须离线运行（检测到 gateway PID 会拒绝），同时清理 JSONL 与 Seahorse；存在 `unavailable` 或 `outcome_unknown` 时返回非零。`memory forget-audit` 只报告历史操作，不修改数据。
+
+## 0.7.20 安全与清理修复
+
+- 已遗忘正文不能经 `Correct` 或公开 API 内部字段复活；`Update` 不再允许改正文、状态或提升 pinned。
+- 模型敏感动作改为 owner-only；owner 计划参数过滤内部字段，批准时校验 payload digest/domain/revision，claim 时即保存批准人，`blocked` 只能经新预览显式重新排队。
+- 所有 API 写入使用严格 JSON 解码；记忆条目 DTO 不接受 Force/Bypass/domain/来源根等宿主导出字段。
+- Seahorse `grep/expand` 只读取可信 Agent+session 对应的 conversation；模型 `all_conversations` 被拒绝，未知 ChatKind fail-closed。
+- egress 覆盖 `/btw`、legacy/Seahorse 摘要和 subagent tool loop；策略拒绝不 retry/fallback。`memory.enabled=false` 不再停止已接受的 forget cleanup。
+- 来源证据改为宿主生成、按 `origin_event_id` 隔离的版本化根；JSONL 清理在活跃 store 的单 session 锁内原子改写，覆盖重复消息和工具调用文本；Seahorse 清理同事务删除消息、parts、context items 与依赖摘要。
+- 设置更新按字段存在性合并，不再因部分请求清空 recipients 或 V4 开关；`memory:null` 和只有 `db_path` 的部分配置保持安全默认。
+- 历史 forget 只读审计；Replay 按 manifest domain 修复。全新库初始化原子化，v4 修复先备份，义务/审计表缺失故障关闭。
 
 ## 0.7.10 安全修复
 

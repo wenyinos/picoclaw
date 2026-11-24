@@ -93,7 +93,7 @@ Writes are processed in order:
 
 The `memory` tool's search covers all layers by default and supports `realm` / `layer` / `predicate` / `facet` / `status` filters. Since 0.7 it uses the real request channel and the same visibility rules as injection: private memories are visible in every channel that is not excluded (`private_channel_exclusions`), and never in group/public chats. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures.
 
-Since 0.7.10, all `memory` tool writes, confirmation, correction, archive/restore, forget preview and relationship-state updates go through `MemoryService` with the trusted domain, channel and chat kind. Group chats cannot write personal memories or relationship state. Passwords, verification codes, API keys and private keys are rejected at the `Store.Add` layer, so tools, APIs, extraction and imports cannot bypass the rule. FTS/LIKE apply the status/domain/realm/audience filter in SQL before the candidate limit, so invisible rows cannot crowd out a valid match.
+Since 0.7.20, models have a controlled allowlist: `add / search / inspect / non-core correct / legacy capsule / forget preview`. `confirm`, archive/restore, all relationship writes, and every force/pinned/boundary change are owner-only in the dashboard or CLI; models cannot create execution plans. All actions pass through `MemoryService` with the trusted domain, channel and chat kind. Passwords, verification codes, API keys, private keys and common English credential formats are rejected at the `Store.Add` layer. FTS/LIKE apply status/domain/realm/audience and TTL filters in SQL before the candidate limit.
 
 Both paths share the hybrid candidate set:
 
@@ -103,7 +103,7 @@ Both paths share the hybrid candidate set:
 4. **Temporal** — relative-time phrases become an interval that overlaps `event_at` or `valid_from/valid_to`.
 5. **1-Hop** — related/caused/fulfilled/next-scene edges from the top seeds; targets are re-checked for status, realm, scope and audience.
 
-Fixed, boundary, and retrieval blocks are accounted separately. The boundary block has its own cap (`max(200, fixed_budget*30%)`), always keeps at least one rule, and is included in the total instead of silently doubling it.
+Fixed, boundary, and retrieval blocks share one target budget: base content uses at most 70%, and the remainder covers boundaries and retrieval. When fixed content consumes the target, retrieval is zero instead of forcing a 200-token minimum. Expired entries are filtered in SQL across Search, FTS/LIKE, temporal, 1-hop and capsule paths. Core boundaries are not silently dropped; overflow/cut counts are exposed through `FixedUsage`.
 
 ## Database migration (schema v4)
 
@@ -124,15 +124,18 @@ Other guarantees:
 - `VACUUM INTO` backups are written to `memory/backups/`: one snapshot of the database and one of `forget-ledger.db`, keeping the newest two of each.
 - Re-running is safe and reports zero changes on a current database.
 - FTS5 is probed before the transaction; a missing projection is rebuilt, and a build without FTS5 records `none` instead of failing to open.
-- Missing v4 tables/columns are healed by the same idempotent segment.
+- Rebuildable indexes, triggers and FTS can be healed; missing business/obligation/audit tables such as `entries`, `sources`, `memory_operations`, `memory_jobs` or `memory_change_plans` return `non_repairable` and require a backup restore. Empty tables are never fabricated.
+- Since 0.7.20, fresh base+v4 schema creation, the default domain, revision and `schema_version` commit in one transaction; a partial initialization cannot leave a fake v4 database.
 - The removed v3 data repairs (hard-coded reclassification, birthday restore) are not replayed; run 0.6.x if a database still needs them.
 
-`forget-ledger.db` lives next to `memory.db` and uses its own HMAC key. Since 0.7.10:
+`forget-ledger.db` lives next to `memory.db` and uses its own HMAC key. Since 0.7.20:
 
 - Migration/repair backups include both the database and the ledger; restore them as a pair.
 - A v4 database whose ledger is missing, whose key is damaged, or whose identity fields are incomplete stays readable, but `forget` / `replay-forget` fail closed. No empty ledger or new identity is created silently.
-- A brand-new database and a v3 → v4 migration may create their first ledger.
-- After restoring, verify the pair with `picoclaw memory ledger-verify --backup <ledger snapshot>`; a UUID/key_id mismatch exits non-zero and must not be used for replay.
+- Concurrent first opens use `_txlock=immediate`, so only one ledger identity can be created.
+- `replay-forget` follows manifest entry IDs and permission domains instead of scanning all content hashes. It is dry-run by default and executes only with `--yes`.
+- `memory forget-audit` reports historical forget operations without writing a ledger or deleting rows; legacy content hashes have no domain and cannot drive automatic cleanup.
+- `ledger-verify` reports UUID/key_id plus sequence and pending watermarks; an identity mismatch exits non-zero.
 
 Run it from `/memory` → “Database migration” or:
 
@@ -161,8 +164,9 @@ picoclaw memory migrate
 picoclaw memory repair --dry-run
 picoclaw memory inspect <id>
 picoclaw memory rebuild-fts
-picoclaw memory forget <id> [--yes]
-picoclaw memory replay-forget
+picoclaw memory forget <id> [--yes --expected-revision <r>]
+picoclaw memory forget-audit --limit 1000
+picoclaw memory replay-forget [--yes]
 picoclaw memory cleanup          # drains forget_cleanup; gateway also runs it at startup
 picoclaw memory ledger-verify --backup <ledger snapshot>
 picoclaw memory capsule --preset t0_compact
@@ -174,7 +178,18 @@ picoclaw memory export --out memories.jsonl
 picoclaw memory render   # optional Markdown export, never read back
 ```
 
-`memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does. `memory forget` without `--yes` is a dry run. `memory replay-forget` re-applies forget tombstones after restoring an older backup. `memory cleanup` performs exact HMAC matching against JSONL; a job with no locator or unverifiable content stays `blocked` instead of claiming a complete erase.
+`memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does. `memory forget` without `--yes` is a dry run; a real delete also requires the `--expected-revision` from the preview. `memory replay-forget` is dry-run by default and needs `--yes` to follow ledger manifests. `memory cleanup` refuses to run while a gateway PID is live and covers both JSONL and Seahorse; `unavailable` or `outcome_unknown` returns non-zero. `memory forget-audit` is report-only.
+
+## 0.7.20 security and cleanup fixes
+
+- Forgotten text cannot return through `Correct` or public API internal fields; `Update` cannot change text, lifecycle status or promote pinned core.
+- Sensitive model actions are owner-only; owner plans strip internal fields and revalidate payload digest, domain and revision. The approver is persisted at claim time; `blocked` plans need a new preview and explicit requeue.
+- All API bodies use strict JSON decoding; entry DTOs cannot set Force/Bypass/domain/source-root fields.
+- Seahorse grep/expand only use the trusted Agent+session conversation; model `all_conversations` is rejected and unknown ChatKind fails closed.
+- Egress covers `/btw`, legacy/Seahorse summaries and subagent tool loops; policy denial does not retry or fall back. `memory.enabled=false` no longer stops accepted forget cleanup.
+- Evidence roots are host-generated and scoped by `origin_event_id`. JSONL cleanup rewrites under the active store's session lock and covers duplicate messages and tool-call text. Seahorse cleanup deletes messages, parts, context items and dependent summaries in one transaction.
+- Settings updates merge by field presence; partial requests cannot clear recipients or V4 switches. `memory:null` and partial objects keep safe defaults.
+- Historical forget is audit-only; Replay is domain-scoped. Fresh initialization is atomic, v4 repair backs up first, and missing obligation/audit tables fail closed.
 
 ## 0.7.10 security fixes
 

@@ -1,6 +1,6 @@
 # PicoClaw 记忆系统安全与质量整改实施计划
 
-> 文档状态：实施中（grilling 复审通过，目标版本 0.7.20）
+> 文档状态：已实施并发布（grilling 复审通过，版本 0.7.20）
 > 代码核查基线：`0431a574`（与 `95520122` 的 Go 实现一致）
 > 数据库参考快照：`/home/zemi/下载/memory`，2026-11-22 数据，Schema v4、revision 3840
 > 文档生成日期：2026-11-25
@@ -1085,3 +1085,56 @@ Dashboard 的指标不能将 `done` 作为唯一健康标准；必须同时显�
 独立终审首次返回 BLOCK，指出模型动作 allowlist 不明确、owner plan 的 blocked 状态未定义及“终态”误用；同时建议限定 entry revision、统一 legacy predicate fallback 和历史 forget 操作计数。五项均已修订后，同一终审代理复核返回 **PASS**，确认未发现新的直接矛盾。
 
 该 PASS 是最终文档一致性结论，不替代实施后的代码测试、故障注入、真实副本恢复演练或安全验收。
+
+## 24. 0.7.20 实施结果
+
+### 24.1 交付状态
+
+| 工作包 | 状态 | 主要提交 |
+|---|---|---|
+| G0 | 完成 | `0bcfd1c7` 计划基线；对抗测试随各修复提交 |
+| G1 | 完成 | `2f537c3d`、`f22f4e29`、`0d673cb9` |
+| G2 | 完成 | `661b5727` |
+| G3 | 完成 | `024da1bc`、`3c3d242c` |
+| G4 | 完成（关闭主要缺陷） | `e8f47efa`、`661b5727`、`5aaf76c7` |
+| G5 | 完成 | `77c4cc23` |
+| G6 | 完成 | `78e0c368`、`8ee4bd33`、`5aaf76c7` |
+| G7 | 完成合成质量门禁 | `5aaf76c7`、`3c3d242c` |
+
+### 24.2 已关闭的关键缺陷
+
+- Correct/API 墓碑复活；跨域 supersede；Update 改正文/状态/pinned。
+- 模型自批、force 改 pinned、关系状态直写、boundary 写入和执行计划创建。
+- 公开 API 内部治理字段、未知字段、伪造来源根。
+- 空 actor/request、审批 claim 后无批准人、digest/domain/revision 未复核。
+- Seahorse grep/expand 跨会话/Agent；模型 all_conversations；未知 ChatKind。
+- `/btw`、subagent、legacy/Seahorse 摘要 egress 漏检；策略拒绝 fallback。
+- `enabled=false` 停止已接受清理。
+- 长证据/重复消息/工具参数 JSONL 清理；Seahorse 逐条消息与摘要清理。
+- 全库哈希 Replay、跨域误删、历史 forget 无审计入口。
+- 摘要 invalidated 但正文保留。
+- 非原子新库初始化、v4 修复先改后备份、缺表假修复。
+- 账本并发身份覆盖、request ID 非幂等、备份只比 UUID。
+- TTL/Layer 后置过滤、固定块 audience 挤出、最低 200 检索预算。
+- 设置部分更新清空安全字段、`memory:null` 误判、永久 data-migration 提示。
+- CLI 危险操作无 revision、cleanup partial 返回 0、replay 无 dry-run。
+
+### 24.3 验证证据（0.7.20）
+
+- `go build -tags 'goolm stdjson' ./...`：通过。
+- 核心 Go 测试：memstore、memory、seahorse、agent、tools、tools/shared、identity、session、config、API、CLI：通过。
+- `CGO_ENABLED=1 go test -race`：memstore、memory、seahorse：通过。
+- `pnpm run lint`：0 error（8 个既有 hook warning）；`pnpm run build`：通过；本次两个前端文件 `prettier --check` 通过。
+- 全仓 `pnpm run format` 仍有 15 个无关历史文件告警，本次未批量修改。
+
+### 24.4 与计划的剩余差异
+
+| 项目 | 实际实现 | 保留边界 |
+|---|---|---|
+| pending ledger 自动对账 | 幂等 intent、pending/blocked 状态、只读审计已实现 | 无 actor/批准的旧 pending 不自动 replay；“主事务失败”自动 worker 仍需人工维护 |
+| 每 locator 清理回执 | `already_absent/outcome_unknown` 字段、blocked 语义、双后端合并已实现 | 未新增持久回执表；内置后端无法证明“崩溃前已删”时保守报 unavailable/blocked |
+| 多域 relationship | 跨域拒绝/fail-closed、legacy 单域 | 复合主键与完整 domain 注入仍为后续 RFC |
+| 历史 forget | `memory forget-audit` 只读报告 | 无 domain 的 content hash 不自动补账本或删除 |
+| G7 质量测量 | 合成正例/负例/禁止命中/TTL/layer/预算门禁 | 未提交真实私密评测集或固定设备 FTS benchmark |
+
+这些差异已在 0.7.20 发布说明“已知边界”中公开，不把未实现能力写成已完成。

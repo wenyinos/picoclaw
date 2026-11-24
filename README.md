@@ -25,7 +25,7 @@
 
 PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home server, or a $10 board. It connects to the chat apps and model providers you already use, executes tools, and keeps a workspace you own.
 
-**0.7.10 is the current stable release.** The 0.7 line turns the memory V4 foundation into a governed, fail-closed memory system: ownership domains, an independent forget ledger with backups, evidence-bound summaries, and a send-point egress gate. Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation.
+**0.7.20 is the current stable release.** The 0.7 line turns the memory V4 foundation into a governed, fail-closed memory system: ownership domains, an independent forget ledger with backups, evidence-bound summaries, and a send-point egress gate that also covers `/btw`, subagent calls and background summaries. Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation.
 
 ### 0.7 progress
 
@@ -36,9 +36,10 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 | 0.7.2 | released | Explicit migration; v3/missing-object v4 databases open fail-closed |
 | 0.7.3 | released | Private-channel opt-out semantics; group/public chats skipped by extraction |
 | 0.7.4 | released | Deprecated `private_channels` compatibility; fixes the 0.7.3 startup block |
-| 0.7.10 | current stable | Chat-kind enforcement across prompts/tools, tool governance, storage-level secret rejection, single-provider egress, ledger backup/verify, FTS/LIKE permission before `LIMIT`, Correct/summary/cleanup consistency |
+| 0.7.10 | released | Chat-kind enforcement across prompts/tools, tool governance, storage-level secret rejection, single-provider egress, ledger backup/verify, FTS/LIKE permission before `LIMIT`, Correct/summary/cleanup consistency |
+| 0.7.20 | current stable | Correct tombstone enforcement, owner-only model governance, strict write DTOs, audit actors/request IDs, atomic fresh bootstrap and repair backup, Seahorse conversation isolation and per-message cleanup, evidence roots, full egress send-point coverage, pre-`LIMIT` TTL/layer filtering |
 
-There is no schema change after v4; 0.7.10 is a security and governance release. Remaining boundaries are explicit: external LLM extraction, embeddings/vector retrieval, MMR, Seahorse per-message cleanup, proactive delivery scheduling, and owner/actor binding are not wired.
+There is no schema change after v4; 0.7.20 is a security, recovery and cleanup release. Remaining boundaries are explicit: external LLM extraction, embeddings/vector retrieval, MMR, automatic reconciliation of legacy pending ledger intents, proactive delivery scheduling, full multi-domain relationship support, and long-document chunking/time extraction are not wired.
 
 ### Memory that lasts
 
@@ -47,16 +48,17 @@ There is no schema change after v4; 0.7.10 is a security and governance release.
 - **Real vs. fictional isolation**: role-play and story settings are stored separately and are never mixed into the user's real profile. A write firewall keeps dialogue and setting documents out of `real/profile`.
 - **Human review queue**: uncertain memories wait in `pending_review` and are not injected until approved.
 - **Governance loop**: `inspect / confirm / correct / archive / restore / forget`. Content changes create a new version, pinned core memories refuse silent overwrites, and forgetting also removes the relationship-state copies (nicknames, birthdays) that feed the prompt block.
-- **Forget ledger**: `forget` journals the obligation to an independent `forget-ledger.db` before touching the database. Restoring an older backup does not resurrect forgotten content; `replay-forget` matches versioned HMACs. A missing or damaged ledger keeps reads available but fails `forget` closed, and migration/repair backups include both the database and the ledger.
+- **Forget ledger**: `forget` journals the obligation to an independent `forget-ledger.db` before touching the database. Restoring an older backup does not resurrect forgotten content; `replay-forget` now follows manifest entry IDs plus permission domains instead of a database-wide hash scan. A missing or damaged ledger keeps reads available but fails `forget` closed, and migration/repair backups include both the database and the ledger. `memory forget-audit` reports historical operations without deleting anything.
 - **Permission domains and chat kinds**: entries carry a `domain_id`; dedupe, auto-replace and capsule reads never merge different domains. Group/public chats only see audience `""`/`all` in prompts and the `memory` tool, even on channels that are otherwise private.
-- **Governed model tools**: `add / search / inspect / confirm / correct / archive / restore / forget preview / update_state` go through `MemoryService` with the trusted domain, channel and chat kind. Passwords, verification codes, API keys and private keys are rejected at `Store.Add`, not at one caller.
+- **Governed model tools**: models keep a controlled allowlist (`add / search / inspect / non-core correct / legacy capsule / forget preview`) governed by `MemoryService`. Confirmation, archive/restore, relationship updates and any force/pinned/boundary change are owner-only. Passwords, verification codes, API keys and private keys are rejected at `Store.Add`, not at one caller.
 - **Evidence-bound summaries**: manual topic/stage clusters, one claim per source, a generation + membership check before publishing, and invalidate-on-change. Summaries are revocable views, never authoritative facts.
 - **Time semantics**: today/yesterday/last week/last summer are parsed deterministically into `date / range / approximate / planned`; approximate phrases never get a fabricated day.
 - **Hybrid retrieval**: anchor (facet/predicate/title), FTS5, LIKE, temporal overlap, and one-hop relation expansion. Visibility is applied in SQL before `LIMIT`, including the FTS and LIKE channels, so an invisible row cannot starve a visible one.
 - **Scene capsules**: `load_capsule` returns the T0 writing rules in one call (full or compact); capsules use the real request channel and return empty for public/group chats.
 - **Real budget accounting**: fixed, boundary and retrieval blocks are counted separately, and `memory audit` prints the measured tokens.
 - **Schema v4 migration**: one explicit segment from v3 to v4 with `VACUUM INTO` snapshots of both the database and the ledger. Databases older than v3 must be upgraded with 0.6.x first; see [Memory schema v4](docs/reference/memory-schema-v4.md).
-- **Egress gate**: when `memory.allowed_chat_recipients` is non-empty, every actual provider call — primary, fallback, retry, streaming — must match the list or return the non-retryable `memory egress denied`.
+- **Egress gate**: when `memory.allowed_chat_recipients` is non-empty, every actual provider call that can carry memory or session-derived content — primary, fallback, retry, streaming, `/btw`, subagent loops and background summaries — must match the list or return the non-retryable `memory egress denied`. A policy denial stops the chain instead of silently switching providers.
+- **Cross-store forget cleanup**: JSONL and Seahorse both verify complete source roots before deletion; duplicate messages, tool-call text and summaries derived from a forgotten message are covered. Unverifiable fragments remain `unavailable/partial` rather than being guessed.
 - **Channel visibility (opt-out)**: private memories are visible in every channel by default; exclude the ones you do not want in the settings page (checkboxes, all checked by default). Group/public chats never see them in prompts or tools.
 
 ### A dashboard for the relationship
@@ -242,7 +244,7 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 Notes:
 
-- The v0.4.6 tag remains available; install 0.7.10 to get schema v4, the fail-closed forget ledger, ledger verification and the Launcher migration page.
+- The v0.4.6 tag remains available; install 0.7.20 to get schema v4, the fail-closed forget ledger, ledger verification, cross-store cleanup and the Launcher migration page.
 - After restoring a database backup, verify the ledger pair with `picoclaw memory ledger-verify --backup <forget-ledger snapshot>` before replaying forgets.
 - Historical 0.3.x → 0.4.0 guide: [migration/0.4.0.md](docs/migration/0.4.0.md).
 - The old `MEMORY.md` is only an import source; raw session history stays in `workspace/sessions/*.jsonl`.
@@ -280,7 +282,7 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 
 ## About this repository
 
-This repository maintains PicoClaw 0.7.10 with the SQLite memory V4 system (permission domains, independent forget ledger, evidence-bound summaries, chat-kind enforcement, governed tools, hybrid retrieval and scene capsules), QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
+This repository maintains PicoClaw 0.7.20 with the SQLite memory V4 system (permission domains, independent forget ledger, evidence-bound summaries, owner-only governance, evidence-root cleanup across JSONL and Seahorse, full send-point egress, hybrid retrieval and scene capsules), QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
 
 ## License
 

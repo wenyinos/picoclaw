@@ -1,5 +1,45 @@
 # 变更日志
 
+## v0.7.20
+
+### 安全与权限
+
+- **禁止遗忘复活**：`Correct` 重新执行墓碑检查，公开 API 不再接受 `BypassForgetTombstone`；`Update` 不能改正文、生命周期状态或直接提升 pinned。
+- **模型治理**：模型只保留 `add/search/inspect/非核心 correct/legacy capsule/forget preview`；确认、归档/恢复、关系状态、force/pinned/boundary 全部 owner-only，模型不能创建执行计划。
+- **写入 DTO 与审计**：条目 API 使用白名单并拒绝未知字段；每个新操作记录宿主 actor、完整 request ID、reason code 和 policy revision。
+- **秘密与关系状态**：扩展英文凭据与常见 token 格式；关系状态增加长度、秘密分类、审计日志。
+- **审批计划**：owner-only 创建、内部字段剥离、digest/domain/revision 复核、claim 时保存批准人、blocked 显式 requeue、过期清 payload。
+
+### 读取与外发
+
+- **Seahorse 隔离**：grep/expand 强制可信 Agent+session+conversation；模型 `all_conversations` 被拒绝；未知 ChatKind fail-closed，异步 follow-up 不自动抽取。
+- **完整 egress**：主调用、fallback、重试、流式、`/btw`、legacy/Seahorse 摘要和 subagent loop 全部检查 recipients；拒绝不 retry/fallback。
+- **清理与学习解耦**：`memory.enabled=false` 不停止已接受 forget cleanup；摘要仍按接收方检查。
+- **日志脱敏**：agent DEBUG 不再输出完整消息、reasoning 或工具参数正文。
+
+### 遗忘与恢复
+
+- 来源根证据版本化并绑定唯一 origin；长消息、重复消息和工具调用文本都按完整来源验证。
+- JSONL 清理改为活跃 store 单 session 锁内原子改写；Seahorse 新增逐条消息/part 清理，并删除依赖摘要与父摘要。
+- Replay 改为按 manifest entry ID + domain 重放；默认 dry-run；新增 `memory forget-audit` 只读审计。
+- 遗忘清除摘要正文/claims/evidence/dependencies；cleanup 增加 `already_absent/outcome_unknown`，partial 返回非零。
+- 新库初始化原子化；v4 修复先备份；缺业务/义务/审计表返回 `non_repairable`；账本身份并发创建和 request ID 幂等；`ledger-verify` 输出 seq/pending 水位。
+
+### 检索、配置与界面
+
+- TTL、audience、domain、layer 在 Search/FTS/LIKE/1-hop/fixed/capsule 的 LIMIT 前生效。
+- 固定上下文与检索共享总目标预算；固定块耗尽时 retrieval=0；核心 boundary 溢出可观测。
+- 设置更新按字段存在性合并；`memory:null` 和部分配置保持安全默认。
+- 记忆页区分账本意图与 cleanup job，展示任务错误；迁移页不再把空 predicate 当成永久迁移。
+- CLI 新增 forget-audit；replay 默认 dry-run；cleanup 覆盖双后端并在 partial/unknown 返回非零；forget --yes 需要 expected revision。
+
+### 升级
+
+- 无 Schema 变更（仍为 v4），无新增必需配置字段；覆盖二进制并重启。
+- 模型敏感动作改由 owner 在 dashboard/CLI 执行。
+- 脚本需为 `replay-forget` 加 `--yes`，为 `forget --yes` 传入预览中的 `--expected-revision`。
+- 旧 cleanup 任务缺少根证据时可能保持 `unavailable/blocked`，不会猜测删除。
+
 ## v0.7.10
 
 ### 安全与治理
