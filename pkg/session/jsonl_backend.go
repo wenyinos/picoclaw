@@ -132,6 +132,16 @@ func (b *JSONLBackend) AddFullMessage(sessionKey string, msg providers.Message) 
 	}
 }
 
+// JSONLStore returns the active underlying store so maintenance workers can
+// use its atomic session mutation API instead of opening a second instance.
+func (b *JSONLBackend) JSONLStore() *memory.JSONLStore {
+	if b == nil {
+		return nil
+	}
+	store, _ := b.store.(*memory.JSONLStore)
+	return store
+}
+
 func (b *JSONLBackend) GetHistory(key string) []providers.Message {
 	key = b.resolveSessionKey(key)
 	msgs, err := b.store.GetHistory(context.Background(), key)

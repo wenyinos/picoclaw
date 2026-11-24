@@ -10,6 +10,7 @@ import (
 	sessionmem "github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/memstore"
 	"github.com/sipeed/picoclaw/pkg/seahorse"
+	"github.com/sipeed/picoclaw/pkg/session"
 )
 
 type compositeCleaner []memstore.MessageCleaner
@@ -60,19 +61,42 @@ func (al *AgentLoop) runForgetCleanup(ctx context.Context) {
 		logger.WarnCF("memory", "cleanup skipped: forget ledger unavailable", nil)
 		return
 	}
-	jsonl, err := sessionmem.NewJSONLStore(filepath.Join(workspace, "sessions"))
-	if err != nil {
-		logger.WarnCF("memory", "cleanup skipped: session store unavailable", map[string]any{
-			"error": err.Error(),
-		})
-		return
-	}
-	defer jsonl.Close()
 	digest := func(text string) string {
 		value, _, _ := ledger.Digest(text)
 		return value
 	}
-	cleaners := compositeCleaner{sessionmem.NewLocatorCleaner(jsonl, digest)}
+	cleaners := compositeCleaner{}
+	seenStores := map[*sessionmem.JSONLStore]bool{}
+	if al.registry != nil {
+		for _, agentID := range al.registry.ListAgentIDs() {
+			agent, ok := al.registry.GetAgent(agentID)
+			if !ok || agent == nil || agent.Sessions == nil {
+				continue
+			}
+			backend, ok := agent.Sessions.(*session.JSONLBackend)
+			if !ok {
+				continue
+			}
+			active := backend.JSONLStore()
+			if active == nil || seenStores[active] {
+				continue
+			}
+			seenStores[active] = true
+			cleaners = append(cleaners, sessionmem.NewLocatorCleaner(active, digest))
+		}
+	}
+	var fallback *sessionmem.JSONLStore
+	if len(cleaners) == 0 {
+		fallback, err = sessionmem.NewJSONLStore(filepath.Join(workspace, "sessions"))
+		if err != nil {
+			logger.WarnCF("memory", "cleanup skipped: session store unavailable", map[string]any{
+				"error": err.Error(),
+			})
+			return
+		}
+		defer fallback.Close()
+		cleaners = append(cleaners, sessionmem.NewLocatorCleaner(fallback, digest))
+	}
 	al.mu.RLock()
 	cm := al.contextManager
 	al.mu.RUnlock()
