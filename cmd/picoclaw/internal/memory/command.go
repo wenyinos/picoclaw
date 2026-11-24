@@ -15,7 +15,29 @@ import (
 	sessionmem "github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/memstore"
 	"github.com/sipeed/picoclaw/pkg/pid"
+	"github.com/sipeed/picoclaw/pkg/seahorse"
 )
+
+type cliCleanerGroup []memstore.MessageCleaner
+
+func (g cliCleanerGroup) CleanLocators(ctx context.Context, locators []memstore.SourceLocator) (memstore.CleanupOutcome, error) {
+	total := memstore.CleanupOutcome{}
+	for _, cleaner := range g {
+		outcome, err := cleaner.CleanLocators(ctx, locators)
+		if err != nil {
+			total.Unavailable += len(locators)
+			total.Details = append(total.Details, err.Error())
+			continue
+		}
+		total.Removed += outcome.Removed
+		total.AlreadyAbsent += outcome.AlreadyAbsent
+		total.Unavailable += outcome.Unavailable
+		total.OutcomeUnknown += outcome.OutcomeUnknown
+		total.Sessions += outcome.Sessions
+		total.Details = append(total.Details, outcome.Details...)
+	}
+	return total, nil
+}
 
 // NewMemoryCommand returns the `picoclaw memory` command group.
 func NewMemoryCommand() *cobra.Command {
@@ -29,6 +51,7 @@ func NewMemoryCommand() *cobra.Command {
 		newInspectCommand(),
 		newRebuildFTSCommand(),
 		newForgetCommand(),
+		newForgetAuditCommand(),
 		newReplayForgetCommand(),
 		newCleanupCommand(),
 		newLedgerVerifyCommand(),
@@ -174,6 +197,30 @@ func newForgetCommand() *cobra.Command {
 	return cmd
 }
 
+func newForgetAuditCommand() *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "forget-audit",
+		Short: "Report historical forget operations without deleting data",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, _, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			report, err := store.AuditHistoricalForgets(context.Background(), limit)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(report)
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 1000, "maximum historical operations to report (1-5000)")
+	return cmd
+}
+
 func newReplayForgetCommand() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
@@ -289,7 +336,7 @@ func newCleanupCommand() *cobra.Command {
 	var maxJobs int
 	cmd := &cobra.Command{
 		Use:   "cleanup",
-		Short: "Drain queued forget-cleanup jobs against session JSONL",
+		Short: "Drain queued forget-cleanup jobs against JSONL and Seahorse",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if running := pid.ReadPidFileWithCheck(config.GetHome()); running != nil {
 				return fmt.Errorf(
@@ -311,11 +358,19 @@ func newCleanupCommand() *cobra.Command {
 				return err
 			}
 			defer sessionStore.Close()
-			cleaner := sessionmem.NewLocatorCleaner(sessionStore, func(text string) string {
-				digest, _, _ := ledger.Digest(text)
-				return digest
-			})
-			outcome, err := store.RunCleanupJobs(context.Background(), cleaner, maxJobs)
+			digest := func(text string) string {
+				value, _, _ := ledger.Digest(text)
+				return value
+			}
+			cleaners := cliCleanerGroup{sessionmem.NewLocatorCleaner(sessionStore, digest)}
+			seahorseEngine, seahorseErr := seahorse.NewEngine(seahorse.Config{
+				DBPath: filepath.Join(cfg.Agents.Defaults.Workspace, "sessions", "seahorse.db"),
+			}, nil)
+			if seahorseErr == nil && seahorseEngine != nil {
+				defer seahorseEngine.Close()
+				cleaners = append(cleaners, seahorse.NewLocatorCleaner(seahorseEngine, digest))
+			}
+			outcome, err := store.RunCleanupJobs(context.Background(), cleaners, maxJobs)
 			if err != nil {
 				return err
 			}

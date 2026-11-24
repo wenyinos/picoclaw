@@ -47,6 +47,28 @@ func TestLedgerConcurrentFirstOpenKeepsOneIdentity(t *testing.T) {
 	}
 }
 
+func TestHistoricalForgetAuditIsReportOnly(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	entry, err := s.Add(ctx, AddInput{Text: "historical audit target", Layer: LayerProfile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Forget(ctx, entry.Entry.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	report, err := s.AuditHistoricalForgets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Total != 1 || report.TargetsGone != 1 || report.TargetsPresent != 0 {
+		t.Fatalf("report = %+v", report)
+	}
+	if len(report.Items) != 1 || report.Items[0].TargetID != entry.Entry.ID {
+		t.Fatalf("audit items = %+v", report.Items)
+	}
+}
+
 func TestRecordIntentIsIdempotentByRequestID(t *testing.T) {
 	ledger, err := OpenForgetLedger(filepath.Join(t.TempDir(), "forget-ledger.db"))
 	if err != nil {
