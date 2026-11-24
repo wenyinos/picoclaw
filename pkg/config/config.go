@@ -68,10 +68,10 @@ type MemoryConfig struct {
 	// private memories by default (opt out via PrivateChannelExclusions). The
 	// field must stay defined so config files written by 0.7.2 and earlier
 	// still pass strict unknown-field validation.
-	PrivateChannels []string `json:"private_channels,omitempty"`
-	InjectFictional          bool     `json:"inject_fictional"`
-	ReviewRequired           bool     `json:"review_required"`
-	EpisodicRetentionDays    int      `json:"episodic_retention_days,omitempty"`
+	PrivateChannels       []string `json:"private_channels,omitempty"`
+	InjectFictional       bool     `json:"inject_fictional"`
+	ReviewRequired        bool     `json:"review_required"`
+	EpisodicRetentionDays int      `json:"episodic_retention_days,omitempty"`
 
 	// V4 (schema 4) policy switches. All are opt-in: a missing field keeps the
 	// safe default, so an old config file never silently enables external
@@ -1588,16 +1588,29 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Session.DeriveDmScope()
 	// 0.3.x configs have no memory section. Turn the SQLite memory subsystem on
 	// with defaults so a workspace can be copied to a server and used directly.
-	applyMemoryDefaults(cfg, strings.Contains(string(data), `"memory"`))
+	var memoryPresence struct {
+		Memory json.RawMessage `json:"memory"`
+	}
+	_ = json.Unmarshal(data, &memoryPresence)
+	enabledConfigured := false
+	if len(memoryPresence.Memory) > 0 && string(memoryPresence.Memory) != "null" {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(memoryPresence.Memory, &fields) == nil {
+			_, enabledConfigured = fields["enabled"]
+		}
+	}
+	applyMemoryDefaults(cfg, enabledConfigured)
 
 	return cfg, nil
 }
 
-func applyMemoryDefaults(cfg *Config, memoryConfigured bool) {
+func applyMemoryDefaults(cfg *Config, enabledConfigured bool) {
 	if cfg == nil {
 		return
 	}
-	if !memoryConfigured {
+	// Missing/null memory section or a partial object without an explicit
+	// "enabled" field keeps the safe default. Explicit false is respected.
+	if !enabledConfigured {
 		cfg.Memory.Enabled = true
 	}
 	if strings.TrimSpace(cfg.Memory.DBPath) == "" {

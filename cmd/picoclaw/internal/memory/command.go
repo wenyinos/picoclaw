@@ -12,8 +12,9 @@ import (
 
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal"
 	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/memstore"
 	sessionmem "github.com/sipeed/picoclaw/pkg/memory"
+	"github.com/sipeed/picoclaw/pkg/memstore"
+	"github.com/sipeed/picoclaw/pkg/pid"
 )
 
 // NewMemoryCommand returns the `picoclaw memory` command group.
@@ -144,17 +145,22 @@ func newRebuildFTSCommand() *cobra.Command {
 
 func newForgetCommand() *cobra.Command {
 	var yes bool
+	var expectedRevision int64
 	cmd := &cobra.Command{
 		Use:   "forget <id>",
 		Short: "Hard-delete a memory and its derived data",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if yes && expectedRevision <= 0 {
+				return fmt.Errorf("--yes requires --expected-revision from a fresh preview")
+			}
 			store, _, err := openStore()
 			if err != nil {
 				return err
 			}
 			defer store.Close()
-			preview, err := store.Forget(context.Background(), args[0], !yes)
+			preview, err := store.ForgetAtRevision(
+				cliAuditContext(store), args[0], !yes, expectedRevision)
 			if err != nil {
 				return err
 			}
@@ -164,11 +170,13 @@ func newForgetCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "actually delete; without it this is a dry run")
+	cmd.Flags().Int64Var(&expectedRevision, "expected-revision", 0, "entry revision from the deletion preview")
 	return cmd
 }
 
 func newReplayForgetCommand() *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:   "replay-forget",
 		Short: "Re-apply forget tombstones after restoring a backup",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -177,7 +185,29 @@ func newReplayForgetCommand() *cobra.Command {
 				return err
 			}
 			defer store.Close()
-			n, err := store.ReplayForget(context.Background())
+			ledger := store.ForgetLedgerRef()
+			if ledger == nil {
+				return fmt.Errorf("forget ledger unavailable")
+			}
+			if !yes {
+				intents, err := ledger.AllIntents(context.Background())
+				if err != nil {
+					return err
+				}
+				entries := 0
+				for _, intent := range intents {
+					manifest, err := memstore.ParseManifest(intent.TargetManifest)
+					if err != nil || len(manifest.EntryIDs) == 0 {
+						continue
+					}
+					entries += len(manifest.EntryIDs)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"dry run: %d intent(s), %d manifest entry target(s); pass --yes to execute\n",
+					len(intents), entries)
+				return nil
+			}
+			n, err := store.ReplayForget(cliAuditContext(store))
 			if err != nil {
 				return err
 			}
@@ -185,6 +215,8 @@ func newReplayForgetCommand() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "execute Replay; without it this is a dry run")
+	return cmd
 }
 
 func newCapsuleCommand() *cobra.Command {
@@ -221,20 +253,28 @@ func newCapsuleCommand() *cobra.Command {
 	return cmd
 }
 
+func cliAuditContext(store *memstore.Store) context.Context {
+	actor := "cli@local"
+	if ledger := store.ForgetLedgerRef(); ledger != nil && ledger.UUID() != "" {
+		actor = "cli@" + ledger.UUID()
+	}
+	return memstore.WithAudit(context.Background(), actor, "")
+}
+
 func openStore() (*memstore.Store, *config.Config, error) {
 	cfg, err := internal.LoadConfig()
 	if err != nil {
 		return nil, nil, err
 	}
 	store, err := memstore.OpenForWorkspace(cfg.Agents.Defaults.Workspace, memstore.Config{
-		Enabled:               cfg.Memory.Enabled,
-		DBPath:                cfg.Memory.DBPath,
-		BudgetTokens:          cfg.Memory.BudgetTokens,
-		AutoExtract:           cfg.Memory.AutoExtract,
-		PrivateChannelExclusions:       cfg.Memory.PrivateChannelExclusions,
-		InjectFictional:       cfg.Memory.InjectFictional,
-		ReviewRequired:        cfg.Memory.ReviewRequired,
-		EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,
+		Enabled:                  cfg.Memory.Enabled,
+		DBPath:                   cfg.Memory.DBPath,
+		BudgetTokens:             cfg.Memory.BudgetTokens,
+		AutoExtract:              cfg.Memory.AutoExtract,
+		PrivateChannelExclusions: cfg.Memory.PrivateChannelExclusions,
+		InjectFictional:          cfg.Memory.InjectFictional,
+		ReviewRequired:           cfg.Memory.ReviewRequired,
+		EpisodicRetentionDays:    cfg.Memory.EpisodicRetentionDays,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -251,6 +291,11 @@ func newCleanupCommand() *cobra.Command {
 		Use:   "cleanup",
 		Short: "Drain queued forget-cleanup jobs against session JSONL",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if running := pid.ReadPidFileWithCheck(config.GetHome()); running != nil {
+				return fmt.Errorf(
+					"gateway is running (PID %d); stop it before running offline cleanup",
+					running.PID)
+			}
 			store, cfg, err := openStore()
 			if err != nil {
 				return err
@@ -276,7 +321,14 @@ func newCleanupCommand() *cobra.Command {
 			}
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
-			return enc.Encode(outcome)
+			if err := enc.Encode(outcome); err != nil {
+				return err
+			}
+			if outcome.Unavailable > 0 || outcome.OutcomeUnknown > 0 {
+				return fmt.Errorf("cleanup incomplete: unavailable=%d outcome_unknown=%d",
+					outcome.Unavailable, outcome.OutcomeUnknown)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().IntVar(&maxJobs, "max-jobs", 20, "maximum cleanup jobs to process")

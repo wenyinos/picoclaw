@@ -243,6 +243,11 @@ func (svc *MemoryService) SetRelationshipState(ctx context.Context, mc MemoryCon
 // Forget executes or previews a permanent erase. Owner approval is the
 // caller's responsibility (dashboard auth or CLI maintenance mode).
 func (svc *MemoryService) Forget(ctx context.Context, mc MemoryContext, id string, dryRun bool) (*ForgetPreview, error) {
+	return svc.ForgetAtRevision(ctx, mc, id, dryRun, 0)
+}
+
+// ForgetAtRevision binds a permanent delete to the expected entry revision.
+func (svc *MemoryService) ForgetAtRevision(ctx context.Context, mc MemoryContext, id string, dryRun bool, expectedRevision int64) (*ForgetPreview, error) {
 	mc, err := svc.authorizeWrite(mc, "")
 	if err != nil {
 		return nil, err
@@ -250,7 +255,7 @@ func (svc *MemoryService) Forget(ctx context.Context, mc MemoryContext, id strin
 	if err := svc.requireTarget(ctx, mc, id); err != nil {
 		return nil, err
 	}
-	return svc.store.Forget(svc.auditContext(ctx, mc), id, dryRun)
+	return svc.store.ForgetAtRevision(svc.auditContext(ctx, mc), id, dryRun, expectedRevision)
 }
 
 func (svc *MemoryService) requireTarget(ctx context.Context, mc MemoryContext, id string) error {

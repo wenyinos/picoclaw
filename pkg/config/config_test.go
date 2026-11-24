@@ -3301,3 +3301,25 @@ func TestLoadConfig_LegacyPrivateChannelsStillLoads(t *testing.T) {
 		"deprecated allow-list must be cleared after load")
 	assert.Equal(t, []string{"weixin"}, cfg.Memory.PrivateChannelExclusions)
 }
+
+func TestLoadConfig_PartialAndNullMemoryKeepSafeDefaults(t *testing.T) {
+	for name, memory := range map[string]string{
+		"partial": `{"db_path":"memory/partial.db"}`,
+		"null":    `null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.json")
+			raw := `{"version":3,"memory":` + memory + `}`
+			if err := os.WriteFile(configPath, []byte(raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(configPath)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			assert.True(t, cfg.Memory.Enabled, "partial/null memory must not disable the subsystem")
+			assert.Equal(t, 1200, cfg.Memory.BudgetTokens)
+		})
+	}
+}

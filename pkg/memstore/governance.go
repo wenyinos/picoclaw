@@ -230,6 +230,16 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 // Relationship-state copies (nicknames, birthdays, moods) are removed with the
 // entry: forgetting "call me X" must not leave the prompt block saying X.
 func (s *Store) Forget(ctx context.Context, id string, dryRun bool) (*ForgetPreview, error) {
+	return s.forgetAtRevision(ctx, id, dryRun, 0)
+}
+
+// ForgetAtRevision executes or previews a delete only if the target still has
+// the revision the owner approved. The check and deletion share s.mu.
+func (s *Store) ForgetAtRevision(ctx context.Context, id string, dryRun bool, expectedRevision int64) (*ForgetPreview, error) {
+	return s.forgetAtRevision(ctx, id, dryRun, expectedRevision)
+}
+
+func (s *Store) forgetAtRevision(ctx context.Context, id string, dryRun bool, expectedRevision int64) (*ForgetPreview, error) {
 	if err := s.checkReady(); err != nil {
 		return nil, err
 	}
@@ -238,14 +248,18 @@ func (s *Store) Forget(ctx context.Context, id string, dryRun bool) (*ForgetPrev
 	defer s.mu.Unlock()
 
 	var hash, status, text, domainID, predicate, subject string
+	var rowRevision int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT content_hash,status,text,domain_id,predicate,subject FROM entries WHERE id=?`, id).
-		Scan(&hash, &status, &text, &domainID, &predicate, &subject)
+		`SELECT content_hash,status,text,domain_id,predicate,subject,row_revision FROM entries WHERE id=?`, id).
+		Scan(&hash, &status, &text, &domainID, &predicate, &subject, &rowRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return &ForgetPreview{EntryID: id, AlreadyGone: true}, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if expectedRevision > 0 && rowRevision != expectedRevision {
+		return nil, fmt.Errorf("memstore: target changed since preview (revision %d != %d)", rowRevision, expectedRevision)
 	}
 
 	clusters, err := s.clusterIDsLocked(ctx, id)

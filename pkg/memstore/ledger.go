@@ -110,7 +110,15 @@ func openForgetLedger(path string, allowCreate bool) (*ForgetLedger, error) {
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA synchronous=FULL", // the ledger must survive a host crash
 	} {
-		if _, err := db.Exec(pragma); err != nil {
+		var err error
+		for attempt := 0; attempt < 20; attempt++ {
+			_, err = db.Exec(pragma)
+			if err == nil || !strings.Contains(err.Error(), "database is locked") {
+				break
+			}
+			time.Sleep(time.Duration(attempt+1) * 10 * time.Millisecond)
+		}
+		if err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("memstore: ledger %s: %w", pragma, err)
 		}

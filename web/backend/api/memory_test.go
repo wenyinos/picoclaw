@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/memstore"
 )
 
@@ -187,6 +188,7 @@ func TestMemoryAPI_RelationshipPersonaSettings(t *testing.T) {
 		"enabled": true, "db_path": "memory/memory.db", "budget_tokens": 1200,
 		"auto_extract": false, "review_required": true, "inject_fictional": true,
 		"private_channel_exclusions": []string{"public"},
+		"allowed_chat_recipients":    []string{"openai/gpt-4"},
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("settings (exclusions) status = %d, body=%s", rec.Code, rec.Body.String())
@@ -219,6 +221,16 @@ func TestMemoryAPI_RelationshipPersonaSettings(t *testing.T) {
 	data, _ := os.ReadFile(cfgPath)
 	if !bytes.Contains(data, []byte(`"budget_tokens": 900`)) {
 		t.Fatalf("settings not persisted: %s", data)
+	}
+	cfg, err := config.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Memory.AllowedChatRecipients) != 1 || cfg.Memory.AllowedChatRecipients[0] != "openai/gpt-4" {
+		t.Fatalf("partial settings update cleared recipients: %+v", cfg.Memory.AllowedChatRecipients)
+	}
+	if !cfg.Memory.InjectFictional || cfg.Memory.ReviewRequired != true {
+		t.Fatalf("partial settings update cleared unrelated fields: %+v", cfg.Memory)
 	}
 
 	rec = doJSON(t, mux, http.MethodGet, "/api/memory/overview", nil)

@@ -348,25 +348,19 @@ func (h *Handler) handleMemoryForgetEntry(w http.ResponseWriter, r *http.Request
 			dryRun = *parsed.DryRun
 		}
 	}
-	if !dryRun {
-		if expectedRevision <= 0 {
-			writeError(w, http.StatusBadRequest, "permanent forget requires confirm=true and expected_revision")
-			return
-		}
-		current, getErr := store.Get(r.Context(), r.PathValue("id"))
-		if getErr != nil {
-			writeError(w, http.StatusNotFound, "memory not found")
-			return
-		}
-		if current.RowRevision != expectedRevision {
-			writeError(w, http.StatusConflict, "memory changed since preview")
-			return
-		}
+	if !dryRun && expectedRevision <= 0 {
+		writeError(w, http.StatusBadRequest, "permanent forget requires confirm=true and expected_revision")
+		return
 	}
 	svc := memstore.NewMemoryService(store, memstore.DefaultConfig(""))
-	preview, err := svc.Forget(r.Context(), dashboardMemoryContext(), r.PathValue("id"), dryRun)
+	preview, err := svc.ForgetAtRevision(
+		r.Context(), dashboardMemoryContext(), r.PathValue("id"), dryRun, expectedRevision)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "changed since preview") {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	status := http.StatusOK
@@ -865,8 +859,39 @@ func (h *Handler) handleMemoryUpdateSettings(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	body, err := decodeBody[config.MemoryConfig](r)
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var patch map[string]json.RawMessage
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	if err := dec.Decode(&patch); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	baseRaw, err := json.Marshal(cfg.Memory)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(baseRaw, &merged); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for key, value := range patch {
+		merged[key] = value
+	}
+	mergedRaw, err := json.Marshal(merged)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var body config.MemoryConfig
+	strict := json.NewDecoder(strings.NewReader(string(mergedRaw)))
+	strict.DisallowUnknownFields()
+	if err := strict.Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
