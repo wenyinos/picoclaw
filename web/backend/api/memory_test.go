@@ -23,13 +23,13 @@ func newMemoryTestHandler(t *testing.T) (*Handler, string) {
 			"defaults": map[string]any{"workspace": workspace},
 		},
 		"memory": map[string]any{
-			"enabled":          true,
-			"db_path":          "memory/memory.db",
-			"budget_tokens":    1200,
-			"auto_extract":     false,
-			"review_required":  true,
+			"enabled":                    true,
+			"db_path":                    "memory/memory.db",
+			"budget_tokens":              1200,
+			"auto_extract":               false,
+			"review_required":            true,
 			"private_channel_exclusions": []string{},
-			"inject_fictional": true,
+			"inject_fictional":           true,
 		},
 	}
 	data, _ := json.Marshal(cfg)
@@ -91,6 +91,61 @@ func TestMemoryAPI_EntryLifecycle(t *testing.T) {
 	rec = doJSON(t, mux, http.MethodPost, "/api/memory/entries/"+added.Entry.ID+"/archive", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("archive status = %d", rec.Code)
+	}
+}
+
+func TestMemoryAPI_RejectsInternalFieldsAndGuardsForget(t *testing.T) {
+	h, _ := newMemoryTestHandler(t)
+	mux := http.NewServeMux()
+	h.registerMemoryRoutes(mux)
+
+	for _, body := range []map[string]any{
+		{"text": "内部绕过字段", "BypassForgetTombstone": true},
+		{"text": "强制字段", "Force": true},
+		{"text": "伪造来源", "EvidenceRoot": "{}", "OriginEventID": "forged"},
+	} {
+		rec := doJSON(t, mux, http.MethodPost, "/api/memory/entries", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("internal field status = %d, want 400: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := doJSON(t, mux, http.MethodPost, "/api/memory/entries", map[string]any{
+		"text": "需要确认后删除的记忆", "layer": "profile",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add = %d: %s", rec.Code, rec.Body.String())
+	}
+	var added struct {
+		Entry struct {
+			ID          string `json:"id"`
+			RowRevision int64  `json:"row_revision"`
+		} `json:"entry"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &added)
+	if added.Entry.ID == "" || added.Entry.RowRevision <= 0 {
+		t.Fatalf("missing entry revision: %s", rec.Body.String())
+	}
+
+	// No body defaults to preview, not destructive forget.
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/entries/"+added.Entry.ID+"/forget", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview status = %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/entries/"+added.Entry.ID+"/forget",
+		map[string]any{"dry_run": false})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed forget status = %d, want 400", rec.Code)
+	}
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/entries/"+added.Entry.ID+"/forget",
+		map[string]any{"confirm": true, "expected_revision": added.Entry.RowRevision + 1})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale revision status = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/entries/"+added.Entry.ID+"/forget",
+		map[string]any{"confirm": true, "expected_revision": added.Entry.RowRevision})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("confirmed forget status = %d, want 202: %s", rec.Code, rec.Body.String())
 	}
 }
 

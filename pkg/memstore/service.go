@@ -64,6 +64,15 @@ func (svc *MemoryService) authorizeWrite(mc MemoryContext, sensitivity string) (
 // requireOwner rejects chat-originated model actions that change approval,
 // lifecycle, trust, relationship or core-rule state. The model may only use
 // the controlled actions allowlisted by the memory tool.
+func (svc *MemoryService) auditContext(ctx context.Context, mc MemoryContext) context.Context {
+	mc = mc.Normalize()
+	actor := strings.TrimSpace(mc.ActorID)
+	if actor == "" {
+		actor = svc.store.installationActor(mc.Purpose)
+	}
+	return WithAudit(ctx, actor, "")
+}
+
 func requireOwner(mc MemoryContext) error {
 	if mc.Normalize().Purpose == PurposeChat && mc.ChatKind != ChatKindAdmin {
 		return ErrOwnerApprovalRequired
@@ -140,7 +149,7 @@ func (svc *MemoryService) Confirm(ctx context.Context, mc MemoryContext, id, evi
 	if err := svc.requireTarget(ctx, mc, id); err != nil {
 		return err
 	}
-	return svc.store.Confirm(ctx, id, evidence)
+	return svc.store.Confirm(svc.auditContext(ctx, mc), id, evidence)
 }
 
 // Correct creates a new version.
@@ -174,7 +183,24 @@ func (svc *MemoryService) Correct(ctx context.Context, mc MemoryContext, id stri
 		}
 	}
 	in.DomainID = mc.DomainID
-	return svc.store.Correct(ctx, id, in)
+	return svc.store.Correct(svc.auditContext(ctx, mc), id, in)
+}
+
+// UpdateMetadata applies non-content, non-status metadata through the governed
+// write path. Text changes must use Correct.
+func (svc *MemoryService) UpdateMetadata(ctx context.Context, mc MemoryContext, id string, in AddInput) (*Entry, error) {
+	mc, err := svc.authorizeWrite(mc, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.requireTarget(ctx, mc, id); err != nil {
+		return nil, err
+	}
+	in.DomainID = mc.DomainID
+	in.Force = false
+	in.ForceStatus = ""
+	in.PinnedCore = false
+	return svc.store.Update(svc.auditContext(ctx, mc), id, in)
 }
 
 // SetStatus changes a memory's lifecycle status through the governed write
@@ -190,7 +216,7 @@ func (svc *MemoryService) SetStatus(ctx context.Context, mc MemoryContext, id, s
 	if err := svc.requireTarget(ctx, mc, id); err != nil {
 		return err
 	}
-	return svc.store.SetStatus(ctx, id, status)
+	return svc.store.SetStatus(svc.auditContext(ctx, mc), id, status)
 }
 
 // SetRelationshipState updates one derived relationship attribute. It is a
@@ -210,7 +236,7 @@ func (svc *MemoryService) SetRelationshipState(ctx context.Context, mc MemoryCon
 	if strings.TrimSpace(update.DomainID) == "" {
 		update.DomainID = mc.DomainID
 	}
-	return svc.store.SetRelationshipFull(ctx, update)
+	return svc.store.SetRelationshipFull(svc.auditContext(ctx, mc), update)
 }
 
 // Forget executes or previews a permanent erase. Owner approval is the
@@ -223,7 +249,7 @@ func (svc *MemoryService) Forget(ctx context.Context, mc MemoryContext, id strin
 	if err := svc.requireTarget(ctx, mc, id); err != nil {
 		return nil, err
 	}
-	return svc.store.Forget(ctx, id, dryRun)
+	return svc.store.Forget(svc.auditContext(ctx, mc), id, dryRun)
 }
 
 func (svc *MemoryService) requireTarget(ctx context.Context, mc MemoryContext, id string) error {

@@ -1220,6 +1220,12 @@ func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, err
 			return nil, err
 		}
 	}
+	if err := s.logOperation(ctx, tx, OperationLog{
+		Operation: "update", TargetEntryID: id, Reason: "metadata update",
+		AffectedCount: 1, CreatedAt: now, ReasonCode: "metadata_update",
+	}); err != nil {
+		return nil, err
+	}
 	if err := s.bumpRevision(ctx, tx); err != nil {
 		return nil, err
 	}

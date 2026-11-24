@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -68,14 +69,14 @@ func (h *Handler) memoryStore() (*memstore.Store, *config.Config, error) {
 		return nil, nil, err
 	}
 	store, err := memstore.OpenForWorkspace(cfg.Agents.Defaults.Workspace, memstore.Config{
-		Enabled:               cfg.Memory.Enabled,
-		DBPath:                cfg.Memory.DBPath,
-		BudgetTokens:          cfg.Memory.BudgetTokens,
-		AutoExtract:           cfg.Memory.AutoExtract,
-		PrivateChannelExclusions:       cfg.Memory.PrivateChannelExclusions,
-		InjectFictional:       cfg.Memory.InjectFictional,
-		ReviewRequired:        cfg.Memory.ReviewRequired,
-		EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,
+		Enabled:                  cfg.Memory.Enabled,
+		DBPath:                   cfg.Memory.DBPath,
+		BudgetTokens:             cfg.Memory.BudgetTokens,
+		AutoExtract:              cfg.Memory.AutoExtract,
+		PrivateChannelExclusions: cfg.Memory.PrivateChannelExclusions,
+		InjectFictional:          cfg.Memory.InjectFictional,
+		ReviewRequired:           cfg.Memory.ReviewRequired,
+		EpisodicRetentionDays:    cfg.Memory.EpisodicRetentionDays,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -149,8 +150,73 @@ func decodeBody[T any](r *http.Request) (T, error) {
 		return v, err
 	}
 	defer r.Body.Close()
-	err = json.Unmarshal(body, &v)
-	return v, err
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&v); err != nil {
+		return v, err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return v, fmt.Errorf("unexpected trailing JSON value")
+	}
+	return v, nil
+}
+
+// memoryEntryRequest is the owner-facing write DTO. Governance fields such as
+// Force, BypassForgetTombstone, domain, confirmations and origin identities are
+// deliberately absent: only the host may set them.
+type memoryEntryRequest struct {
+	Text            string         `json:"text"`
+	Realm           string         `json:"realm"`
+	Layer           string         `json:"layer"`
+	Scope           string         `json:"scope"`
+	Audience        string         `json:"audience"`
+	Subject         string         `json:"subject"`
+	Predicate       string         `json:"predicate"`
+	Facet           string         `json:"facet"`
+	Value           string         `json:"value"`
+	Importance      float64        `json:"importance"`
+	EmotionalWeight float64        `json:"emotional_weight"`
+	Valence         float64        `json:"valence"`
+	Confidence      float64        `json:"confidence"`
+	ExpiresAt       *int64         `json:"expires_at"`
+	EventAt         *int64         `json:"event_at"`
+	EventStart      *int64         `json:"event_start"`
+	EventEnd        *int64         `json:"event_end"`
+	TemplateKey     string         `json:"template_key"`
+	SupersedesID    string         `json:"supersedes_id"`
+	EvidenceText    string         `json:"evidence_text"`
+	EventPrecision  string         `json:"event_time_precision"`
+	EventTimezone   string         `json:"event_timezone"`
+	EventTimeSource string         `json:"event_time_source"`
+	ValidFrom       *int64         `json:"valid_from"`
+	ValidTo         *int64         `json:"valid_to"`
+	Qualifiers      string         `json:"qualifiers"`
+	Attributes      map[string]any `json:"attributes"`
+}
+
+func (dto memoryEntryRequest) addInput() memstore.AddInput {
+	return memstore.AddInput{
+		Text: dto.Text, Realm: dto.Realm, Layer: dto.Layer, Scope: dto.Scope,
+		Audience: dto.Audience, Subject: dto.Subject, Predicate: dto.Predicate,
+		Facet: dto.Facet, Value: dto.Value, Importance: dto.Importance,
+		EmotionalWeight: dto.EmotionalWeight, Valence: dto.Valence,
+		Confidence: dto.Confidence, ExpiresAt: dto.ExpiresAt, EventAt: dto.EventAt,
+		EventStart: dto.EventStart, EventEnd: dto.EventEnd, TemplateKey: dto.TemplateKey,
+		SupersedesID: dto.SupersedesID, EvidenceText: dto.EvidenceText,
+		EventTimePrecision: dto.EventPrecision, EventTimezone: dto.EventTimezone,
+		EventTimeSource: dto.EventTimeSource, ValidFrom: dto.ValidFrom,
+		ValidTo: dto.ValidTo, Qualifiers: dto.Qualifiers, Attributes: dto.Attributes,
+		SourceType: memstore.SourceManual, DomainID: memstore.DomainLegacyUnassigned,
+	}
+}
+
+func dashboardMemoryContext() memstore.MemoryContext {
+	return memstore.MemoryContext{
+		DomainID: memstore.DomainLegacyUnassigned,
+		ChatKind: memstore.ChatKindAdmin,
+		Purpose:  "dashboard",
+	}
 }
 
 func (h *Handler) handleMemoryAddEntry(w http.ResponseWriter, r *http.Request) {
@@ -159,14 +225,19 @@ func (h *Handler) handleMemoryAddEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	in, err := decodeBody[memstore.AddInput](r)
+	dto, err := decodeBody[memoryEntryRequest](r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	res, err := store.Add(r.Context(), in)
+	svc := memstore.NewMemoryService(store, memstore.DefaultConfig(""))
+	res, err := svc.Add(r.Context(), dashboardMemoryContext(), dto.addInput())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if res.Action == "blocked_forget" {
+		writeError(w, http.StatusConflict, "content was permanently forgotten")
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -193,7 +264,7 @@ func (h *Handler) handleMemoryUpdateEntry(w http.ResponseWriter, r *http.Request
 		return
 	}
 	id := r.PathValue("id")
-	in, err := decodeBody[memstore.AddInput](r)
+	dto, err := decodeBody[memoryEntryRequest](r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -203,19 +274,24 @@ func (h *Handler) handleMemoryUpdateEntry(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "memory not found")
 		return
 	}
+	svc := memstore.NewMemoryService(store, memstore.DefaultConfig(""))
+	in := dto.addInput()
 	// A body change is a correction, not an in-place overwrite: it gets a new
-	// version and keeps the old evidence (B02). Metadata-only edits keep the
-	// existing Update path but still pass the pinned_core guard.
+	// version and keeps the old evidence. Metadata-only edits stay governed too.
 	if strings.TrimSpace(in.Text) != "" && strings.TrimSpace(in.Text) != old.Text {
-		res, err := store.Correct(r.Context(), id, in)
+		res, err := svc.Correct(r.Context(), dashboardMemoryContext(), id, in)
 		if err != nil {
 			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if res.Action == "blocked_forget" {
+			writeError(w, http.StatusConflict, "content was permanently forgotten")
 			return
 		}
 		writeJSON(w, http.StatusOK, res.Entry)
 		return
 	}
-	e, err := store.Update(r.Context(), id, in)
+	e, err := svc.UpdateMetadata(r.Context(), dashboardMemoryContext(), id, in)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -229,14 +305,19 @@ func (h *Handler) handleMemoryCorrectEntry(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	in, err := decodeBody[memstore.AddInput](r)
+	dto, err := decodeBody[memoryEntryRequest](r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	res, err := store.Correct(r.Context(), r.PathValue("id"), in)
+	svc := memstore.NewMemoryService(store, memstore.DefaultConfig(""))
+	res, err := svc.Correct(r.Context(), dashboardMemoryContext(), r.PathValue("id"), dto.addInput())
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if res.Action == "blocked_forget" {
+		writeError(w, http.StatusConflict, "content was permanently forgotten")
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -248,17 +329,42 @@ func (h *Handler) handleMemoryForgetEntry(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	dryRun := strings.EqualFold(r.URL.Query().Get("dry_run"), "true") ||
-		r.URL.Query().Get("dry_run") == "1"
+	dryRun := true
+	expectedRevision := int64(0)
 	if r.ContentLength > 0 {
 		parsed, err := decodeBody[struct {
-			DryRun bool `json:"dry_run"`
+			DryRun           *bool `json:"dry_run"`
+			Confirm          bool  `json:"confirm"`
+			ExpectedRevision int64 `json:"expected_revision"`
 		}](r)
-		if err == nil && parsed.DryRun {
-			dryRun = true
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		expectedRevision = parsed.ExpectedRevision
+		if parsed.Confirm {
+			dryRun = false
+		} else if parsed.DryRun != nil {
+			dryRun = *parsed.DryRun
 		}
 	}
-	preview, err := store.Forget(r.Context(), r.PathValue("id"), dryRun)
+	if !dryRun {
+		if expectedRevision <= 0 {
+			writeError(w, http.StatusBadRequest, "permanent forget requires confirm=true and expected_revision")
+			return
+		}
+		current, getErr := store.Get(r.Context(), r.PathValue("id"))
+		if getErr != nil {
+			writeError(w, http.StatusNotFound, "memory not found")
+			return
+		}
+		if current.RowRevision != expectedRevision {
+			writeError(w, http.StatusConflict, "memory changed since preview")
+			return
+		}
+	}
+	svc := memstore.NewMemoryService(store, memstore.DefaultConfig(""))
+	preview, err := svc.Forget(r.Context(), dashboardMemoryContext(), r.PathValue("id"), dryRun)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -562,14 +668,14 @@ func (h *Handler) handleMemoryApprovePlan(w http.ResponseWriter, r *http.Request
 // memoryConfigFrom converts the loaded app config into a memstore config.
 func memoryConfigFrom(cfg *config.Config) memstore.Config {
 	return memstore.Config{
-		Enabled:               cfg.Memory.Enabled,
-		DBPath:                cfg.Memory.DBPath,
-		BudgetTokens:          cfg.Memory.BudgetTokens,
-		AutoExtract:           cfg.Memory.AutoExtract,
-		PrivateChannelExclusions:       cfg.Memory.PrivateChannelExclusions,
-		InjectFictional:       cfg.Memory.InjectFictional,
-		ReviewRequired:        cfg.Memory.ReviewRequired,
-		EpisodicRetentionDays: cfg.Memory.EpisodicRetentionDays,
+		Enabled:                  cfg.Memory.Enabled,
+		DBPath:                   cfg.Memory.DBPath,
+		BudgetTokens:             cfg.Memory.BudgetTokens,
+		AutoExtract:              cfg.Memory.AutoExtract,
+		PrivateChannelExclusions: cfg.Memory.PrivateChannelExclusions,
+		InjectFictional:          cfg.Memory.InjectFictional,
+		ReviewRequired:           cfg.Memory.ReviewRequired,
+		EpisodicRetentionDays:    cfg.Memory.EpisodicRetentionDays,
 	}
 }
 
@@ -587,7 +693,8 @@ func (h *Handler) memorySetStatus(w http.ResponseWriter, r *http.Request, status
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := store.SetStatus(r.Context(), r.PathValue("id"), status); err != nil {
+	svc := memstore.NewMemoryService(store, memstore.DefaultConfig(""))
+	if err := svc.SetStatus(r.Context(), dashboardMemoryContext(), r.PathValue("id"), status); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -658,7 +765,11 @@ func (h *Handler) handleMemoryUpdateRelationship(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := store.SetRelationship(r.Context(), body.Key, body.Value, body.Confidence); err != nil {
+	svc := memstore.NewMemoryService(store, memstore.DefaultConfig(""))
+	if err := svc.SetRelationshipState(r.Context(), dashboardMemoryContext(), memstore.RelationshipUpdate{
+		Key: body.Key, Value: body.Value, Confidence: body.Confidence,
+		DomainID: memstore.DomainLegacyUnassigned, Realm: memstore.RealmReal, Audience: "private",
+	}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -83,6 +83,7 @@ func (s *Store) Confirm(ctx context.Context, id, evidence string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().UnixMilli()
+	requestID := auditRequest(ctx)
 	res, err := tx.ExecContext(ctx,
 		`UPDATE entries SET status=CASE WHEN status='pending_review' THEN 'active' ELSE status END,
 		 confidence=MAX(confidence,0.95), updated_at=? WHERE id=?`, now, id)
@@ -94,13 +95,14 @@ func (s *Store) Confirm(ctx context.Context, id, evidence string) error {
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO sources(entry_id,source_type,source_id,session_key,
-			evidence_text,confidence,user_confirmed,created_at)
-		 VALUES(?,'confirmed','confirm','',?,0.95,1,?)`,
-		id, truncateRunes(strings.TrimSpace(evidence), 120), now); err != nil {
+			evidence_text,confidence,user_confirmed,confirmation_event_id,created_at)
+		 VALUES(?,'confirmed','confirm','',?,0.95,1,?,?)`,
+		id, truncateRunes(strings.TrimSpace(evidence), 120), requestID, now); err != nil {
 		return err
 	}
 	if err := s.logOperation(ctx, tx, OperationLog{
-		Operation: "confirm", TargetEntryID: id, Reason: "user confirmed", AffectedCount: 1, CreatedAt: now,
+		Operation: "confirm", TargetEntryID: id, Reason: "user confirmed",
+		AffectedCount: 1, CreatedAt: now, RequestID: requestID, ReasonCode: "owner_confirmation",
 	}); err != nil {
 		return err
 	}
@@ -173,6 +175,7 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 	}
 
 	now := time.Now().UnixMilli()
+	requestID := auditRequest(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -201,6 +204,7 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 	if err := s.logOperation(ctx, tx, OperationLog{
 		Operation: "correct", TargetEntryID: id, ReplacementEntryID: e.ID,
 		Reason: "user correction", AffectedCount: 1, CreatedAt: now,
+		RequestID: requestID, ReasonCode: "owner_correction",
 	}); err != nil {
 		return nil, err
 	}
@@ -554,6 +558,19 @@ func (s *Store) ListOperations(ctx context.Context, limit int) ([]OperationLog, 
 }
 
 func (s *Store) logOperation(ctx context.Context, tx *sql.Tx, op OperationLog) error {
+	audit := auditFromContext(ctx)
+	if op.ActorRef == "" {
+		op.ActorRef = audit.actor
+	}
+	if op.ActorRef == "" {
+		op.ActorRef = s.installationActor("system")
+	}
+	if op.RequestID == "" {
+		op.RequestID = auditRequest(ctx)
+	}
+	if op.ReasonCode == "" {
+		op.ReasonCode = strings.TrimSpace(op.Operation)
+	}
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO memory_operations
 			(operation,target_entry_id,replacement_entry_id,content_hash,reason,affected_count,created_at,

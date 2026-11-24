@@ -113,6 +113,9 @@ func (s *Store) SetRelationshipFull(ctx context.Context, u RelationshipUpdate) e
 	if strings.TrimSpace(u.DomainID) == "" {
 		u.DomainID = DomainLegacyUnassigned
 	}
+	if u.DomainID != DomainLegacyUnassigned {
+		return fmt.Errorf("memstore: multi-domain relationship state is not supported in this schema")
+	}
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -122,22 +125,22 @@ func (s *Store) SetRelationshipFull(ctx context.Context, u RelationshipUpdate) e
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var oldValue, oldRealm, oldAudience, oldSource string
+	var oldValue, oldRealm, oldAudience, oldSource, oldDomain string
 	var oldValidFrom, oldUpdated int64
 	var oldConfidence float64
 	var oldExpires sql.NullInt64
 	err = tx.QueryRowContext(ctx,
-		`SELECT value,valid_from,confidence,updated_at,expires_at,realm,audience,source_event_id
+		`SELECT value,valid_from,confidence,updated_at,expires_at,realm,audience,source_event_id,domain_id
 		 FROM relationship_state WHERE key=? AND valid_to IS NULL`, key).
 		Scan(&oldValue, &oldValidFrom, &oldConfidence, &oldUpdated, &oldExpires,
-			&oldRealm, &oldAudience, &oldSource)
+			&oldRealm, &oldAudience, &oldSource, &oldDomain)
 	if err == nil {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR REPLACE INTO relationship_state_history
 			 (key,value,valid_from,valid_to,confidence,updated_at,domain_id,realm,audience,source_event_id)
 			 VALUES(?,?,?,?,?,?,?,?,?,?)`,
 			key, oldValue, oldValidFrom, now, oldConfidence, oldUpdated,
-			u.DomainID, oldRealm, oldAudience, oldSource); err != nil {
+			oldDomain, oldRealm, oldAudience, oldSource); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -172,6 +175,12 @@ func (s *Store) SetRelationshipFull(ctx context.Context, u RelationshipUpdate) e
 		key, trimSpace(u.Value), now, confidence, now, exp,
 		u.DomainID, u.Realm, u.Audience, u.SourceEventID,
 		clearInt, expParam, expParam); err != nil {
+		return err
+	}
+	if err := s.logOperation(ctx, tx, OperationLog{
+		Operation: "set_relationship", TargetEntryID: key, Reason: "relationship state update",
+		AffectedCount: 1, CreatedAt: now, ReasonCode: "relationship_update",
+	}); err != nil {
 		return err
 	}
 	if err := s.bumpRevision(ctx, tx); err != nil {

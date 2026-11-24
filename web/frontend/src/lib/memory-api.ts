@@ -235,10 +235,21 @@ export interface MemorySettings {
   auto_extract: boolean
   extract_model?: string
   private_channel_exclusions?: string[]
+  private_channels?: string[]
   available_channels?: string[]
   inject_fictional: boolean
   review_required: boolean
   episodic_retention_days?: number
+  sensitivity_capture?: string
+  ledger_path?: string
+  summary_enabled?: boolean
+  llm_extraction_enabled?: boolean
+  semantic_retrieval_enabled?: boolean
+  proactive_recall_enabled?: boolean
+  proactive_daily_limit?: number
+  proactive_topic_cooldown_days?: number
+  allowed_chat_recipients?: string[]
+  allow_tool_forwarding?: boolean
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -359,11 +370,15 @@ export const memoryApi = {
       `/api/memory/entries/${id}/correct`,
       { method: "POST", body: JSON.stringify(body) },
     ),
-  forgetEntry: (id: string, dryRun = true) =>
-    request<MemoryForgetPreview>(
-      `/api/memory/entries/${id}/forget?dry_run=${dryRun ? "true" : "false"}`,
-      { method: "POST" },
-    ),
+  forgetEntry: (id: string, dryRun = true, expectedRevision = 0) =>
+    request<MemoryForgetPreview>(`/api/memory/entries/${id}/forget`, {
+      method: "POST",
+      body: JSON.stringify({
+        dry_run: dryRun,
+        confirm: !dryRun,
+        expected_revision: expectedRevision,
+      }),
+    }),
   domains: () =>
     request<{ domains: MemoryDomain[] }>("/api/memory/domains"),
   ledgerHealth: () =>
