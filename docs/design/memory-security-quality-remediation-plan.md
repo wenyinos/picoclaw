@@ -1131,10 +1131,28 @@ This PASS is the final document consistency conclusion; it does not replace post
 
 | Item | Actual implementation | Retained boundary |
 |---|---|---|
-| pending ledger automatic reconciliation | Idempotent intents, pending/blocked states, and read-only audit implemented | Old pending entries without actor/approval are not automatically replayed; the automatic worker for "main transaction failure" still requires manual maintenance |
+| pending ledger automatic reconciliation | Background worker implemented: intents with a main-database operation only fill in MarkApplied; intents with actor + expected revision replay by manifest and enqueue cleanup; revision conflicts become blocked | Historical pending entries without actor/approval remain pending and are only reported, not deleted automatically |
 | Per-locator cleanup receipt | `already_absent/outcome_unknown` fields, blocked semantics, and dual-backend merging implemented | No new persistent receipt table; when a built-in backend cannot prove "deleted before crash", it conservatively reports unavailable/blocked |
 | Multi-domain relationship | Cross-domain rejection/fail-closed, legacy single domain | Composite primary key and complete domain injection remain a follow-up RFC |
 | Historical forget | `memory forget-audit` read-only reporting | Content hashes without domain are not automatically added to the ledger or deleted |
-| G7 quality measurement | Synthetic positive/negative/forbidden-hit/TTL/layer/budget gates | No real private evaluation set or fixed-device FTS benchmark committed |
+| G7 quality measurement | Synthetic positive/negative/forbidden-hit/TTL/layer/budget gates; FTS trigram and LIKE measurement on the same query set—hits/forbidden hits/latency/index usage—committed | Small-sample microbenchmark; does not represent production inventory, concurrency, or mobile devices; real private evaluation sets are not committed |
 
 These differences are publicly documented in the "known boundaries" of the 0.7.20 release notes; unimplemented capabilities are not written as completed.
+
+### 24.5 Post-release supplementary testing: pending worker and FTS/LIKE
+
+Two explicit gaps were closed after the release-gate review:
+
+1. **G3-03 pending intent background reconciliation**
+   `Store.ReconcilePendingIntents` has been wired into the gateway's forget cleanup worker:
+   - when the main database has a forget/replay operation with the same request ID, retry only the ledger's `MarkApplied`;
+   - when there is no main-database operation, only intents with a trusted actor, expected revision, and manifest are replayed and re-enqueued for cleanup;
+   - revision changes/domain mismatches enter `blocked`;
+   - old intents without actor/approval remain pending, are counted and reported only, and are not deleted automatically.
+   Regression tests: `TestReconcilePendingIntentReplaysApprovedManifest`, `DoesNotReplayUnapproved`, `BlocksChangedRevision`, and an AgentLoop worker integration test.
+
+2. **G7-04 FTS/LIKE same-query-set measurement**
+   Added `TestFTSLikeComparisonMeasurement`, which runs both FTS5 trigram and LIKE for 1/2/3/4-character and garbled queries, recording hits, forbidden hits, latency, and `entries_fts` usage. Reports:
+   - [Chinese measurement report](memory-fts-like-measurement-0.7.20.zh.md)
+   - [English measurement report](memory-fts-like-measurement-0.7.20.md)
+   Small-sample conclusion: 1–2 character queries return 0 in FTS while LIKE works normally; 3–4 character queries have consistent hits across both channels; forbidden hits are 0. Keep the hybrid channel and do not switch tokenizers based on this.

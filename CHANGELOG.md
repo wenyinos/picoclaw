@@ -24,10 +24,12 @@
 - Replay 改为按 manifest entry ID + domain 重放；默认 dry-run；新增 `memory forget-audit` 只读审计。
 - 遗忘清除摘要正文/claims/evidence/dependencies；cleanup 增加 `already_absent/outcome_unknown`，partial 返回非零。
 - 新库初始化原子化；v4 修复先备份；缺业务/义务/审计表返回 `non_repairable`；账本身份并发创建和 request ID 幂等；`ledger-verify` 输出 seq/pending 水位。
+- 后台 worker 对账 pending intent：主库已有操作时补 MarkApplied；有 actor/expected revision/manifest 时按域重放并入队 cleanup；修订冲突 blocked；无批准旧 intent 只报告。
 
 ### 检索、配置与界面
 
 - TTL、audience、domain、layer 在 Search/FTS/LIKE/1-hop/fixed/capsule 的 LIMIT 前生效。
+- 新增 FTS trigram 与 LIKE 同查询集测量，记录命中、禁止命中、延迟和索引占用；报告与可复现测试入库。
 - 固定上下文与检索共享总目标预算；固定块耗尽时 retrieval=0；核心 boundary 溢出可观测。
 - 设置更新按字段存在性合并；`memory:null` 和部分配置保持安全默认。
 - 记忆页区分账本意图与 cleanup job，展示任务错误；迁移页不再把空 predicate 当成永久迁移。
