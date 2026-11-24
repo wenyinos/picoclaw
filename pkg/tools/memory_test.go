@@ -132,7 +132,7 @@ func TestMemoryToolSearchAcrossLayers(t *testing.T) {
 		}
 	})
 
-	t.Run("structured add and state", func(t *testing.T) {
+	t.Run("structured add and owner-only state", func(t *testing.T) {
 		res := tool.Execute(ctx, map[string]any{
 			"action": "add", "text": "用户希望被称为阿泽",
 			"realm": "real", "layer": "profile",
@@ -151,21 +151,17 @@ func TestMemoryToolSearchAcrossLayers(t *testing.T) {
 		res = tool.Execute(ctx, map[string]any{
 			"action": "update_state", "key": "stage", "value": "测试阶段",
 		})
-		if res.IsError {
-			t.Fatalf("update_state failed: %s", res.ForLLM)
+		if !res.IsError {
+			t.Fatal("update_state must require owner approval")
 		}
 		rel, err := store.GetRelationship(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		found := false
 		for _, r := range rel {
 			if r.Key == "stage" && r.Value == "测试阶段" {
-				found = true
+				t.Fatalf("model changed relationship state: %+v", rel)
 			}
-		}
-		if !found {
-			t.Fatalf("stage not updated: %+v", rel)
 		}
 	})
 }

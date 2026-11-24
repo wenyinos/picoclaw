@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/sipeed/picoclaw/pkg/memstore"
 	toolshared "github.com/sipeed/picoclaw/pkg/tools/shared"
@@ -12,17 +11,11 @@ import (
 
 // MemoryTool lets the model save and recall long-term memories.
 type MemoryTool struct {
-	workspace       string
-	dbPath          string
-	reviewRequired  bool
+	workspace         string
+	dbPath            string
+	reviewRequired    bool
 	privateExclusions []string
-	injectFictional bool
-}
-
-var allowedRelationshipKeys = map[string]bool{
-	"ai_name": true, "user_name": true, "stage": true, "relationship": true,
-	"intimacy": true, "current_mood": true, "tension_mode": true, "rituals": true,
-	"anniversary": true, "unresolved": true, "boundary": true,
+	injectFictional   bool
 }
 
 // NewMemoryTool creates a memory tool bound to a workspace.
@@ -43,9 +36,9 @@ func (t *MemoryTool) Name() string { return "memory" }
 func (t *MemoryTool) Description() string {
 	return "Manage long-term memory. action=add (text, optional realm/layer/subject/predicate/facet/value/importance), " +
 		"action=search (query, optional realm/layer/predicate/facet/status), action=inspect (id), " +
-		"action=confirm (id), action=correct (id + text), action=archive/restore (id), " +
-		"action=forget (id, dry_run), action=load_capsule (preset=t0|t0_compact or cluster_id), " +
-		"action=update_state (key/value/ttl_seconds). Search covers all memory layers and includes private memories."
+		"action=correct (id + text, non-core only), action=forget (id, preview only), " +
+		"action=load_capsule (preset=t0|t0_compact or cluster_id). " +
+		"Confirmation, archive/restore and relationship state updates require owner approval in the dashboard or CLI."
 }
 
 func (t *MemoryTool) Parameters() map[string]any {
@@ -55,8 +48,7 @@ func (t *MemoryTool) Parameters() map[string]any {
 			"action": map[string]any{
 				"type": "string",
 				"enum": []string{
-					"add", "search", "inspect", "confirm", "correct",
-					"archive", "restore", "forget", "load_capsule", "update_state",
+					"add", "search", "inspect", "correct", "forget", "load_capsule",
 				},
 				"description": "Operation to perform",
 			},
@@ -131,10 +123,6 @@ func (t *MemoryTool) Parameters() map[string]any {
 				"type":        "boolean",
 				"description": "For action=forget: only report what would be removed",
 			},
-			"force": map[string]any{
-				"type":        "boolean",
-				"description": "For action=correct: allow replacing a pinned_core memory",
-			},
 			"cluster_id": map[string]any{
 				"type":        "string",
 				"description": "Scene capsule id for action=load_capsule",
@@ -201,7 +189,8 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 			Text: text, Realm: realm, Layer: layer, Importance: importance,
 			Subject: subject, Predicate: predicate, Facet: facet, Value: value,
 			SupersedesID: supersedesID, EmotionalWeight: emotionalWeight, Valence: valence,
-			Audience: "private", SourceType: memstore.SourceExplicit, EvidenceText: text,
+			Audience: "private", SourceType: memstore.SourceInferred, EvidenceText: text,
+			SessionKey: mc.SessionKey,
 			// Model-driven writes stay in the isolated legacy partition and
 			// the classifier can only raise protection, never lower it.
 			DomainID:    memstore.DomainLegacyUnassigned,
@@ -276,15 +265,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		return SilentResult(formatInspect(res))
 
 	case "confirm":
-		id, _ := args["id"].(string)
-		evidence, _ := args["text"].(string)
-		if strings.TrimSpace(id) == "" {
-			return ErrorResult("id is required for action=confirm")
-		}
-		if err := svc.Confirm(ctx, mc, id, evidence); err != nil {
-			return ErrorResult(fmt.Sprintf("memory confirm failed: %v", err))
-		}
-		return SilentResult("memory confirmed: " + id)
+		return ErrorResult("memory confirm requires owner approval in the dashboard or CLI")
 
 	case "correct":
 		id, _ := args["id"].(string)
@@ -292,7 +273,6 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		if strings.TrimSpace(id) == "" || strings.TrimSpace(text) == "" {
 			return ErrorResult("id and text are required for action=correct")
 		}
-		force, _ := args["force"].(bool)
 		realm, _ := args["realm"].(string)
 		layer, _ := args["layer"].(string)
 		predicate, _ := args["predicate"].(string)
@@ -300,10 +280,14 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		value, _ := args["value"].(string)
 		res, err := svc.Correct(ctx, mc, id, memstore.AddInput{
 			Text: text, Realm: realm, Layer: layer, Predicate: predicate, Facet: facet,
-			Value: value, Force: force, SourceType: memstore.SourceManual, EvidenceText: text,
+			Value: value, SourceType: memstore.SourceInferred, EvidenceText: text,
+			SessionKey: mc.SessionKey,
 		})
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory correct failed: %v", err))
+		}
+		if res.Action == "blocked_forget" {
+			return SilentResult("memory blocked: this content was explicitly forgotten")
 		}
 		if res.Entry == nil {
 			return SilentResult("memory corrected: " + id)
@@ -311,18 +295,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		return SilentResult(fmt.Sprintf("memory corrected: %s (new id: %s)", id, res.Entry.ID))
 
 	case "archive", "restore":
-		id, _ := args["id"].(string)
-		if strings.TrimSpace(id) == "" {
-			return ErrorResult("id is required for action=" + action)
-		}
-		status := memstore.StatusArchived
-		if action == "restore" {
-			status = memstore.StatusActive
-		}
-		if err := svc.SetStatus(ctx, mc, id, status); err != nil {
-			return ErrorResult(fmt.Sprintf("memory %s failed: %v", action, err))
-		}
-		return SilentResult(fmt.Sprintf("memory %s: %s", action, id))
+		return ErrorResult("memory archive/restore requires owner approval in the dashboard or CLI")
 
 	case "forget":
 		id, _ := args["id"].(string)
@@ -373,28 +346,7 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		return SilentResult(capsule.CapsuleText())
 
 	case "update_state":
-		key, _ := args["key"].(string)
-		value, _ := args["value"].(string)
-		key = strings.TrimSpace(key)
-		if key == "" || strings.TrimSpace(value) == "" {
-			return ErrorResult("key and value are required for action=update_state")
-		}
-		if !allowedRelationshipKeys[key] {
-			return ErrorResult("unsupported relationship state key: " + key)
-		}
-		var expires *int64
-		if ttl, ok := args["ttl_seconds"].(float64); ok && ttl > 0 {
-			v := time.Now().Add(time.Duration(ttl * float64(time.Second))).UnixMilli()
-			expires = &v
-		}
-		if err := svc.SetRelationshipState(ctx, mc, memstore.RelationshipUpdate{
-			Key: key, Value: value, Confidence: 0.9, ExpiresAt: expires,
-			DomainID: memstore.DomainLegacyUnassigned,
-			Realm:    memstore.RealmReal, Audience: "private",
-		}); err != nil {
-			return ErrorResult(fmt.Sprintf("memory update_state failed: %v", err))
-		}
-		return SilentResult("relationship state updated: " + key)
+		return ErrorResult("memory update_state requires owner approval in the dashboard or CLI")
 
 	default:
 		return ErrorResult("unknown action: " + action)

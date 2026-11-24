@@ -127,9 +127,11 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 	if strings.TrimSpace(in.Text) == "" {
 		return nil, fmt.Errorf("memstore: correct needs text")
 	}
+	if in.DomainID != "" && in.DomainID != old.DomainID {
+		return nil, fmt.Errorf("memstore: cannot correct an entry across permission domains")
+	}
 	in.SupersedesID = id
 	in.Force = true
-	in.BypassForgetTombstone = true
 	if strings.TrimSpace(in.DomainID) == "" {
 		in.DomainID = old.DomainID
 	}
@@ -179,6 +181,14 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	norm := Normalize(in.Text)
+	blocked, err := s.forgottenTx(ctx, tx, ContentHash(norm), in.Text)
+	if err != nil {
+		return nil, err
+	}
+	if blocked {
+		return &AddResult{Action: "blocked_forget"}, nil
+	}
 	supersededID, pinnedBlockID, err := resolveSupersededID(ctx, tx, in, now)
 	if err != nil {
 		return nil, err

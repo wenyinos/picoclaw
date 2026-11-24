@@ -69,8 +69,8 @@ func TestFTSUsageUpdateDoesNotRebuild(t *testing.T) {
 		t.Fatalf("use_count update changed FTS rows: %d -> %d", before, after)
 	}
 
-	// Content updates are reflected by the trigger.
-	if _, err := s.Update(ctx, added.Entry.ID, AddInput{Text: "FTS 触发器同步新内容"}); err != nil {
+	// Content replacements are reflected by the trigger.
+	if _, err := s.Correct(ctx, added.Entry.ID, AddInput{Text: "FTS 触发器同步新内容"}); err != nil {
 		t.Fatal(err)
 	}
 	hits, err := s.searchFTS(ctx, "同步新内容", 10, "", nil)

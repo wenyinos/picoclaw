@@ -522,6 +522,30 @@ func prepareAddInput(in *AddInput) error {
 	return nil
 }
 
+// forgottenTx reports whether text was permanently forgotten. Both the main
+// operation log and the independent ledger are checked so a restored backup
+// cannot be used to re-learn the same content.
+func (s *Store) forgottenTx(ctx context.Context, tx *sql.Tx, hash, text string) (bool, error) {
+	var forgotten int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memory_operations WHERE operation IN ('forget','replay_forget') AND content_hash=?`,
+		hash).Scan(&forgotten); err != nil {
+		return false, err
+	}
+	if forgotten > 0 {
+		return true, nil
+	}
+	if s.ledger != nil {
+		digest, _, _ := s.ledger.Digest(text)
+		ok, err := s.ledger.HasDigest(ctx, digest)
+		if err != nil {
+			return false, err
+		}
+		return ok, nil
+	}
+	return false, nil
+}
+
 // Add inserts or merges a memory after exact/near duplicate and conflict checks.
 func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	if err := s.checkReady(); err != nil {
@@ -548,20 +572,12 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	// the next turn extracts the same words again. The independent ledger is
 	// checked too, so a restored backup cannot re-learn it either.
 	if !in.BypassForgetTombstone {
-		var forgotten int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM memory_operations WHERE operation IN ('forget','replay_forget') AND content_hash=?`,
-			hash).Scan(&forgotten); err != nil {
+		blocked, err := s.forgottenTx(ctx, tx, hash, in.Text)
+		if err != nil {
 			return nil, err
 		}
-		if forgotten > 0 {
+		if blocked {
 			return &AddResult{Action: "blocked_forget"}, nil
-		}
-		if s.ledger != nil {
-			digest, _, _ := s.ledger.Digest(in.Text)
-			if ok, _ := s.ledger.HasDigest(ctx, digest); ok {
-				return &AddResult{Action: "blocked_forget"}, nil
-			}
 		}
 	}
 
@@ -811,14 +827,17 @@ func buildAndInsertEntryTx(
 // the replacement. Pinned entries can only be replaced through Correct.
 func resolveSupersededID(ctx context.Context, tx *sql.Tx, in AddInput, now int64) (string, string, error) {
 	if id := strings.TrimSpace(in.SupersedesID); id != "" {
-		var status string
+		var status, domainID string
 		var pinned int
-		if err := tx.QueryRowContext(ctx, `SELECT status, pinned_core FROM entries WHERE id=?`, id).
-			Scan(&status, &pinned); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT status, pinned_core, domain_id FROM entries WHERE id=?`, id).
+			Scan(&status, &pinned, &domainID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return "", "", fmt.Errorf("memstore: supersedes target %q not found", id)
 			}
 			return "", "", err
+		}
+		if domainID != in.DomainID {
+			return "", "", fmt.Errorf("memstore: cannot supersede an entry across permission domains")
 		}
 		if status != StatusActive {
 			return "", "", fmt.Errorf("memstore: supersedes target %q is not active", id)
@@ -1067,6 +1086,15 @@ func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, err
 		return nil, err
 	}
 	textChanged := strings.TrimSpace(in.Text) != "" && strings.TrimSpace(in.Text) != old.Text
+	if textChanged {
+		return nil, fmt.Errorf("memstore: Update cannot change text; use Correct")
+	}
+	if in.ForceStatus != "" && in.ForceStatus != old.Status {
+		return nil, fmt.Errorf("memstore: Update cannot change lifecycle status; use SetStatus or a governed plan")
+	}
+	if in.PinnedCore && !old.PinnedCore {
+		return nil, fmt.Errorf("memstore: pinned core changes require explicit owner approval")
+	}
 	if old.PinnedCore && !in.Force {
 		switch {
 		case textChanged:

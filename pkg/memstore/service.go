@@ -7,7 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
+
+// ErrOwnerApprovalRequired is returned when chat-originated model actions try
+// to perform owner-only governance work.
+var ErrOwnerApprovalRequired = errors.New("memstore: owner approval is required for this action")
+
+const maxRelationshipValueRunes = 256
 
 // MemoryService is the single governed write/read entry point. Every channel,
 // tool, CLI command and dashboard handler should go through it instead of
@@ -54,9 +61,23 @@ func (svc *MemoryService) authorizeWrite(mc MemoryContext, sensitivity string) (
 	return mc, nil
 }
 
+// requireOwner rejects chat-originated model actions that change approval,
+// lifecycle, trust, relationship or core-rule state. The model may only use
+// the controlled actions allowlisted by the memory tool.
+func requireOwner(mc MemoryContext) error {
+	if mc.Normalize().Purpose == PurposeChat && mc.ChatKind != ChatKindAdmin {
+		return ErrOwnerApprovalRequired
+	}
+	return nil
+}
+
 // Add applies capture policy and writes through the store.
 func (svc *MemoryService) Add(ctx context.Context, mc MemoryContext, in AddInput) (*AddResult, error) {
-	in.DomainID = mc.Normalize().DomainID
+	mc = mc.Normalize()
+	if mc.Purpose == PurposeChat && normalizeLayer(in.Layer) == LayerBoundary {
+		return &AddResult{Action: "blocked_policy"}, ErrOwnerApprovalRequired
+	}
+	in.DomainID = mc.DomainID
 	if strings.TrimSpace(in.Sensitivity) == "" {
 		in.Sensitivity = SensitivityForText(in.Text)
 	}
@@ -109,6 +130,9 @@ func (svc *MemoryService) Get(ctx context.Context, mc MemoryContext, id string) 
 
 // Confirm records a user confirmation event.
 func (svc *MemoryService) Confirm(ctx context.Context, mc MemoryContext, id, evidence string) error {
+	if err := requireOwner(mc); err != nil {
+		return err
+	}
 	mc, err := svc.authorizeWrite(mc, "")
 	if err != nil {
 		return err
@@ -132,6 +156,23 @@ func (svc *MemoryService) Correct(ctx context.Context, mc MemoryContext, id stri
 	if old.DomainID != "" && old.DomainID != mc.DomainID {
 		return nil, fmt.Errorf("memstore: memory not found")
 	}
+	if mc.Purpose == PurposeChat {
+		if in.Force || old.PinnedCore {
+			return nil, ErrOwnerApprovalRequired
+		}
+		if old.Layer == LayerBoundary || normalizeLayer(in.Layer) == LayerBoundary {
+			return nil, ErrOwnerApprovalRequired
+		}
+		if in.Layer != "" && normalizeLayer(in.Layer) != old.Layer {
+			return nil, fmt.Errorf("memstore: chat-originated corrections cannot change layer")
+		}
+		if in.Audience != "" && in.Audience != old.Audience {
+			return nil, fmt.Errorf("memstore: chat-originated corrections cannot change audience")
+		}
+		if in.Scope != "" && in.Scope != old.Scope {
+			return nil, fmt.Errorf("memstore: chat-originated corrections cannot change scope")
+		}
+	}
 	in.DomainID = mc.DomainID
 	return svc.store.Correct(ctx, id, in)
 }
@@ -139,6 +180,9 @@ func (svc *MemoryService) Correct(ctx context.Context, mc MemoryContext, id stri
 // SetStatus changes a memory's lifecycle status through the governed write
 // path. Shared chats cannot archive or restore personal memories.
 func (svc *MemoryService) SetStatus(ctx context.Context, mc MemoryContext, id, status string) error {
+	if err := requireOwner(mc); err != nil {
+		return err
+	}
 	mc, err := svc.authorizeWrite(mc, "")
 	if err != nil {
 		return err
@@ -152,7 +196,14 @@ func (svc *MemoryService) SetStatus(ctx context.Context, mc MemoryContext, id, s
 // SetRelationshipState updates one derived relationship attribute. It is a
 // write: group/public chats are rejected before the store is touched.
 func (svc *MemoryService) SetRelationshipState(ctx context.Context, mc MemoryContext, update RelationshipUpdate) error {
-	mc, err := svc.authorizeWrite(mc, "")
+	if err := requireOwner(mc); err != nil {
+		return err
+	}
+	if utf8.RuneCountInString(update.Value) > maxRelationshipValueRunes {
+		return fmt.Errorf("memstore: relationship value exceeds %d characters", maxRelationshipValueRunes)
+	}
+	sensitivity := SensitivityForText(update.Value)
+	mc, err := svc.authorizeWrite(mc, sensitivity)
 	if err != nil {
 		return err
 	}

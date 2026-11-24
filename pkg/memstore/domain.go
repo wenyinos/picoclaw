@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -120,6 +121,13 @@ func EntryVisible(e Entry, channel string, privateChannels []string) bool {
 var secretTerms = []string{
 	"密码", "验证码", "api key", "apikey", "secret key", "私钥",
 	"银行卡号", "信用卡号", "身份证号", "cvv", "pin code", "口令",
+	"password", "passwd", "client_secret", "refresh_token", "access_token",
+	"bearer ", "private key", "-----begin ", "ghp_", "github_pat_", "xoxb-",
+}
+
+var secretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bsk-[a-z0-9_-]{20,}`),
+	regexp.MustCompile(`(?i)\bakia[a-z0-9]{16}\b`),
 }
 
 // sensitiveTerms raise the protection level of a write. They never lower it:
@@ -137,6 +145,11 @@ func SensitivityForText(text string) string {
 	lower := strings.ToLower(text)
 	for _, term := range secretTerms {
 		if strings.Contains(lower, term) {
+			return SensitivitySecret
+		}
+	}
+	for _, pattern := range secretPatterns {
+		if pattern.MatchString(lower) {
 			return SensitivitySecret
 		}
 	}
