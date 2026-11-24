@@ -16,9 +16,9 @@ func TestExportEntriesPagesPastRequestLimit(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 520; i++ {
 		if _, err := s.Add(ctx, AddInput{
-			Text:       fmt.Sprintf("导出台账 %064x", int64(i)*2654435761),
-			Layer:      LayerProcedural,
-			Realm:      RealmWork,
+			Text:  fmt.Sprintf("导出台账 %064x", int64(i)*2654435761),
+			Layer: LayerProcedural,
+			Realm: RealmWork,
 		}); err != nil {
 			t.Fatal(err)
 		}

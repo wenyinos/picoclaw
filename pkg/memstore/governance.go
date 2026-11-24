@@ -302,12 +302,15 @@ func (s *Store) forgetAtRevision(ctx context.Context, id string, dryRun bool, ex
 	}
 	digest, keyID, hashVersion := s.ledger.Digest(text)
 	intent, err := s.ledger.RecordIntent(ctx, ForgetIntent{
+		RequestID:      auditRequest(ctx),
 		DomainID:       domainID,
 		SelectorType:   "entry+content_hmac",
 		SelectorDigest: digest,
 		HashVersion:    hashVersion,
 		KeyID:          keyID,
-		ScopeJSON:      `{"kind":"entry"}`,
+		ScopeJSON: fmt.Sprintf(
+			`{"kind":"entry","expected_revision":%d,"actor":%q}`,
+			rowRevision, auditFromContext(ctx).actor),
 		TargetManifest: MarshalManifest(manifest),
 	})
 	if err != nil {

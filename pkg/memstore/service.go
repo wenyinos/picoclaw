@@ -288,6 +288,9 @@ type ChangePlan struct {
 
 // CreateChangePlan previews an action and stores it as a pending plan.
 func (svc *MemoryService) CreateChangePlan(ctx context.Context, mc MemoryContext, action, targetID string, payload any) (*ChangePlan, error) {
+	if err := requireOwner(mc); err != nil {
+		return nil, err
+	}
 	mc, err := svc.authorizeWrite(mc, "")
 	if err != nil {
 		return nil, err
@@ -314,9 +317,41 @@ func (svc *MemoryService) CreateChangePlan(ctx context.Context, mc MemoryContext
 		}
 		expectedRevision = target.RowRevision
 	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
+	var raw []byte
+	if action == "correct" || action == "reassign_audience" {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
+		var in AddInput
+		if err := json.Unmarshal(encoded, &in); err != nil {
+			return nil, err
+		}
+		// Internal governance fields never enter a persisted plan.
+		in.Force = false
+		in.BypassForgetTombstone = false
+		in.ForceStatus = ""
+		in.PinnedCore = false
+		in.SourceConfirmed = false
+		in.DomainID = ""
+		in.OriginEventID = ""
+		in.EvidenceRoot = ""
+		in.EvidenceRootType = ""
+		in.ConfirmationEventID = ""
+		in.SessionKey = ""
+		in.MessageID = nil
+		in.ConversationID = ""
+		in.SourceType = SourceManual
+		raw, err = json.Marshal(in)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		raw, err = json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
 	}
 	now := svc.store.now()
 	plan := &ChangePlan{
@@ -388,9 +423,12 @@ func (svc *MemoryService) ApproveChangePlan(ctx context.Context, mc MemoryContex
 	if p.Status != "pending" {
 		return nil, fmt.Errorf("memstore: plan %q is %s, not pending", planID, p.Status)
 	}
+	if got := ContentHash(Normalize(p.Payload)); got != p.ParamsDigest {
+		return nil, fmt.Errorf("memstore: plan payload digest mismatch")
+	}
 	if now > p.ExpiresAt {
 		_, _ = svc.store.db.ExecContext(ctx,
-			`UPDATE memory_change_plans SET status='expired' WHERE plan_id=?`, planID)
+			`UPDATE memory_change_plans SET status='expired', payload='' WHERE plan_id=?`, planID)
 		return nil, fmt.Errorf("memstore: plan %q expired; create a new preview", planID)
 	}
 	if p.Action != "set_relationship" {
@@ -398,22 +436,29 @@ func (svc *MemoryService) ApproveChangePlan(ctx context.Context, mc MemoryContex
 		if err != nil {
 			return nil, fmt.Errorf("memstore: target no longer exists")
 		}
+		if target.DomainID != mc.DomainID {
+			return nil, fmt.Errorf("memstore: plan target belongs to another domain")
+		}
 		if target.RowRevision != p.ExpectedRevision {
+			_, _ = svc.store.db.ExecContext(ctx,
+				`UPDATE memory_change_plans SET status='blocked' WHERE plan_id=? AND status='pending'`, planID)
 			return nil, fmt.Errorf("memstore: target changed since preview (revision %d != %d)",
 				target.RowRevision, p.ExpectedRevision)
 		}
 	}
 
-	// Claim the plan atomically before any side effect. A repeated approval
-	// cannot execute the action twice, even when the final status write fails.
+	// Claim the plan atomically before any side effect, persisting the approver
+	// now so a crash after this point can still be audited and recovered.
 	res, err := svc.store.db.ExecContext(ctx,
-		`UPDATE memory_change_plans SET status='executing' WHERE plan_id=? AND status='pending'`, planID)
+		`UPDATE memory_change_plans SET status='executing', approved_by=?
+		 WHERE plan_id=? AND status='pending'`, approver, planID)
 	if err != nil {
 		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, fmt.Errorf("memstore: plan %q was already claimed", planID)
 	}
+	ctx = WithAudit(ctx, "dashboard@"+approver, p.PlanID)
 
 	switch p.Action {
 	case "forget":
