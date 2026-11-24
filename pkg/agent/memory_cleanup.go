@@ -107,6 +107,20 @@ func (al *AgentLoop) runForgetCleanup(ctx context.Context) {
 	run := func() {
 		runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
+		reconcile, err := store.ReconcilePendingIntents(runCtx, false)
+		if err != nil {
+			logger.WarnCF("memory", "pending ledger reconciliation failed", map[string]any{
+				"error": err.Error(),
+			})
+		} else if reconcile.Scanned > 0 {
+			logger.InfoCF("memory", "pending ledger reconciliation finished", map[string]any{
+				"scanned":             reconcile.Scanned,
+				"applied_bookkeeping": reconcile.AppliedBookkeeping,
+				"replayed":            reconcile.Replayed,
+				"blocked":             reconcile.Blocked,
+				"skipped_unapproved":  reconcile.SkippedUnapproved,
+			})
+		}
 		outcome, err := store.RunCleanupJobs(runCtx, cleaners, 20)
 		if err != nil {
 			logger.WarnCF("memory", "forget cleanup failed", map[string]any{
