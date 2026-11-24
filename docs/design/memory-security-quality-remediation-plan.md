@@ -1,6 +1,6 @@
 # PicoClaw Memory System Security and Quality Remediation Implementation Plan
 
-> Document status: implementation in progress (grilling review passed, target version 0.7.20)
+> Document status: implemented and released (grilling review passed, version 0.7.20)
 > Code verification baseline: `0431a574` (consistent with the Go implementation at `95520122`)
 > Database reference snapshot: `/home/zemi/下载/memory`, data as of 2026-11-22, Schema v4, revision 3840
 > Document generation date: 2026-11-25
@@ -1085,3 +1085,56 @@ The next gate at implementation time is: follow G0 to first commit failing tests
 The independent final review initially returned BLOCK, pointing out that the model action allowlist was unclear, the owner plan's blocked state was undefined, and "terminal state" was misused; it also recommended restricting entry revision, unifying the legacy predicate fallback and the historical forget operation count. After all five items were revised, the same final-review agent re-checked and returned **PASS**, confirming that no new direct contradictions were found.
 
 This PASS is the final document consistency conclusion; it does not replace post-implementation code tests, fault injection, real-copy recovery drills, or security acceptance.
+
+## 24. 0.7.20 Implementation Results
+
+### 24.1 Delivery status
+
+| Work package | Status | Main commits |
+|---|---|---|
+| G0 | Complete | `0bcfd1c7` plan baseline; adversarial tests committed with each fix |
+| G1 | Complete | `2f537c3d`, `f22f4e29`, `0d673cb9` |
+| G2 | Complete | `661b5727` |
+| G3 | Complete | `024da1bc`, `3c3d242c` |
+| G4 | Complete (major defects closed) | `e8f47efa`, `661b5727`, `5aaf76c7` |
+| G5 | Complete | `77c4cc23` |
+| G6 | Complete | `78e0c368`, `8ee4bd33`, `5aaf76c7` |
+| G7 | Synthetic quality gate completed | `5aaf76c7`, `3c3d242c` |
+
+### 24.2 Key defects closed
+
+- Correct/API tombstone resurrection; cross-domain supersede; Update changing body/status/pinned.
+- Model self-approval, force changing pinned, direct relationship-state writes, boundary writes, and execution plan creation.
+- Public API internal governance fields, unknown fields, forged source roots.
+- Empty actor/request, no approver after approval claim, digest/domain/revision not re-validated.
+- Seahorse grep/expand across sessions/Agents; model all_conversations; unknown ChatKind.
+- Missed egress checks in `/btw`, subagent, and legacy/Seahorse summaries; policy-denied fallback.
+- `enabled=false` stopping accepted cleanup.
+- JSONL cleanup of long evidence/duplicate messages/tool arguments; Seahorse per-message and summary cleanup.
+- Whole-database hash Replay, cross-domain mistaken deletion, historical forget without an audit entry point.
+- Summaries invalidated but body text retained.
+- Non-atomic new-database initialization, v4 repair modifying before backup, fake repair for missing tables.
+- Ledger concurrent identity overwrite, non-idempotent request IDs, backup comparison of UUID only.
+- TTL/Layer post-filtering, fixed-block audience push-out, minimum 200 retrieval budget.
+- Settings partial update clearing security fields, `memory:null` misjudgment, permanent data-migration hint.
+- CLI dangerous operations without revision, cleanup partial returning 0, replay without dry-run.
+
+### 24.3 Verification evidence (0.7.20)
+
+- `go build -tags 'goolm stdjson' ./...`: passed.
+- Core Go tests: memstore, memory, seahorse, agent, tools, tools/shared, identity, session, config, API, CLI: passed.
+- `CGO_ENABLED=1 go test -race`: memstore, memory, seahorse: passed.
+- `pnpm run lint`: 0 error (8 existing hook warnings); `pnpm run build`: passed; `prettier --check` passed for the two frontend files in this change.
+- Repository-wide `pnpm run format` still warns on 15 unrelated historical files; this change did not modify them in bulk.
+
+### 24.4 Remaining differences from the plan
+
+| Item | Actual implementation | Retained boundary |
+|---|---|---|
+| pending ledger automatic reconciliation | Idempotent intents, pending/blocked states, and read-only audit implemented | Old pending entries without actor/approval are not automatically replayed; the automatic worker for "main transaction failure" still requires manual maintenance |
+| Per-locator cleanup receipt | `already_absent/outcome_unknown` fields, blocked semantics, and dual-backend merging implemented | No new persistent receipt table; when a built-in backend cannot prove "deleted before crash", it conservatively reports unavailable/blocked |
+| Multi-domain relationship | Cross-domain rejection/fail-closed, legacy single domain | Composite primary key and complete domain injection remain a follow-up RFC |
+| Historical forget | `memory forget-audit` read-only reporting | Content hashes without domain are not automatically added to the ledger or deleted |
+| G7 quality measurement | Synthetic positive/negative/forbidden-hit/TTL/layer/budget gates | No real private evaluation set or fixed-device FTS benchmark committed |
+
+These differences are publicly documented in the "known boundaries" of the 0.7.20 release notes; unimplemented capabilities are not written as completed.
