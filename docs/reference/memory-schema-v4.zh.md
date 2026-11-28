@@ -30,6 +30,18 @@ v1/v2 数据库必须先用 0.6.x 打开一次升级到 v3，才能被当前版�
 - `memory_origin_events` 已在生产路径接线：入站自动抽取和 `memory` 工具写路径由宿主生成稳定 `origin_event_id`，`sources.origin_event_id` 指向它；同一事实来自多条消息时保留多个 `sources`。该表不是只建表未使用。
 - pending/blocked intent 或 pending/running/blocked/cancelled cleanup 存在时，恢复门禁让长期记忆 fail closed；普通聊天可无记忆运行。详见 [长期记忆指南](../guides/memory.zh.md)。
 
+## 0.7.26 一次性升级向导
+
+主库 Schema 仍为 v4，不新增表或版本。`/memory` →「数据库修复」新增向导：
+
+- 先只读预览，再要求 owner 确认；
+- 强制生成主库与账本备份；
+- 需要时执行 v3 → v4，并只补已知 `legacy_unassigned` 默认域；
+- 将历史 `cancelled/blocked/failed` cleanup 任务结案为 `legacy_closed`；
+- 记录 `legacy_cleanup_unverified` 操作审计，并重新计算恢复状态。
+
+`legacy_closed` 不是“删除已验证”，只是历史义务的显式结案，不会让未来的 blocked/pending cleanup 透传；报告保留 `residual_risk` 与备份路径。
+
 ## 迁移前置
 
 1. 数据库 `schema_version = 3`：

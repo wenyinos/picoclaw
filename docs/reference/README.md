@@ -8,4 +8,4 @@ Reference docs for precise configuration, runtime behavior, and tool semantics.
 - [Config Schema Versioning Guide](config-versioning.md): config schema migration and compatibility notes.
 - [Dynamic Rate Limiting](rate-limiting.md): request throttling behavior for LLM providers.
 - [Memory Schema v4 Migration](memory-schema-v4.md): v3 → v4 upgrade, verification, rollback, and the forget ledger.
-- [Memory API (OpenAPI)](memory-v4.openapi.yaml): owner-facing dashboard memory API contract, including recovery, origin retraction and job requeue routes (0.7.25).
+- [Memory API (OpenAPI)](memory-v4.openapi.yaml): owner-facing dashboard memory API contract, including recovery, one-time upgrade, origin retraction and job requeue routes (0.7.26).

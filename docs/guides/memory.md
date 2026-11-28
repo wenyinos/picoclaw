@@ -113,6 +113,20 @@ Both paths share the hybrid candidate set:
 
 The fixed block (base content + boundary) uses at most 50% of the total budget, and base content is capped at 70% of that fixed block; the rest of `budget_tokens` goes to retrieval. Boundaries participate in the fixed-block budget, but the first core rule is always kept even if it alone overflows; cuts and overflow are exposed with real values through `FixedUsage.BoundaryCut/OverflowTokens/CoreOverflow`. When fixed content consumes the target, retrieval is zero instead of forcing a 200-token minimum. Expired entries are filtered in SQL across Search, FTS/LIKE, temporal, 1-hop and capsule paths.
 
+## One-time upgrade wizard (0.7.26)
+
+If an upgrade from 0.7.20 to 0.7.25 reports `default_domain_missing`, `entries_without_domain`, or historical `cancelled_cleanup_jobs`, open `/memory` → “Database repair” → “One-time upgrade wizard”. It is an explicit owner action and never modifies the database during startup.
+
+The wizard:
+
+1. previews Schema, the default domain, orphan entries, legacy cleanup jobs, and every remaining blocker;
+2. takes a mandatory backup of the main database and independent ledger;
+3. applies v3 → v4 when needed and restores the known `legacy_unassigned` default domain without guessing an owner;
+4. closes unverifiable historical `cancelled/blocked/failed` cleanup jobs as `legacy_closed` with a `legacy_cleanup_unverified` audit record;
+5. recomputes the recovery gate.
+
+`legacy_closed` means “no longer blocks long-term memory”; it does **not** mean the source copies were verified deleted. The report keeps `residual_risk` and the backup path. The wizard refuses to close pending/running cleanup, pending/blocked ledger intents, or unsupported Schema states; those still require manual handling.
+
 ## Database migration (schema v4)
 
 PicoClaw 0.7.2 and later never migrate on startup: an existing v3 database (or a v4 database missing objects) opens in fail-closed mode, ordinary reads/writes return `schema migration required`, and the owner runs the explicit migration from `/memory` or `picoclaw memory migrate`. A brand-new database is bootstrapped directly at v4.

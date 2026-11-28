@@ -32,6 +32,18 @@ v3, before this build accepts them.
 - `memory_origin_events` is wired in production: inbound auto-extraction and the `memory` tool write path have the host generate a stable `origin_event_id`, and `sources.origin_event_id` references it. When one fact arrives in several messages, multiple `sources` are kept. The table is not create-only.
 - While pending/blocked intents or pending/running/blocked/cancelled cleanup exist, the recovery gate fails long-term memory closed; ordinary chat can run without memory. See the [long-term memory guide](../guides/memory.md).
 
+## 0.7.26 one-time upgrade wizard
+
+The main Schema remains v4; no table or version is added. `/memory` → “Database repair” now provides:
+
+- a read-only preview followed by explicit owner confirmation;
+- a mandatory main-database and ledger backup;
+- an explicit v3 → v4 migration when needed and restoration of only the known `legacy_unassigned` default domain;
+- terminal closure of historical `cancelled/blocked/failed` cleanup jobs as `legacy_closed`;
+- a `legacy_cleanup_unverified` operation audit and a recomputed recovery status.
+
+`legacy_closed` does not mean “verified deletion”; it explicitly retires a historical obligation so it no longer blocks memory. Future blocked/pending cleanup is not bypassed, and the report retains `residual_risk` and the backup path.
+
 ## Preconditions
 
 1. The database reports `schema_version = 3` (`sqlite3 memory.db "SELECT value FROM meta WHERE key='schema_version'"`).

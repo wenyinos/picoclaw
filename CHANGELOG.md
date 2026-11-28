@@ -1,5 +1,27 @@
 # 变更日志
 
+## v0.7.26
+
+### 一次性升级向导
+
+- **数据库修复页新增向导**：一次性处理 0.7.20→0.7.25 常见的 `default_domain_missing`、`entries_without_domain` 和历史 `cancelled_cleanup_jobs`。
+- **预览/确认**：先展示 Schema、默认域、orphan entries、历史清理任务和剩余阻塞，再要求 owner `confirm=true`。
+- **强制备份**：执行前备份主库与独立账本；失败不继续修改。
+- **安全修复**：需要时执行 v3→v4，只补已知 `legacy_unassigned` 默认域，不猜 owner。
+- **历史结案**：无法验证的 `cancelled/blocked/failed` cleanup 任务改为 `legacy_closed`，记录 `legacy_cleanup_unverified` 审计，不再阻塞记忆；报告保留残余风险和备份路径，不宣称副本已验证删除。
+- **门禁复核**：完成后重新计算恢复状态；pending/running cleanup、pending/blocked ledger intent 和不支持的 Schema 仍拒绝一次性结案。
+
+### 前端与接口
+
+- `/memory` →「数据库修复」新增一次性向导卡片，展示步骤、阻塞原因、备份、legacy 结案数和残余风险。
+- 新增 `GET /api/memory/upgrade/preview` 与 `POST /api/memory/upgrade/apply`；OpenAPI 同步。
+- 任务状态新增 `legacy_closed`，恢复状态显示历史结案数但不把它当作 blocker。
+
+### 测试
+
+- 修复 `pkg/tools` 的 URL 守卫测试：改为只调用 `guardCommand`，不再真实执行 `agent-browser open`、`curl`、`wget`、`git clone` 等外部命令。
+- 新增一次性升级预览、应用、默认域恢复、历史 cleanup 结案和未决 intent 拒绝结案的测试。
+
 ## v0.7.25
 
 ### 安全与治理

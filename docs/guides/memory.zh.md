@@ -115,6 +115,20 @@ FTS/LIKE 的 status/domain/realm/audience 过滤进入 SQL 后再应用候选上
 
 固定块（基础内容 + boundary）最多使用总预算的 50%，其中基础内容再限制为固定块的 70%；`budget_tokens` 的剩余额度给检索。boundary 参与固定块预算，但第一条核心规则始终保留，即使它单独超限；裁剪与溢出通过 `FixedUsage.BoundaryCut/OverflowTokens/CoreOverflow` 暴露且为真实赋值。固定块耗尽预算时检索为 0，不再强制注入最低 200 token。过期条目在 Search、FTS/LIKE、时间、1-hop 和 capsule 中都在 SQL 过滤阶段排除。
 
+## 一次性升级向导（0.7.26）
+
+从 0.7.20 升到 0.7.25 时，如果出现 `default_domain_missing`、`entries_without_domain` 或历史 `cancelled_cleanup_jobs`，打开 `/memory` →「数据库修复」→「一次性升级向导」。该向导是显式 owner 操作，不在启动时自动修改数据库。
+
+执行顺序：
+
+1. 预览 Schema、默认域、orphan entries、历史 cleanup job 和所有剩余阻塞；
+2. 强制备份主库与独立账本；
+3. 执行 v3 → v4（如需要）并恢复已知的 `legacy_unassigned` 默认域，不猜 owner；
+4. 把无法验证的历史 `cancelled/blocked/failed` cleanup 任务结案为 `legacy_closed`，记录 `legacy_cleanup_unverified` 审计；
+5. 重算恢复门禁。
+
+`legacy_closed` 表示“不再阻塞长期记忆”，**不表示原始会话副本已经验证删除**。报告中会保留 `residual_risk` 和备份路径。向导不会结案 pending/running cleanup、pending/blocked ledger intent 或不支持的 Schema；这些情况仍需要人工处理。
+
 ## 数据库迁移（schema v4）
 
 0.7.2 起不再在启动时自动迁移：已有 v3 数据库（或缺对象的 v4 库）会以故障关闭模式打开，普通读写返回 `schema migration required`，需要在 `/memory` → “数据库迁移”或 `picoclaw memory migrate` 显式执行。全新数据库直接初始化为 v4。

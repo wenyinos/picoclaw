@@ -403,6 +403,34 @@ paths:
       summary: Apply explicit data repair with backup
       responses:
         "200": {description: Repair report}
+  /memory/upgrade/preview:
+    get:
+      summary: Preview the one-time 0.7.26 recovery/upgrade wizard
+      responses:
+        "200":
+          description: Upgrade preview
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UpgradePreview"}
+  /memory/upgrade/apply:
+    post:
+      summary: Apply the one-time upgrade after confirmation and backup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties: {confirm: {type: boolean}}
+      responses:
+        "200":
+          description: Upgrade report
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UpgradeReport"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
   /memory/migration/status:
     get:
       summary: Read Schema v4 migration status
@@ -549,9 +577,54 @@ components:
         inert_cleanup: {type: integer}
         pending_cleanup: {type: integer}
         running_cleanup: {type: integer}
+        legacy_closed_cleanup: {type: integer}
         orphan_entries: {type: integer}
         issues: {type: array, items: {type: string}}
         checked_at: {type: integer}
+    UpgradePreview:
+      type: object
+      properties:
+        from_schema_version: {type: integer}
+        target_schema_version: {type: integer}
+        schema_ready: {type: boolean}
+        ledger_ready: {type: boolean}
+        default_domain_missing: {type: boolean}
+        orphan_entries: {type: integer}
+        legacy_cleanup_jobs:
+          type: array
+          items:
+            type: object
+            properties:
+              job_id: {type: string}
+              state: {type: string}
+              attempts: {type: integer}
+        pending_cleanup: {type: integer}
+        running_cleanup: {type: integer}
+        pending_intents: {type: integer}
+        blocked_intents: {type: integer}
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              code: {type: string}
+              title: {type: string}
+              detail: {type: string}
+        blocking_reasons: {type: array, items: {type: string}}
+        can_complete: {type: boolean}
+        recovery: {$ref: "#/components/schemas/RecoveryStatus"}
+    UpgradeReport:
+      type: object
+      properties:
+        previous_schema_version: {type: integer}
+        schema_version: {type: integer}
+        backup: {type: string}
+        closed_legacy_jobs: {type: integer}
+        closed_job_ids: {type: array, items: {type: string}}
+        residual_risk: {type: boolean}
+        residual_message: {type: string}
+        ready: {type: boolean}
+        recovery: {$ref: "#/components/schemas/RecoveryStatus"}
     Job:
       type: object
       properties:
@@ -560,7 +633,7 @@ components:
         kind: {type: string}
         state:
           type: string
-          enum: [pending, running, done, failed, blocked, cancelled, superseded]
+          enum: [pending, running, done, failed, blocked, cancelled, superseded, legacy_closed]
         attempts: {type: integer}
         last_error: {type: string}
         created_at: {type: integer}

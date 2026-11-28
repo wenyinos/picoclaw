@@ -1,11 +1,18 @@
 # PicoClaw 记忆系统完整性修复实施计划
 
-> - 文档状态：0.7.25 已实施 A 段主要项；B/C 与完整 V4 产品能力仍待后续，见下方实施记录
+> - 文档状态：0.7.25 已实施 A 段主要项；0.7.26 增加一次性升级向导；B/C 与完整 V4 产品能力仍待后续
 > - 编制日期：2026-11-28
-> - 代码基线：`ddeec945`（0.7.25 发布前分支 tip；`v0.7.20` 原 tag 为 `d1fccbe7`）
+> - 代码基线：`17214345`（0.7.26 升级向导；0.7.25 发布 tag 为 `b9249384`）
 > - Schema 基线：主库 Schema v4；不在 `Open` 中自动迁移或自愈业务数据
 > - 审计依据：当前源码、根 `AGENTS.md`、V4 实施计划 FR-01—FR-41、0.7.20 整改计划与发布说明、用户提供的只读参考快照
 > - 重要边界：计划正文仍是验收设计；已落地范围以 0.7.25 实施记录为准，未列入记录的项目仍按计划待办。本文件不授权修改真实数据库、执行迁移、Replay、Cleanup、提交、打 tag、发布或线上部署
+
+## 0.7.26 一次性升级向导（2026-11-28）
+
+- `/memory` →「数据库修复」新增一次性升级向导：只读预览、owner 确认、强制主库+账本备份、v3→v4（如需要）、默认域恢复、历史 cleanup 结案、恢复门禁复核。
+- 安全可修的默认域与 orphan entries 自动修复；历史 `cancelled/blocked/failed` cleanup 以 `legacy_closed` 显式结案并记录 `legacy_cleanup_unverified` 审计，不再全局阻塞记忆。
+- `legacy_closed` 不表示副本已验证删除；报告保留 `residual_risk` 与备份路径。pending/running cleanup、pending/blocked ledger intent 或未来 Schema 仍拒绝伪完成。
+- 参考库副本演练：131 条 orphan entries、缺失默认域、2 条 cancelled cleanup，一次操作后 `ready=true`，2 条结案且主库/账本备份生成。
 
 ## 0.7.25 实施记录（2026-11-28）
 
