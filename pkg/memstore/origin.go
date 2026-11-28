@@ -162,7 +162,8 @@ func (s *Store) MarkOriginUnavailable(ctx context.Context, eventID string) error
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM sources s
 			 LEFT JOIN memory_origin_events o ON o.event_id=s.origin_event_id
-			 WHERE s.entry_id=? AND (s.origin_event_id='' OR o.event_id IS NULL OR o.available=1)`,
+			 WHERE s.entry_id=?
+			   AND (s.origin_event_id='' OR (o.event_id IS NOT NULL AND o.available=1))`,
 			id).Scan(&support); err != nil {
 			return err
 		}

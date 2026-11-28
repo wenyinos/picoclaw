@@ -82,6 +82,12 @@ func (s *Store) searchFTS(ctx context.Context, query string, limit int, filter s
 	return out, rows.Err()
 }
 
+// escapeLikePattern makes user text a literal LIKE pattern. Without this, "%"
+// or "_" would widen the fallback query beyond what the user asked for.
+func escapeLikePattern(term string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(term)
+}
+
 // searchLike is the fallback channel for short queries and for FTS builds
 // where the tokenizer degrades to whole-word matching. filter is applied in
 // SQL so the LIMIT cannot be consumed by invisible rows (B07).
@@ -93,8 +99,9 @@ func (s *Store) searchLike(ctx context.Context, term string, limit int, filter s
 	if limit <= 0 {
 		limit = 50
 	}
-	like := "%" + term + "%"
-	where := `(e.text LIKE ? OR e.value LIKE ? OR e.subject LIKE ? OR e.predicate LIKE ? OR e.facet LIKE ?)`
+	like := "%" + escapeLikePattern(term) + "%"
+	where := `(e.text LIKE ? ESCAPE '\' OR e.value LIKE ? ESCAPE '\' OR e.subject LIKE ? ESCAPE '\'
+		OR e.predicate LIKE ? ESCAPE '\' OR e.facet LIKE ? ESCAPE '\')`
 	if strings.TrimSpace(filter) != "" {
 		where += ` AND ` + filter
 	}

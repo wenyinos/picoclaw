@@ -375,6 +375,26 @@ func TestShouldAutoExtractMemory(t *testing.T) {
 	if shouldAutoExtractMemory(async) {
 		t.Fatal("async follow-up must not auto-extract")
 	}
+	subturn := &turnState{
+		depth: 1,
+		opts: processOptions{Dispatch: DispatchRequest{
+			InboundContext: &bus.InboundContext{Channel: "telegram", ChatID: "c1", ChatType: "direct"},
+		}},
+	}
+	if shouldAutoExtractMemory(subturn) {
+		t.Fatal("subagent turn must not auto-extract internal prompts")
+	}
+	excluded := &turnState{
+		channel: "public",
+		opts: processOptions{Dispatch: DispatchRequest{
+			InboundContext: &bus.InboundContext{Channel: "public", ChatID: "c1", ChatType: "direct"},
+		}},
+	}
+	if shouldAutoExtractMemoryForConfig(excluded, config.MemoryConfig{
+		PrivateChannelExclusions: []string{"public"},
+	}) {
+		t.Fatal("excluded channel must not auto-extract")
+	}
 }
 
 func TestAsyncFollowUpInboundInheritsOrigin(t *testing.T) {

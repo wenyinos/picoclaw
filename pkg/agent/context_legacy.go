@@ -293,14 +293,14 @@ func (m *legacyContextManager) retryLLMCall(
 	const llmTemperature = 0.3
 
 	providerName, model := agentPrimaryRecipient(agent)
-	if err := checkMemoryEgressFor(m.al.GetConfig(), providerName, model, true); err != nil {
-		return nil, err
-	}
 
 	var resp *providers.LLMResponse
 	var err error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
+		if checkErr := checkMemoryEgressFor(m.al.GetConfig(), providerName, model, true); checkErr != nil {
+			return nil, checkErr
+		}
 		m.al.activeRequestsInc()
 		resp, err = func() (*providers.LLMResponse, error) {
 			defer m.al.activeRequestsDec()

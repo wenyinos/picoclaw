@@ -50,7 +50,30 @@ func sharedChatKind(ts *turnState) bool {
 // provenance. Shared/unknown chats and session-derived async follow-ups are
 // excluded from automatic learning.
 func shouldAutoExtractMemory(ts *turnState) bool {
-	return !sharedChatKind(ts) && !isAsyncFollowUpTurn(ts)
+	if ts == nil {
+		return false
+	}
+	return ts.depth == 0 && ts.parentTurnState == nil &&
+		!sharedChatKind(ts) && !isAsyncFollowUpTurn(ts)
+}
+
+// shouldAutoExtractMemoryForConfig also honors the private-channel exclusion
+// policy, so a channel excluded from private memory does not feed automatic
+// long-term extraction even if its adapter reports a direct chat.
+func shouldAutoExtractMemoryForConfig(ts *turnState, cfg config.MemoryConfig) bool {
+	if !shouldAutoExtractMemory(ts) {
+		return false
+	}
+	channel := strings.TrimSpace(ts.channel)
+	if channel == "" {
+		channel = strings.TrimSpace(ts.opts.Dispatch.Channel())
+	}
+	for _, excluded := range cfg.PrivateChannelExclusions {
+		if strings.EqualFold(strings.TrimSpace(excluded), channel) {
+			return false
+		}
+	}
+	return true
 }
 
 // extractMemoryAsync applies conservative rule-based extraction after a turn.

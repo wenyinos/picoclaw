@@ -115,18 +115,17 @@ func providerToCompleteFn(al *AgentLoop) seahorse.CompleteFn {
 }
 
 // seahorseSummaryAgent resolves the agent that owns the conversation being
-// summarized. Without a trusted session key it falls back to the current
-// default agent, never to a captured provider snapshot.
+// summarized. Without a trusted session key it fails closed rather than routing
+// derived memory through the current default agent.
 func (al *AgentLoop) seahorseSummaryAgent(ctx context.Context) *AgentInstance {
 	if al == nil || al.registry == nil {
 		return nil
 	}
-	if sessionKey := seahorseSessionKeyFromContext(ctx); sessionKey != "" {
-		if agent := al.agentForSession(sessionKey); agent != nil {
-			return agent
-		}
+	sessionKey := seahorseSessionKeyFromContext(ctx)
+	if sessionKey == "" {
+		return nil
 	}
-	return al.registry.GetDefaultAgent()
+	return al.agentForSession(sessionKey)
 }
 
 // resolveTrustedConversation is the seahorse tool-side authorization boundary.

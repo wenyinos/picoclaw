@@ -490,6 +490,10 @@ func (s *Store) BuildFixedContextFor(
 		usage.BoundaryTokens = boundaryTokens
 	}
 	usage.TotalTokens = usage.BaseTokens + usage.BoundaryTokens
+	if usage.BoundaryTokens > usage.BoundaryBudget {
+		usage.OverflowTokens = usage.BoundaryTokens - usage.BoundaryBudget
+		usage.CoreOverflow = true
+	}
 
 	if boundaryText == "" {
 		return base, usage

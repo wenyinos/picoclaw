@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -52,6 +53,11 @@ type ContextBuilder struct {
 	// build time. This catches nested file creations/deletions/mtime changes
 	// that may not update the top-level skill root directory mtime.
 	skillFilesAtCache map[string]time.Time
+
+	// lastMemoryTokens is the rendered fixed+retrieval memory size from the
+	// latest prompt build. Context-usage accounting uses this actual value rather
+	// than adding the configured budget as if it were always consumed.
+	lastMemoryTokens atomic.Int64
 }
 
 func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuilder {
@@ -517,9 +523,10 @@ func (cb *ContextBuilder) EstimateSystemTokens(summary string, activeSkills []st
 	}
 
 	estimate := totalChars * 2 / 5 // same heuristic as tokenizer.EstimateMessageTokens
-	if cb.longTerm != nil && cb.longTermCfg.Enabled && cb.longTermCfg.BudgetTokens > 0 {
-		// Memory is injected per request, not in the static prompt.
-		estimate += cb.longTermCfg.BudgetTokens
+	if memoryTokens := cb.lastMemoryTokens.Load(); memoryTokens > 0 {
+		// The latest actual prompt build already rendered fixed and retrieval
+		// memory. Do not charge the full configured budget when it was unused.
+		estimate += int(memoryTokens)
 	}
 	return estimate
 }
@@ -887,6 +894,7 @@ func (cb *ContextBuilder) BuildMessages(
 
 func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []providers.Message {
 	messages := []providers.Message{}
+	cb.lastMemoryTokens.Store(0)
 
 	// The default static part (identity, bootstrap, skills, memory) is cached
 	// locally to avoid repeated file I/O and string building on every call
@@ -1014,6 +1022,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			}
 		}
 
+		memoryTokens := fixedUsage.TotalTokens
 		if memoryEnabled && strings.TrimSpace(req.CurrentMessage) != "" {
 			budget := cb.longTermCfg.BudgetTokens - fixedUsage.TotalTokens
 			if budget < 0 {
@@ -1035,8 +1044,10 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 				}
 				stringParts = append(stringParts, retrieval)
 				contentBlocks = append(contentBlocks, promptContentBlock(retrievalPart, nil))
+				memoryTokens += memstore.EstimateTokens(retrieval)
 			}
 		}
+		cb.lastMemoryTokens.Store(int64(memoryTokens))
 
 		if req.Summary != "" {
 			summaryPart := PromptPart{

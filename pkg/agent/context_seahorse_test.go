@@ -429,7 +429,7 @@ func TestProviderToCompleteFn(t *testing.T) {
 	al, cleanup := newSeahorseCompleteTestLoop(t, mp, "test-model-v1")
 	defer cleanup()
 	completeFn := providerToCompleteFn(al)
-	result, err := completeFn(context.Background(), "Summarize this text", seahorse.CompleteOptions{
+	result, err := completeFn(withSeahorseSessionKey(context.Background(), "session-1"), "Summarize this text", seahorse.CompleteOptions{
 		MaxTokens:   500,
 		Temperature: 0.3,
 	})
@@ -502,7 +502,7 @@ func TestProviderToCompleteFnError(t *testing.T) {
 	al, cleanup := newSeahorseCompleteTestLoop(t, mp, "test-model")
 	defer cleanup()
 	completeFn := providerToCompleteFn(al)
-	_, err := completeFn(context.Background(), "test prompt", seahorse.CompleteOptions{})
+	_, err := completeFn(withSeahorseSessionKey(context.Background(), "session-1"), "test prompt", seahorse.CompleteOptions{})
 	if err == nil {
 		t.Error("expected error from canceled context")
 	}
@@ -529,7 +529,7 @@ func TestProviderToCompleteFnEgressDenied(t *testing.T) {
 	}
 
 	completeFn := providerToCompleteFn(al)
-	_, err := completeFn(context.Background(), "summarize private conversation", seahorse.CompleteOptions{})
+	_, err := completeFn(withSeahorseSessionKey(context.Background(), "session-1"), "summarize private conversation", seahorse.CompleteOptions{})
 	if !errors.Is(err, ErrMemoryEgressDenied) {
 		t.Fatalf("completeFn error = %v, want ErrMemoryEgressDenied", err)
 	}

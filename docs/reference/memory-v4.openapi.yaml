@@ -1,0 +1,570 @@
+openapi: 3.1.0
+info:
+  title: PicoClaw Memory API
+  version: 0.7.25
+  description: |
+    Owner-facing dashboard contract for the PicoClaw memory system. Owner
+    authentication and CSRF protection are supplied by the surrounding
+    dashboard; this document does not grant authorization by itself.
+servers:
+  - url: /api
+paths:
+  /memory/overview:
+    get:
+      summary: Memory counters and revision
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+  /memory/entries:
+    get:
+      summary: List memories
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 100}
+        - name: realm
+          in: query
+          schema: {type: string}
+        - name: layer
+          in: query
+          schema: {type: string}
+        - name: status
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries:
+                    type: array
+                    items: {$ref: "#/components/schemas/Entry"}
+    post:
+      summary: Add an owner memory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AddInput"}
+      responses:
+        "200":
+          description: Add result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AddResult"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /memory/entries/{id}:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    get:
+      summary: Get one entry and sources
+      responses:
+        "200":
+          description: Entry
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Entry"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      summary: Update metadata (text changes must use /correct)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AddInput"}
+      responses:
+        "200":
+          description: Updated entry
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Entry"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+  /memory/entries/{id}/inspect:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    get:
+      summary: Inspect evidence, relations, operations and clusters
+      responses:
+        "200":
+          description: Inspection
+          content:
+            application/json:
+              schema: {type: object, additionalProperties: true}
+  /memory/entries/{id}/correct:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Create a corrected version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AddInput"}
+      responses:
+        "200":
+          description: Correction result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AddResult"}
+  /memory/entries/{id}/forget:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Preview or execute permanent forget
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run: {type: boolean, default: true}
+                confirm: {type: boolean, default: false}
+                expected_revision: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: Preview
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ForgetPreview"}
+        "202":
+          description: Main deletion committed; derived-store cleanup accepted
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ForgetPreview"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /memory/entries/{id}/archive:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Archive an entry
+      responses:
+        "200": {description: Archived}
+  /memory/entries/{id}/restore:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Restore an archived entry
+      responses:
+        "200": {description: Restored}
+  /memory/domains:
+    get:
+      summary: List permission domains
+      responses:
+        "200": {description: Domains}
+  /memory/ledger/health:
+    get:
+      summary: Forget ledger identity and pending count
+      responses:
+        "200":
+          description: Ledger health
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /memory/ledger/replay:
+    post:
+      summary: Preview or execute eligible ledger replay
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run: {type: boolean, default: true}
+                confirm: {type: boolean, default: false}
+      responses:
+        "200":
+          description: Replay preview
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReplayPreview"}
+        "202":
+          description: Eligible intents replayed; cleanup accepted
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ReplayResult"}
+  /memory/recovery:
+    get:
+      summary: Long-term memory readiness and recovery blockers
+      responses:
+        "200":
+          description: Recovery status
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecoveryStatus"}
+  /memory/origins/{id}/unavailable:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Mark a trusted source unavailable and re-evaluate support
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties: {confirm: {type: boolean}}
+      responses:
+        "200": {description: Source marked unavailable}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /memory/clusters:
+    get:
+      summary: List clusters
+      responses:
+        "200": {description: Clusters}
+    post:
+      summary: Create a cluster
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "200": {description: Cluster created}
+  /memory/clusters/{id}/members:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Add cluster members
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entry_ids]
+              properties:
+                entry_ids: {type: array, items: {type: string}}
+      responses:
+        "200": {description: Members added}
+  /memory/clusters/{id}/summaries:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    get:
+      summary: List summaries
+      responses:
+        "200": {description: Summaries}
+    post:
+      summary: Generate a summary from valid evidence
+      responses:
+        "200": {description: Summary generated}
+  /memory/summaries/{id}/evidence:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    get:
+      summary: List summary evidence
+      responses:
+        "200": {description: Evidence}
+  /memory/commitments:
+    get:
+      summary: List commitments
+      responses:
+        "200": {description: Commitments}
+    post:
+      summary: Create a commitment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "200": {description: Commitment created}
+  /memory/commitments/{id}/status:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Apply an evidenced commitment transition
+      responses:
+        "200": {description: Status updated}
+  /memory/recalls:
+    get:
+      summary: List recall candidates
+      responses:
+        "200": {description: Recalls}
+  /memory/recalls/{id}/feedback:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Record recall feedback
+      responses:
+        "200": {description: Feedback recorded}
+  /memory/jobs:
+    get:
+      summary: List durable jobs and state counts
+      parameters:
+        - name: state
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs: {type: array, items: {$ref: "#/components/schemas/Job"}}
+                  stats: {type: object, additionalProperties: {type: integer}}
+  /memory/jobs/{id}/requeue:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Create a successor for a blocked, failed or cancelled job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties: {confirm: {type: boolean}}
+      responses:
+        "202":
+          description: Successor created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Job"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /memory/plans:
+    get:
+      summary: List owner change plans
+      responses:
+        "200": {description: Plans}
+  /memory/plans/{id}/approve:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Approve and execute a plan after digest/domain/revision checks
+      responses:
+        "200": {description: Plan executed}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /memory/review:
+    get:
+      summary: List review candidates
+      responses:
+        "200": {description: Review queue}
+  /memory/review/{id}/resolve:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    post:
+      summary: Apply an owner review decision
+      responses:
+        "200": {description: Review resolved}
+  /memory/relationship:
+    get:
+      summary: List relationship state
+      responses:
+        "200": {description: Relationship state}
+    put:
+      summary: Update one owner relationship value
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "200": {description: Updated}
+  /memory/persona:
+    get:
+      summary: List personas and the active version
+      responses:
+        "200": {description: Personas}
+    put:
+      summary: Create a persona version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "200": {description: Persona version created}
+  /memory/settings:
+    get:
+      summary: Read memory settings
+      responses:
+        "200": {description: Settings}
+    put:
+      summary: Merge supplied memory settings without clearing absent fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "200": {description: Settings saved}
+  /memory/compact:
+    post:
+      summary: Archive expired and low-value episodic entries
+      responses:
+        "200": {description: Compaction result}
+  /memory/repair/preview:
+    post:
+      summary: Preview data repair
+      responses:
+        "200": {description: Repair preview}
+  /memory/repair/apply:
+    post:
+      summary: Apply explicit data repair with backup
+      responses:
+        "200": {description: Repair report}
+  /memory/migration/status:
+    get:
+      summary: Read Schema v4 migration status
+      responses:
+        "200": {description: Migration status}
+  /memory/migration/apply:
+    post:
+      summary: Apply explicit Schema v3 to v4 migration
+      responses:
+        "200": {description: Migration report}
+  /memory/ops:
+    get:
+      summary: List governance operations
+      responses:
+        "200": {description: Operations}
+  /memory/capsule/{id}:
+    parameters: [{$ref: "#/components/parameters/Id"}]
+    get:
+      summary: Render a scene capsule under trusted channel policy
+      responses:
+        "200": {description: Capsule}
+  /memory/import:
+    post:
+      summary: Disabled over HTTP; use the maintenance CLI
+      responses:
+        "410":
+          description: HTTP import is intentionally disabled
+  /memory/export:
+    get:
+      summary: Export authorized entries
+      responses:
+        "200": {description: JSONL export}
+  /memory/stats:
+    get:
+      summary: Detailed storage, FTS and ledger statistics
+      responses:
+        "200": {description: Statistics}
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {type: string}
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    NotFound:
+      description: Not found or not visible
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Conflict:
+      description: Revision, state or approval conflict
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+    Entry:
+      type: object
+      required: [id, realm, layer, text, status]
+      properties:
+        id: {type: string}
+        realm: {type: string}
+        layer: {type: string}
+        audience: {type: string}
+        text: {type: string}
+        status: {type: string}
+        domain_id: {type: string}
+        row_revision: {type: integer}
+        pinned_core: {type: boolean}
+        sensitivity: {type: string}
+        evidence_status: {type: string}
+        freshness: {type: string}
+        sources:
+          type: array
+          items: {type: object, additionalProperties: true}
+    AddInput:
+      type: object
+      required: [text]
+      properties:
+        text: {type: string}
+        realm: {type: string}
+        layer: {type: string}
+        audience: {type: string}
+        importance: {type: number}
+        predicate: {type: string}
+        facet: {type: string}
+        value: {type: string}
+    AddResult:
+      type: object
+      properties:
+        action: {type: string}
+        entry: {$ref: "#/components/schemas/Entry"}
+        existing_id: {type: string}
+    ForgetPreview:
+      type: object
+      properties:
+        entry_id: {type: string}
+        sources: {type: integer}
+        relations: {type: integer}
+        summaries: {type: integer}
+        already_gone: {type: boolean}
+        ledger_seq: {type: integer}
+        request_id: {type: string}
+    ReplayPreview:
+      type: object
+      properties:
+        scanned: {type: integer}
+        eligible: {type: integer}
+        blocked: {type: integer}
+        unapproved: {type: integer}
+        unsupported: {type: integer}
+        already_absent: {type: integer}
+        entries_removable: {type: integer}
+        intents: {type: array, items: {type: object, additionalProperties: true}}
+    ReplayResult:
+      type: object
+      properties:
+        removed: {type: integer}
+        already_absent: {type: integer}
+        cleanup_jobs: {type: integer}
+        blocked: {type: integer}
+        unapproved: {type: integer}
+        unsupported: {type: integer}
+    RecoveryStatus:
+      type: object
+      properties:
+        ready: {type: boolean}
+        schema_ready: {type: boolean}
+        ledger_ready: {type: boolean}
+        domain_registry_ok: {type: boolean}
+        pending_intents: {type: integer}
+        blocked_intents: {type: integer}
+        blocked_cleanup: {type: integer}
+        inert_cleanup: {type: integer}
+        pending_cleanup: {type: integer}
+        running_cleanup: {type: integer}
+        orphan_entries: {type: integer}
+        issues: {type: array, items: {type: string}}
+        checked_at: {type: integer}
+    Job:
+      type: object
+      properties:
+        id: {type: integer}
+        job_id: {type: string}
+        kind: {type: string}
+        state:
+          type: string
+          enum: [pending, running, done, failed, blocked, cancelled, superseded]
+        attempts: {type: integer}
+        last_error: {type: string}
+        created_at: {type: integer}
+        updated_at: {type: integer}
+    Overview:
+      type: object
+      additionalProperties: true
