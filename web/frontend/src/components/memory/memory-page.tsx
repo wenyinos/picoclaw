@@ -182,16 +182,27 @@ function GovernanceTab({
   }
 
   const replay = async () => {
-    if (
-      !window.confirm(
-        "重放账本会按历史 manifest 删除恢复后再次出现的条目与派生数据。仅在恢复旧备份后使用。确认执行？",
-      )
-    ) {
-      return
-    }
     try {
+      const preview = await memoryApi.replayForgetPreview()
+      const summary =
+        `可执行 ${preview.eligible} 个意图，删除 ${preview.entries_removable} 条目标；` +
+        `blocked ${preview.blocked}，未批准 ${preview.unapproved}，不支持 ${preview.unsupported}。`
+      if (preview.eligible === 0) {
+        onNotice(`没有可重放意图：${summary}`)
+        return
+      }
+      if (
+        !window.confirm(
+          `${summary}\n\nblocked 意图不会执行，必须经新预览生成后继维护动作。确认执行可重放部分？`,
+        )
+      ) {
+        return
+      }
       const r = await memoryApi.replayForget()
-      onNotice(`账本重放完成：删除 ${r.removed} 条复活数据`)
+      onNotice(
+        `账本重放完成：删除 ${r.removed} 条复活数据，` +
+          `blocked ${r.blocked}，未批准 ${r.unapproved}，不支持 ${r.unsupported}`,
+      )
       await load()
     } catch (e) {
       onError((e as Error).message)
@@ -1488,7 +1499,6 @@ function SettingsTab({
   onNotice: (v: string) => void
 }) {
   const [settings, setSettings] = useState<MemorySettings | null>(null)
-  const [importPath, setImportPath] = useState("")
 
   useEffect(() => {
     memoryApi
@@ -1603,28 +1613,13 @@ function SettingsTab({
       </Button>
 
       <div className="mt-4 rounded-lg border p-4">
-        <h2 className="text-sm font-semibold">一次性导入（0.4 切换期）</h2>
+        <h2 className="text-sm font-semibold">一次性导入（仅 CLI）</h2>
         <p className="text-muted-foreground mt-1 text-xs">
-          从旧 workspace 导入 task-records 和会话摘要，结果进入审核队列。
+          为避免 dashboard 读取任意宿主机路径，旧 workspace 导入改为维护命令；导入内容默认为 private、待审核。
         </p>
-        <div className="mt-2 flex gap-2">
-          <Input
-            placeholder="/home/user/.picoclaw/workspace2"
-            value={importPath}
-            onChange={(e) => setImportPath(e.target.value)}
-          />
-          <Button
-            variant="outline"
-            onClick={() =>
-              memoryApi
-                .importWorkspace(importPath)
-                .then((r) => onNotice(`导入完成：${JSON.stringify(r)}`))
-                .catch((e: Error) => onError(e.message))
-            }
-          >
-            导入
-          </Button>
-        </div>
+        <pre className="bg-muted mt-2 overflow-x-auto rounded p-2 text-xs">
+          picoclaw memory import --from /path/to/old-workspace
+        </pre>
       </div>
     </div>
   )

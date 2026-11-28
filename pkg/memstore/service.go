@@ -14,6 +14,11 @@ import (
 // to perform owner-only governance work.
 var ErrOwnerApprovalRequired = errors.New("memstore: owner approval is required for this action")
 
+// ErrRealmNotAllowed is returned when a caller asks for a realm that the
+// trusted chat context cannot read. The realm argument may narrow visibility,
+// never widen it.
+var ErrRealmNotAllowed = errors.New("memstore: requested realm is not allowed in this chat context")
+
 const maxRelationshipValueRunes = 256
 
 // MemoryService is the single governed write/read entry point. Every channel,
@@ -112,6 +117,10 @@ func (svc *MemoryService) Search(ctx context.Context, mc MemoryContext, opts Sea
 	}
 	if mc.ChatKind == ChatKindGroup || mc.ChatKind == ChatKindPublic {
 		opts.IncludeFic = false
+		if realm := strings.TrimSpace(opts.Realm); realm != "" && realm != RealmReal {
+			return nil, fmt.Errorf("%w: %s", ErrRealmNotAllowed, realm)
+		}
+		opts.Realm = RealmReal
 	}
 	return svc.store.Search(ctx, opts)
 }
@@ -133,6 +142,9 @@ func (svc *MemoryService) Get(ctx context.Context, mc MemoryContext, id string) 
 		return nil, fmt.Errorf("memstore: memory not found")
 	}
 	if !audienceAllowedForChat(e.Audience, mc.ChatKind, mc.Channel, svc.cfg.PrivateChannelExclusions) {
+		return nil, fmt.Errorf("memstore: memory not found")
+	}
+	if isSharedChatKind(mc.ChatKind) && e.Realm != RealmReal {
 		return nil, fmt.Errorf("memstore: memory not found")
 	}
 	return e, nil

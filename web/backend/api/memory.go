@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -406,12 +404,40 @@ func (h *Handler) handleMemoryLedgerReplay(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	removed, err := store.ReplayForget(r.Context())
+	dryRun := true
+	if r.ContentLength > 0 {
+		parsed, err := decodeBody[struct {
+			DryRun  *bool `json:"dry_run"`
+			Confirm bool  `json:"confirm"`
+		}](r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if parsed.Confirm {
+			dryRun = false
+		} else if parsed.DryRun != nil {
+			dryRun = *parsed.DryRun
+		}
+	}
+	ctx := memstore.WithAudit(r.Context(), "dashboard@owner", "")
+	if dryRun {
+		preview, err := store.PreviewForgetReplay(ctx)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, preview)
+		return
+	}
+	result, err := store.ExecuteForgetReplay(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"removed": removed})
+	// Main-database replay is synchronous, but requeued derived-store cleanup is
+	// asynchronous; 202 keeps that contract visible.
+	writeJSON(w, http.StatusAccepted, result)
 }
 
 func (h *Handler) handleMemoryClusters(w http.ResponseWriter, r *http.Request) {
@@ -997,38 +1023,11 @@ func (h *Handler) handleMemoryCapsule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleMemoryImport(w http.ResponseWriter, r *http.Request) {
-	store, cfg, err := h.memoryStore()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	body, err := decodeBody[struct {
-		Workspace string `json:"workspace"`
-	}](r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	source := strings.TrimSpace(body.Workspace)
-	if source == "" {
-		writeError(w, http.StatusBadRequest, "workspace is required")
-		return
-	}
-	memoryDir := filepath.Join(cfg.Agents.Defaults.Workspace, "memory")
-	_ = os.MkdirAll(memoryDir, 0o755)
-	reportPath := filepath.Join(memoryDir, "import-report.md")
-	f, ferr := os.Create(reportPath)
-	if ferr != nil {
-		writeError(w, http.StatusInternalServerError, ferr.Error())
-		return
-	}
-	defer f.Close()
-	report, err := store.ImportLegacy(r.Context(), source, f)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, report)
+	// Import reads a host filesystem path and persists quarantined legacy facts.
+	// It is a maintenance operation with its own report and audit trail, not an
+	// HTTP capability that should accept an arbitrary server path.
+	writeError(w, http.StatusGone,
+		"HTTP memory import is disabled; run `picoclaw memory import --from <workspace>` from the host")
 }
 
 func (h *Handler) handleMemoryExport(w http.ResponseWriter, r *http.Request) {

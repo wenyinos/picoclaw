@@ -68,8 +68,14 @@ func (s *Store) retrieveCandidates(ctx context.Context, opts SearchOptions, admi
 	if opts.Realm != "" {
 		where = append(where, "e.realm=?")
 		args = append(args, opts.Realm)
-	} else if !admin && !opts.IncludeFic {
+	}
+	if !admin && !opts.IncludeFic {
 		where = append(where, "e.realm IN ('real','work')")
+	}
+	// Group and public chats only see real, explicitly shared facts. This is an
+	// intersection: an explicit work/fictional realm above cannot widen it.
+	if isSharedChatKind(opts.ChatKindHint) {
+		where = append(where, "e.realm='real'")
 	}
 	if opts.Layer != "" {
 		where = append(where, "e.layer=?")
@@ -684,6 +690,18 @@ func audienceAllowed(audience, channel string, privateExclusions []string) bool 
 	// Unknown audiences are not public by default; only an explicit shared
 	// marker passes.
 	return false
+}
+
+// isSharedChatKind reports whether a context belongs to a shared conversation.
+// Missing/unknown kinds are deliberately not treated as shared here: request
+// entry points normalize unknown values to public before reaching the Store.
+func isSharedChatKind(chatKind string) bool {
+	switch strings.ToLower(strings.TrimSpace(chatKind)) {
+	case ChatKindGroup, ChatKindPublic:
+		return true
+	default:
+		return false
+	}
 }
 
 // chatKindAllowsPrivate reports whether a trusted chat kind may read private

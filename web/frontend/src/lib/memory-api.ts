@@ -55,6 +55,41 @@ export interface MemoryLedgerHealth {
   reason?: string
 }
 
+export interface MemoryReplayPreview {
+  scanned: number
+  eligible: number
+  blocked: number
+  unapproved: number
+  unsupported: number
+  already_absent: number
+  entries_removable: number
+  intents: {
+    seq: number
+    request_id: string
+    status: string
+    domain_id: string
+    state: string
+    reason_code?: string
+    cleanup_only?: boolean
+    targets?: {
+      entry_id: string
+      domain_id: string
+      expected_revision?: number
+      state: string
+      reason_code?: string
+    }[]
+  }[]
+}
+
+export interface MemoryReplayResult {
+  removed: number
+  already_absent: number
+  cleanup_jobs: number
+  blocked: number
+  unapproved: number
+  unsupported: number
+}
+
 export interface MemoryDomain {
   domain_id: string
   owner_principal_id?: string
@@ -350,11 +385,6 @@ export const memoryApi = {
     }),
   compact: () =>
     request<{ archived: number }>("/api/memory/compact", { method: "POST" }),
-  importWorkspace: (workspace: string) =>
-    request<Record<string, number>>("/api/memory/import", {
-      method: "POST",
-      body: JSON.stringify({ workspace }),
-    }),
 
   // V4 governance and long-term understanding.
   inspectEntry: (id: string) =>
@@ -381,9 +411,15 @@ export const memoryApi = {
     }),
   domains: () => request<{ domains: MemoryDomain[] }>("/api/memory/domains"),
   ledgerHealth: () => request<MemoryLedgerHealth>("/api/memory/ledger/health"),
-  replayForget: () =>
-    request<{ removed: number }>("/api/memory/ledger/replay", {
+  replayForgetPreview: () =>
+    request<MemoryReplayPreview>("/api/memory/ledger/replay", {
       method: "POST",
+      body: JSON.stringify({ dry_run: true }),
+    }),
+  replayForget: () =>
+    request<MemoryReplayResult>("/api/memory/ledger/replay", {
+      method: "POST",
+      body: JSON.stringify({ confirm: true }),
     }),
   clusters: () =>
     request<{ clusters: MemoryCluster[] }>("/api/memory/clusters"),

@@ -111,8 +111,12 @@ func (s *Store) ExpandOneHop(ctx context.Context, seeds []Entry, perSeed int, fi
 		if filter.Realm != "" {
 			q += ` AND e.realm=?`
 			args = append(args, filter.Realm)
-		} else if !filter.IncludeFic {
+		}
+		if !filter.IncludeFic {
 			q += ` AND e.realm IN ('real','work')`
+		}
+		if isSharedChatKind(filter.ChatKindHint) {
+			q += ` AND e.realm='real'`
 		}
 		if filter.Scope != "" {
 			q += ` AND e.scope=?`
@@ -172,6 +176,9 @@ func (s *Store) ExpandOneHop(ctx context.Context, seeds []Entry, perSeed int, fi
 				continue
 			}
 			if filter.Realm != "" && target.Realm != filter.Realm {
+				continue
+			}
+			if isSharedChatKind(filter.ChatKindHint) && target.Realm != RealmReal {
 				continue
 			}
 			if filter.Scope != "" && target.Scope != filter.Scope {
@@ -246,6 +253,9 @@ func (s *Store) LoadCapsuleFor(
 		return CapsuleResult{}, fmt.Errorf("memstore: multi-domain capsules are not supported by this runtime")
 	}
 	result := CapsuleResult{ID: c.ID, Title: c.Title}
+	if isSharedChatKind(chatKind) && c.Realm != RealmReal {
+		return result, nil
+	}
 	if c.Realm == RealmFictional {
 		if !injectFictional || !chatKindAllowsPrivate(chatKind) ||
 			!channelIsPrivate(channel, privateChannels) {
@@ -286,6 +296,9 @@ func (s *Store) LoadCapsuleFor(
 			continue
 		}
 		if e.Realm == RealmFictional && !injectFictional {
+			continue
+		}
+		if isSharedChatKind(chatKind) && e.Realm != RealmReal {
 			continue
 		}
 		if e.DomainID != "" && e.DomainID != DomainLegacyUnassigned {

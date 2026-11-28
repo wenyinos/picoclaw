@@ -225,44 +225,38 @@ func newReplayForgetCommand() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "replay-forget",
-		Short: "Re-apply forget tombstones after restoring a backup",
+		Short: "Re-apply eligible forget tombstones after restoring a backup",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			store, _, err := openStore()
 			if err != nil {
 				return err
 			}
 			defer store.Close()
-			ledger := store.ForgetLedgerRef()
-			if ledger == nil {
-				return fmt.Errorf("forget ledger unavailable")
-			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
 			if !yes {
-				intents, err := ledger.AllIntents(context.Background())
+				preview, err := store.PreviewForgetReplay(context.Background())
 				if err != nil {
 					return err
 				}
-				entries := 0
-				for _, intent := range intents {
-					manifest, err := memstore.ParseManifest(intent.TargetManifest)
-					if err != nil || len(manifest.EntryIDs) == 0 {
-						continue
-					}
-					entries += len(manifest.EntryIDs)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(),
-					"dry run: %d intent(s), %d manifest entry target(s); pass --yes to execute\n",
-					len(intents), entries)
-				return nil
+				return enc.Encode(preview)
 			}
-			n, err := store.ReplayForget(cliAuditContext(store))
+			result, err := store.ExecuteForgetReplay(cliAuditContext(store))
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "removed %d forgotten entries\n", n)
+			if err := enc.Encode(result); err != nil {
+				return err
+			}
+			if result.Blocked > 0 || result.Unapproved > 0 || result.Unsupported > 0 {
+				return fmt.Errorf(
+					"replay incomplete: blocked=%d unapproved=%d unsupported=%d",
+					result.Blocked, result.Unapproved, result.Unsupported)
+			}
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&yes, "yes", false, "execute Replay; without it this is a dry run")
+	cmd.Flags().BoolVar(&yes, "yes", false, "execute eligible Replay; without it this is a dry run")
 	return cmd
 }
 
@@ -430,6 +424,7 @@ func newImportCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer store.Close()
 			reportPath := filepath.Join(cfg.Agents.Defaults.Workspace, "memory", "import-report.md")
 			if err := os.MkdirAll(filepath.Dir(reportPath), 0o755); err != nil {
 				return err
@@ -439,7 +434,14 @@ func newImportCommand() *cobra.Command {
 				return err
 			}
 			defer f.Close()
-			report, err := store.ImportLegacy(context.Background(), from, f)
+			actor := "cli@local"
+			if ledger := store.ForgetLedgerRef(); ledger != nil && ledger.UUID() != "" {
+				actor = "cli@" + ledger.UUID()
+			}
+			mc := memstore.LegacyContext()
+			mc.ActorID = actor
+			svc := memstore.NewMemoryService(store, memstore.DefaultConfig(""))
+			report, err := svc.ImportLegacy(cliAuditContext(store), mc, from, f)
 			if err != nil {
 				return err
 			}

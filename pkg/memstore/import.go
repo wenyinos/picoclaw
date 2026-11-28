@@ -19,6 +19,17 @@ type legacyTask struct {
 	SessionKey string `json:"session_key"`
 }
 
+// ImportLegacy is the governed owner entry point for the one-shot legacy
+// workspace import. HTTP request contexts are intentionally rejected by the
+// caller; this method is for the maintenance CLI and tests.
+func (svc *MemoryService) ImportLegacy(ctx context.Context, mc MemoryContext, workspace string, report io.Writer) (ImportReport, error) {
+	if err := requireOwner(mc); err != nil {
+		return ImportReport{}, err
+	}
+	ctx = svc.auditContext(ctx, mc)
+	return svc.store.ImportLegacy(ctx, workspace, report)
+}
+
 // ImportLegacy performs a one-shot import from a PicoClaw 0.3.x workspace.
 // It is deliberately not a runtime migration: 0.4 treats memory.db as the
 // source of truth and old MEMORY.md files are ignored.
@@ -51,7 +62,9 @@ func (s *Store) ImportLegacy(ctx context.Context, workspace string, report io.Wr
 			realm := RealmWork
 			layer := LayerProcedural
 			importance := 0.6
-			status := StatusActive
+			// Imports are quarantined for review and kept private until the owner
+			// explicitly promotes them. Legacy task success is not user confirmation.
+			status := StatusPending
 			if template != "" {
 				r.TemplateFolded++
 				switch template {
@@ -70,7 +83,7 @@ func (s *Store) ImportLegacy(ctx context.Context, workspace string, report io.Wr
 				r.FailuresArchived++
 			}
 			res, err := s.Add(ctx, AddInput{
-				Text: summary, Realm: realm, Layer: layer,
+				Text: summary, Realm: realm, Layer: layer, Audience: "private",
 				Importance: importance, Confidence: 0.6, TemplateKey: template,
 				ForceStatus: status, SourceType: "task_record", SourceID: task.ID,
 				SessionKey: task.SessionKey,
@@ -108,7 +121,7 @@ func (s *Store) ImportLegacy(ctx context.Context, workspace string, report io.Wr
 			continue
 		}
 		res, err := s.Add(ctx, AddInput{
-			Text: summary, Realm: RealmUnknown, Layer: LayerEpisodic,
+			Text: summary, Realm: RealmUnknown, Layer: LayerEpisodic, Audience: "private",
 			Importance: 0.5, Confidence: 0.4, ForceStatus: StatusPending,
 			SourceType: "session_summary", SourceID: strings.TrimSuffix(filepath.Base(path), ".meta.json"),
 			SessionKey: meta.Key,
@@ -135,7 +148,7 @@ func (s *Store) ImportLegacy(ctx context.Context, workspace string, report io.Wr
 				continue
 			}
 			if res, err := s.Add(ctx, AddInput{
-				Text: text, Realm: RealmUnknown, Layer: LayerProfile,
+				Text: text, Realm: RealmUnknown, Layer: LayerProfile, Audience: "private",
 				Importance: 0.7, Confidence: 0.5, ForceStatus: StatusPending,
 				SourceType: "legacy_memory_md",
 			}); err == nil && (res.Action == "added" || res.Action == "duplicate") {

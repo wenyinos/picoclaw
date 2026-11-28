@@ -1062,6 +1062,9 @@ func (s *Store) List(ctx context.Context, opts SearchOptions) ([]Entry, error) {
 		where = append(where, "realm=?")
 		args = append(args, opts.Realm)
 	}
+	if isSharedChatKind(opts.ChatKindHint) {
+		where = append(where, "realm='real'")
+	}
 	if opts.Layer != "" {
 		where = append(where, "layer=?")
 		args = append(args, opts.Layer)

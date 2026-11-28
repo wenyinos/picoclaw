@@ -51,10 +51,26 @@ type ForgetIntent struct {
 	CreatedAt      int64  `json:"created_at"`
 }
 
+// ForgetManifestVersionV2 adds per-target domain and revision proofs. The
+// legacy EntryIDs field remains populated for older binaries and for cleanup
+// jobs that only need the target IDs.
+const ForgetManifestVersionV2 = 2
+
+// ForgetTarget is one replay target with the proof captured at preview time.
+// An empty expected revision marks a legacy target that can only be replayed
+// after its content HMAC matches the ledger selector.
+type ForgetTarget struct {
+	EntryID          string `json:"entry_id"`
+	DomainID         string `json:"domain_id,omitempty"`
+	ExpectedRevision int64  `json:"expected_revision,omitempty"`
+}
+
 // ForgetTargetManifest is the minimal set of identifiers needed to replay a
 // cleanup without the deleted rows: entry ids, relationship-state keys,
 // content digests (never text) and message locators.
 type ForgetTargetManifest struct {
+	Version          int             `json:"version,omitempty"`
+	Targets          []ForgetTarget  `json:"targets,omitempty"`
 	EntryIDs         []string        `json:"entry_ids,omitempty"`
 	RelationshipKeys []string        `json:"relationship_keys,omitempty"`
 	CapsuleIDs       []string        `json:"capsule_ids,omitempty"`
@@ -331,22 +347,41 @@ func (l *ForgetLedger) RecordIntent(ctx context.Context, in ForgetIntent) (Forge
 }
 
 // MarkApplied records that the main database finished applying this intent.
+// It refuses blocked or unknown rows instead of silently reporting a successful
+// bookkeeping update on an intent that must remain under review.
 func (l *ForgetLedger) MarkApplied(ctx context.Context, seq, appliedSeq int64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, err := l.db.ExecContext(ctx,
-		`UPDATE forget_journal SET status='applied', applied_seq=? WHERE seq=? AND status<>'blocked'`,
+	res, err := l.db.ExecContext(ctx,
+		`UPDATE forget_journal SET status='applied', applied_seq=?
+		 WHERE seq=? AND status IN ('pending','applied')`,
 		appliedSeq, seq)
-	return err
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("memstore: forget intent %d is not markable applied", seq)
+	}
+	return nil
 }
 
 // MarkBlocked keeps an obligation alive when cleanup cannot finish.
 func (l *ForgetLedger) MarkBlocked(ctx context.Context, seq int64, reason string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, err := l.db.ExecContext(ctx,
-		`UPDATE forget_journal SET status='blocked' WHERE seq=?`, seq)
-	return err
+	res, err := l.db.ExecContext(ctx,
+		`UPDATE forget_journal SET status='blocked'
+		 WHERE seq=? AND status IN ('pending','blocked')`, seq)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("memstore: forget intent %d is not markable blocked", seq)
+	}
+	_ = reason // Persisted blocked reason is added by the receipt state migration.
+	return nil
 }
 
 // Pending returns obligations that were accepted but not applied.
@@ -599,7 +634,9 @@ func MarshalManifest(m ForgetTargetManifest) string {
 	return string(data)
 }
 
-// ParseManifest decodes a stored manifest.
+// ParseManifest decodes a stored manifest. A manifest with targets derives the
+// legacy entry_ids field so older cleanup code can still locate the targets;
+// a legacy manifest derives unversioned targets with no revision proof.
 func ParseManifest(raw string) (ForgetTargetManifest, error) {
 	var m ForgetTargetManifest
 	if strings.TrimSpace(raw) == "" {
@@ -608,5 +645,42 @@ func ParseManifest(raw string) (ForgetTargetManifest, error) {
 	if err := json.Unmarshal([]byte(raw), &m); err != nil {
 		return m, err
 	}
+	if m.Version < 0 || m.Version > ForgetManifestVersionV2 {
+		return m, fmt.Errorf("memstore: unsupported forget manifest version %d", m.Version)
+	}
+	seen := map[string]bool{}
+	entryIDs := make([]string, 0, len(m.EntryIDs)+len(m.Targets))
+	for _, id := range m.EntryIDs {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		entryIDs = append(entryIDs, id)
+	}
+	if len(m.Targets) > 0 {
+		targetSeen := map[string]bool{}
+		for i := range m.Targets {
+			m.Targets[i].EntryID = strings.TrimSpace(m.Targets[i].EntryID)
+			m.Targets[i].DomainID = strings.TrimSpace(m.Targets[i].DomainID)
+			if m.Targets[i].EntryID == "" {
+				return m, fmt.Errorf("memstore: forget manifest target has no entry id")
+			}
+			if targetSeen[m.Targets[i].EntryID] {
+				return m, fmt.Errorf("memstore: duplicate forget manifest target %q", m.Targets[i].EntryID)
+			}
+			targetSeen[m.Targets[i].EntryID] = true
+			if !seen[m.Targets[i].EntryID] {
+				seen[m.Targets[i].EntryID] = true
+				entryIDs = append(entryIDs, m.Targets[i].EntryID)
+			}
+		}
+	} else {
+		m.Targets = make([]ForgetTarget, 0, len(entryIDs))
+		for _, id := range entryIDs {
+			m.Targets = append(m.Targets, ForgetTarget{EntryID: id})
+		}
+	}
+	m.EntryIDs = entryIDs
 	return m, nil
 }

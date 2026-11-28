@@ -124,8 +124,16 @@ func TestImportLegacy(t *testing.T) {
 		t.Fatalf("summaries imported = %d, want 1", r.SummariesImported)
 	}
 	pending, _ := s.List(context.Background(), SearchOptions{Status: StatusPending, Limit: 10})
-	if len(pending) != 1 {
-		t.Fatalf("pending summaries = %d, want 1", len(pending))
+	if len(pending) != 2 {
+		t.Fatalf("pending imported entries = %d, want 2", len(pending))
+	}
+	for _, entry := range pending {
+		if entry.Audience != "private" {
+			t.Fatalf("imported entry audience = %q, want private", entry.Audience)
+		}
+		if entry.DomainID != DomainLegacyUnassigned {
+			t.Fatalf("imported entry domain = %q, want legacy", entry.DomainID)
+		}
 	}
 }
 

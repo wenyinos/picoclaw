@@ -295,6 +295,10 @@ func (s *Store) forgetAtRevision(ctx context.Context, id string, dryRun bool, ex
 		return nil, err
 	}
 	manifest := ForgetTargetManifest{
+		Version: ForgetManifestVersionV2,
+		Targets: []ForgetTarget{{
+			EntryID: id, DomainID: domainID, ExpectedRevision: rowRevision,
+		}},
 		EntryIDs:         []string{id},
 		RelationshipKeys: relKeys,
 		CapsuleIDs:       clusters,
@@ -406,121 +410,6 @@ func (s *Store) relationshipKeysForEntryLocked(ctx context.Context, entryID, pre
 		out = append(out, key)
 	}
 	return out, nil
-}
-
-// ReplayForget re-applies forget obligations from the independent ledger after
-// an older database is restored. It acts only on the manifest's entry IDs and
-// domain, never on a database-wide content-hash scan.
-func (s *Store) ReplayForget(ctx context.Context) (int, error) {
-	if err := s.checkReady(); err != nil {
-		return 0, err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.ledger == nil {
-		return 0, fmt.Errorf("memstore: forget ledger unavailable")
-	}
-	intents, err := s.ledger.AllIntents(ctx)
-	if err != nil {
-		return 0, err
-	}
-	type replayIntent struct {
-		intent   ForgetIntent
-		manifest ForgetTargetManifest
-		clusters map[string][]string
-	}
-	replayable := make([]replayIntent, 0, len(intents))
-	for _, intent := range intents {
-		manifest, parseErr := ParseManifest(intent.TargetManifest)
-		if parseErr != nil || len(manifest.EntryIDs) == 0 {
-			continue
-		}
-		clusters := map[string][]string{}
-		for _, id := range manifest.EntryIDs {
-			cs, clusterErr := s.clusterIDsLocked(ctx, id)
-			if clusterErr != nil {
-				return 0, clusterErr
-			}
-			clusters[id] = cs
-		}
-		replayable = append(replayable, replayIntent{intent: intent, manifest: manifest, clusters: clusters})
-	}
-	if len(replayable) == 0 {
-		return 0, nil
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	now := time.Now().UnixMilli()
-	total := 0
-	appliedSeqs := make([]int64, 0, len(replayable))
-	for _, item := range replayable {
-		domainID := strings.TrimSpace(item.intent.DomainID)
-		if domainID == "" {
-			domainID = DomainLegacyUnassigned
-		}
-		affected := 0
-		for _, id := range item.manifest.EntryIDs {
-			if err := s.redactSummariesForEntryTx(ctx, tx, id, item.clusters[id], now); err != nil {
-				return total, err
-			}
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM supersedes WHERE entry_id=? OR superseded_id=?`, id, id); err != nil {
-				return total, err
-			}
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM relationship_state WHERE source_event_id=?`, "entry:"+id); err != nil {
-				return total, err
-			}
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM relationship_state_history WHERE source_event_id=?`, "entry:"+id); err != nil {
-				return total, err
-			}
-			res, err := tx.ExecContext(ctx,
-				`DELETE FROM entries WHERE id=? AND domain_id=?`, id, domainID)
-			if err != nil {
-				return total, err
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				affected += int(n)
-			}
-		}
-		if affected > 0 {
-			total += affected
-			if err := s.logOperation(ctx, tx, OperationLog{
-				Operation: "replay_forget", Reason: "ledger manifest replay",
-				AffectedCount: affected, CreatedAt: now,
-				RequestID: item.intent.RequestID, ReasonCode: "recovery",
-			}); err != nil {
-				return total, err
-			}
-		}
-		if err := enqueueCleanupJobTx(ctx, tx, item.intent.RequestID, MarshalManifest(item.manifest)); err != nil {
-			return total, err
-		}
-		appliedSeqs = append(appliedSeqs, item.intent.Seq)
-	}
-	if total > 0 {
-		if err := s.bumpRevision(ctx, tx); err != nil {
-			return total, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return total, err
-	}
-	revision := s.revision.Load()
-	for _, seq := range appliedSeqs {
-		if err := s.ledger.MarkApplied(ctx, seq, revision); err != nil {
-			return total, fmt.Errorf("memstore: mark replay applied: %w", err)
-		}
-	}
-	return total, nil
 }
 
 // ListOperations returns the governance log, newest first.
