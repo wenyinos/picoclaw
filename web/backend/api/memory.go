@@ -978,6 +978,9 @@ func (h *Handler) handleMemoryUpdateSettings(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// available_channels is computed by handleMemorySettings. Clients that
+	// round-trip the whole GET response must not trip strict decoding.
+	delete(patch, "available_channels")
 	baseRaw, err := json.Marshal(cfg.Memory)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

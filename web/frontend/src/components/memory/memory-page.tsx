@@ -1815,7 +1815,7 @@ function SettingsTab({
         onClick={() =>
           memoryApi
             .saveSettings(settings)
-            .then(() => onNotice("设置已保存"))
+            .then(() => onNotice("设置已保存；gateway 需 /reload 或重启后生效"))
             .catch((e: Error) => onError(e.message))
         }
       >

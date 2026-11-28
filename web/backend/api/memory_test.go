@@ -233,6 +233,22 @@ func TestMemoryAPI_RelationshipPersonaSettings(t *testing.T) {
 		t.Fatalf("partial settings update cleared unrelated fields: %+v", cfg.Memory)
 	}
 
+	// Dashboards used to post the whole GET response back; available_channels
+	// is server-computed and must be ignored, not rejected as an unknown field.
+	// Round-trip the exact GET payload to keep that contract honest.
+	rec = doJSON(t, mux, http.MethodGet, "/api/memory/settings", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings get = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	rec = doJSON(t, mux, http.MethodPut, "/api/memory/settings", json.RawMessage(rec.Body.Bytes()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings round-trip = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	data, _ = os.ReadFile(cfgPath)
+	if !bytes.Contains(data, []byte(`"budget_tokens": 900`)) {
+		t.Fatalf("settings round-trip changed budget: %s", data)
+	}
+
 	rec = doJSON(t, mux, http.MethodGet, "/api/memory/overview", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("overview status = %d", rec.Code)

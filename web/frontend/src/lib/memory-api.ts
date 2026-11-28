@@ -420,11 +420,15 @@ export const memoryApi = {
       }),
     }),
   settings: () => request<MemorySettings>("/api/memory/settings"),
-  saveSettings: (settings: MemorySettings) =>
-    request<MemorySettings>("/api/memory/settings", {
+  saveSettings: (settings: MemorySettings) => {
+    // available_channels is server-computed and read-only; never send it back.
+    const payload: MemorySettings = { ...settings }
+    delete payload.available_channels
+    return request<MemorySettings>("/api/memory/settings", {
       method: "PUT",
-      body: JSON.stringify(settings),
-    }),
+      body: JSON.stringify(payload),
+    })
+  },
   repairPreview: (filter: MemoryRepairFilter) =>
     request<MemoryRepairPreview>("/api/memory/repair/preview", {
       method: "POST",
