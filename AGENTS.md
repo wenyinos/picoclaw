@@ -2,7 +2,7 @@
 
 本文件是 PicoClaw 仓库的工程规范，供人和 AI 代理共同遵守。与全局 `~/.zcode/AGENTS.md` 同时生效；冲突时以更具体、更严格的本文件为准。
 
-**本次核查基线：0.7.26，代码提交 `17214345`，分支 `feat/memory-upgrade-wizard-0.7.26`；主库 Schema v4，0.7.26 新增「数据库修复」一次性升级向导，不改变主库版本。** 该基线用于说明实现状态，不是后续任务可以跳过源码核对的依据。
+**本次核查基线：0.7.26，代码提交 `ad3b710f`，分支 `fix/0.7.26-recovery-store`；主库 Schema v4，0.7.26 新增「数据库修复」一次性升级向导，不改变主库版本。** 该基线用于说明实现状态，不是后续任务可以跳过源码核对的依据。
 
 ## 0. 开始工作前
 
@@ -173,7 +173,7 @@ pnpm run format
 5. **备份/恢复必须保全独立账本及 HMAC 身份。** `forget-ledger.db` 当前与 `memory.db` 同目录、权限 0600，但主库 `VACUUM INTO` 不会包含它。恢复旧主库必须使用最新有效账本，不能拿旧账本覆盖最新墓碑；身份缺失/损坏时应故障关闭，不得静默换新身份。主库与账本没有共同原子事务，恢复后必须用 `ledger-verify` 核对身份并重放未完成的删除义务。
 6. **文档一致性。** 前端、API 文案、guides、迁移参考与发布说明中不得再出现“v1/v2 → v3”的现行迁移描述；修改迁移行为必须同步 `docs/reference/memory-schema-v4.md`（及 `.zh.md`）、`docs/guides/memory*.md`、`CHANGELOG.md` 与 `docs/releases/`。
 7. 迁移测试入口：`go test -tags 'goolm stdjson' ./pkg/memstore -count=1 -timeout=120s`；用例见 `migrate_test.go`（v3 库必须 pending、受保护读写拒绝、显式迁移后可用、缺对象需再次显式迁移）。维护入口的预检/备份例外不构成完整恢复保证，必须用 `ledger-verify`、`recovery-status` 和恢复演练核对。
-8. **0.7.26 一次性升级向导必须保持显式 owner 操作。** 入口是 `/memory` →「数据库修复」：只读预览 → `confirm=true` → 备份主库+账本 → Schema/默认域修复 → 历史 `cancelled/blocked/failed` cleanup 结案 → 重新计算恢复状态。不得在 `Open`/启动时自动执行。无法验证的历史任务只能标记为 `legacy_closed` 并记录 `legacy_cleanup_unverified` 审计，不能标记 `done` 或宣称副本已验证删除；报告必须保留 `residual_risk`。pending/running cleanup、pending/blocked ledger intent、不支持/未来 Schema 和账本不可用时必须拒绝一次性完成，不能顺带结案。
+8. **0.7.26 一次性升级向导必须保持显式 owner 操作。** 入口是 `/memory` →「数据库修复」：只读预览 → `confirm=true` → 备份主库+账本 → Schema/默认域修复 → 历史 `cancelled/blocked/failed` cleanup 结案 → 重新计算恢复状态 → 返回 `restart_required=true`。不得在 `Open`/启动时自动执行。无法验证的历史任务只能标记为 `legacy_closed` 并记录 `legacy_cleanup_unverified` 审计，不能标记 `done` 或宣称副本已验证删除；报告必须保留 `residual_risk`。pending/running cleanup、pending/blocked ledger intent、不支持/未来 Schema 和账本不可用时必须拒绝一次性完成，不能顺带结案。数据库 ready 不等于运行中的 gateway 已重新加载；页面和文档必须提示重启，且 `runRecoveryPreflight` 不得关闭 `OpenForWorkspace` 返回的共享 Store。
 
 ### 4.3 写入、去重与治理
 

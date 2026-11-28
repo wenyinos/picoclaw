@@ -40,7 +40,7 @@ v1/v2 数据库必须先用 0.6.x 打开一次升级到 v3，才能被当前版�
 - 将历史 `cancelled/blocked/failed` cleanup 任务结案为 `legacy_closed`；
 - 记录 `legacy_cleanup_unverified` 操作审计，并重新计算恢复状态。
 
-`legacy_closed` 不是“删除已验证”，只是历史义务的显式结案，不会让未来的 blocked/pending cleanup 透传；报告保留 `residual_risk` 与备份路径。
+`legacy_closed` 不是“删除已验证”，只是历史义务的显式结案，不会让未来的 blocked/pending cleanup 透传；报告保留 `residual_risk` 与备份路径。向导返回 `restart_required=true`；完成后需重启 gateway/launcher，再以 `recovery-status` 确认运行进程已恢复。
 
 ## 迁移前置
 

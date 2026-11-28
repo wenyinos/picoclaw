@@ -125,7 +125,9 @@ FTS/LIKE 的 status/domain/realm/audience 过滤进入 SQL 后再应用候选上
 2. 强制备份主库与独立账本；
 3. 执行 v3 → v4（如需要）并恢复已知的 `legacy_unassigned` 默认域，不猜 owner；
 4. 把无法验证的历史 `cancelled/blocked/failed` cleanup 任务结案为 `legacy_closed`，记录 `legacy_cleanup_unverified` 审计；
-5. 重算恢复门禁。
+5. 重算恢复门禁，并返回 `restart_required`。
+
+向导完成后必须重启 gateway/launcher，页面才会提示长期记忆重新加载。**数据库 ready 不等于运行中的进程已恢复**；0.7.26 修复了启动预检错误关闭共享 Store 的问题，仍建议按提示重启后复查 `recovery-status`。
 
 `legacy_closed` 表示“不再阻塞长期记忆”，**不表示原始会话副本已经验证删除**。报告中会保留 `residual_risk` 和备份路径。向导不会结案 pending/running cleanup、pending/blocked ledger intent 或不支持的 Schema；这些情况仍需要人工处理。
 

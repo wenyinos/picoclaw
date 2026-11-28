@@ -14,6 +14,8 @@
 ### 前端与接口
 
 - `/memory` →「数据库修复」新增一次性向导卡片，展示步骤、阻塞原因、备份、legacy 结案数和残余风险。
+- **强制重启提示**：向导结果增加 `restart_required=true`，页面明确提示完成后重启 gateway/launcher；数据库 ready 不再被表述为运行进程已恢复。
+- **共享 Store 生命周期修复**：`runRecoveryPreflight` 不再关闭 `OpenForWorkspace` 返回的进程级缓存 Store，修复预检后 `sql: database is closed` 及重启仍无效的问题。
 - 新增 `GET /api/memory/upgrade/preview` 与 `POST /api/memory/upgrade/apply`；OpenAPI 同步。
 - 任务状态新增 `legacy_closed`，恢复状态显示历史结案数但不把它当作 blocker。
 
@@ -21,6 +23,7 @@
 
 - 修复 `pkg/tools` 的 URL 守卫测试：改为只调用 `guardCommand`，不再真实执行 `agent-browser open`、`curl`、`wget`、`git clone` 等外部命令。
 - 新增一次性升级预览、应用、默认域恢复、历史 cleanup 结案和未决 intent 拒绝结案的测试。
+- 新增恢复预检保持共享 Store 打开的回归测试，覆盖“CLI ready 但网关 database is closed”的场景。
 
 ## v0.7.25
 

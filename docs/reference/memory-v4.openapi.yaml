@@ -623,6 +623,7 @@ components:
         closed_job_ids: {type: array, items: {type: string}}
         residual_risk: {type: boolean}
         residual_message: {type: string}
+        restart_required: {type: boolean}
         ready: {type: boolean}
         recovery: {$ref: "#/components/schemas/RecoveryStatus"}
     Job:

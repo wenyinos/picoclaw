@@ -42,7 +42,7 @@ The main Schema remains v4; no table or version is added. `/memory` → “Datab
 - terminal closure of historical `cancelled/blocked/failed` cleanup jobs as `legacy_closed`;
 - a `legacy_cleanup_unverified` operation audit and a recomputed recovery status.
 
-`legacy_closed` does not mean “verified deletion”; it explicitly retires a historical obligation so it no longer blocks memory. Future blocked/pending cleanup is not bypassed, and the report retains `residual_risk` and the backup path.
+`legacy_closed` does not mean “verified deletion”; it explicitly retires a historical obligation so it no longer blocks memory. Future blocked/pending cleanup is not bypassed, and the report retains `residual_risk` and the backup path. The wizard returns `restart_required=true`; restart the gateway/launcher and recheck `recovery-status` afterward.
 
 ## Preconditions
 

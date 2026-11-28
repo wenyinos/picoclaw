@@ -123,7 +123,9 @@ The wizard:
 2. takes a mandatory backup of the main database and independent ledger;
 3. applies v3 → v4 when needed and restores the known `legacy_unassigned` default domain without guessing an owner;
 4. closes unverifiable historical `cancelled/blocked/failed` cleanup jobs as `legacy_closed` with a `legacy_cleanup_unverified` audit record;
-5. recomputes the recovery gate.
+5. recomputes the recovery gate and returns `restart_required`.
+
+Restart the gateway/launcher after the wizard so the running process reloads memory. **Database readiness does not mean the active process has recovered**; 0.7.26 fixes the startup preflight that closed the shared Store, but operators should still restart as prompted and recheck `recovery-status`.
 
 `legacy_closed` means “no longer blocks long-term memory”; it does **not** mean the source copies were verified deleted. The report keeps `residual_risk` and the backup path. The wizard refuses to close pending/running cleanup, pending/blocked ledger intents, or unsupported Schema states; those still require manual handling.
 
