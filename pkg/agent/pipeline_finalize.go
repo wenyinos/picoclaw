@@ -4,10 +4,12 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
+	"github.com/sipeed/picoclaw/pkg/memstore"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -93,8 +95,18 @@ func (p *Pipeline) Finalize(
 	// Async follow-ups carry session-derived tool output without trusted
 	// domain/source provenance, so they are never auto-extracted.
 	if shouldAutoExtractMemory(ts) {
-		p.al.extractMemoryAsync(ts.agent.Workspace, p.Cfg.Memory, ts.userMessage, finalContent,
-			ts.sessionKey, time.Now())
+		nativeMessageID := strings.TrimSpace(ts.opts.Dispatch.MessageID())
+		if nativeMessageID == "" {
+			nativeMessageID = ts.turnID
+		}
+		originID := memstore.BuildOriginEventID(
+			ts.channel, ts.chatID, ts.sessionKey, nativeMessageID, "user")
+		turnAt := time.Now()
+		p.al.extractMemoryAsync(ts.agent.Workspace, p.Cfg.Memory, memstore.ExtractSource{
+			EventID: originID, OriginRevision: 1, Backend: "jsonl",
+			Locator: ts.sessionKey, SessionKey: ts.sessionKey, MessageID: nativeMessageID,
+			Role: "user", EventAt: turnAt.UnixMilli(), DomainID: memstore.DomainLegacyUnassigned,
+		}, ts.userMessage, finalContent, turnAt)
 	}
 
 	// If streaming never became visible, keep the legacy Pico interim publish path

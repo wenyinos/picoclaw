@@ -58,7 +58,8 @@ func shouldAutoExtractMemory(ts *turnState) bool {
 func (al *AgentLoop) extractMemoryAsync(
 	workspace string,
 	cfg config.MemoryConfig,
-	userText, assistantText, sessionKey string,
+	source memstore.ExtractSource,
+	userText, assistantText string,
 	turnAt time.Time,
 ) {
 	if !cfg.Enabled || !cfg.AutoExtract || strings.TrimSpace(userText) == "" {
@@ -84,7 +85,8 @@ func (al *AgentLoop) extractMemoryAsync(
 			})
 			return
 		}
-		results, err := store.ExtractTurnAt(ctx, userText, assistantText, sessionKey, turnAt, cfg.ReviewRequired)
+		results, err := store.ExtractTurnWithSource(
+			ctx, source, userText, assistantText, turnAt, cfg.ReviewRequired)
 		if err != nil {
 			logger.DebugCF("memory", "extraction failed", map[string]any{"error": err.Error()})
 			return
@@ -92,7 +94,7 @@ func (al *AgentLoop) extractMemoryAsync(
 		if len(results) > 0 {
 			logger.InfoCF("memory", "memories extracted", map[string]any{
 				"count":   len(results),
-				"session": sessionKey,
+				"session": source.SessionKey,
 			})
 		}
 	}()

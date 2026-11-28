@@ -1078,11 +1078,63 @@ func (s *Store) RepairPreviewData(ctx context.Context) (map[string]int, error) {
 	return out, nil
 }
 
+// repairMissingDefaultDomain restores only the known default domain row after
+// an explicit backup. It never assigns an owner, guesses another domain or
+// creates business tables.
+func (s *Store) repairMissingDefaultDomain(ctx context.Context) error {
+	var tableCount int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_domains'`).
+		Scan(&tableCount); err != nil {
+		return err
+	}
+	if tableCount == 0 {
+		return nil // migrateSchema creates the table and its default row.
+	}
+	var domainCount int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memory_domains WHERE domain_id=?`,
+		DomainLegacyUnassigned).Scan(&domainCount); err != nil {
+		return err
+	}
+	if domainCount > 0 {
+		return nil
+	}
+	backup, err := s.backupWithRotation(ctx, "default-domain")
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := s.now()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO memory_domains
+		 (domain_id,owner_principal_id,scope_key,status,policy_epoch,created_at,updated_at)
+		 VALUES(?,'','','active',1,?,?)`,
+		DomainLegacyUnassigned, now, now); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO meta(key,value) VALUES('last_migration_backup',?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, backup); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // RepairData re-runs the idempotent v4 segment: it heals missing columns,
 // tables, indexes and the FTS projection without deleting data.
 func (s *Store) RepairData(ctx context.Context) (MigrationReport, error) {
 	previous := s.schemaVersionLocked(ctx)
 	report := MigrationReport{PreviousSchemaVersion: previous}
+	if err := s.repairMissingDefaultDomain(ctx); err != nil {
+		return MigrationReport{}, err
+	}
 	if err := s.migrateSchema(ctx); err != nil {
 		return MigrationReport{}, err
 	}

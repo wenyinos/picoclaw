@@ -91,6 +91,50 @@ func TestMemoryAPI_ImportIsCLIOnly(t *testing.T) {
 	}
 }
 
+func TestMemoryAPI_OriginRetractionRequiresConfirmation(t *testing.T) {
+	h, _ := newMemoryTestHandler(t)
+	store, _, err := h.memoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	eventID := memstore.BuildOriginEventID("pico", "api-origin", "msg-1", "user")
+	if err := store.RecordOriginEvent(ctx, memstore.OriginEvent{
+		EventID: eventID, SourceBackend: "jsonl", SessionKey: "api-origin",
+		MessageID: "msg-1", Role: "user", Available: true,
+		DomainID: memstore.DomainLegacyUnassigned,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := store.Add(ctx, memstore.AddInput{
+		Text: "api origin retraction target", Layer: memstore.LayerProfile,
+		SessionKey: "api-origin", SourceType: memstore.SourceExplicit,
+		EvidenceText: "api origin retraction target", OriginEventID: eventID,
+		OriginRevision: 1, DomainID: memstore.DomainLegacyUnassigned,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	h.registerMemoryRoutes(mux)
+	path := "/api/memory/origins/" + eventID + "/unavailable"
+	rec := doJSON(t, mux, http.MethodPost, path, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed retraction status = %d", rec.Code)
+	}
+	rec = doJSON(t, mux, http.MethodPost, path, map[string]any{"confirm": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retraction status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	reloaded, err := store.Get(ctx, entry.Entry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.EvidenceStatus != "unsupported" {
+		t.Fatalf("evidence status = %q, want unsupported", reloaded.EvidenceStatus)
+	}
+}
+
 func TestMemoryAPI_RecoveryAndRequeueBlockedCleanup(t *testing.T) {
 	h, _ := newMemoryTestHandler(t)
 	store, _, err := h.memoryStore()

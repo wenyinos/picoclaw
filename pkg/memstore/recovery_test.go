@@ -89,6 +89,47 @@ func TestRecoveryBlockedByMissingDefaultDomain(t *testing.T) {
 	}
 }
 
+func TestRepairDataRestoresOnlyMissingDefaultDomain(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM memory_domains WHERE domain_id=?`, DomainLegacyUnassigned); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO memory_domains(domain_id,owner_principal_id,scope_key,status,policy_epoch,created_at,updated_at)
+		 VALUES('kept_domain','owner-kept','scope','active',7,1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RepairData(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var owner string
+	var epoch int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT owner_principal_id,policy_epoch FROM memory_domains WHERE domain_id=?`,
+		DomainLegacyUnassigned).Scan(&owner, &epoch); err != nil {
+		t.Fatal(err)
+	}
+	if owner != "" || epoch != 1 {
+		t.Fatalf("repaired default domain owner/epoch = %q/%d", owner, epoch)
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT owner_principal_id FROM memory_domains WHERE domain_id='kept_domain'`).Scan(&owner); err != nil {
+		t.Fatal(err)
+	}
+	if owner != "owner-kept" {
+		t.Fatalf("unrelated domain was modified: %q", owner)
+	}
+	status, err := s.RecoveryStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.DomainRegistryOK {
+		t.Fatalf("domain registry still unhealthy: %+v", status)
+	}
+}
+
 func TestRequeueBlockedCleanupCreatesSuccessor(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

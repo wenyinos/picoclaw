@@ -108,6 +108,18 @@ func (svc *MemoryService) Add(ctx context.Context, mc MemoryContext, in AddInput
 	return svc.store.Add(ctx, in)
 }
 
+// RecordOriginEvent lets a trusted host tool record the source unit before a
+// model-driven memory write. It enforces the same recovery and shared-chat
+// gates as the write it supports.
+func (svc *MemoryService) RecordOriginEvent(ctx context.Context, mc MemoryContext, event OriginEvent) error {
+	mc, err := svc.authorizeWrite(ctx, mc, "")
+	if err != nil {
+		return err
+	}
+	event.DomainID = mc.DomainID
+	return svc.store.RecordOriginEvent(svc.auditContext(ctx, mc), event)
+}
+
 // Search applies the visibility predicate.
 func (svc *MemoryService) Search(ctx context.Context, mc MemoryContext, opts SearchOptions) ([]Entry, error) {
 	mc, err := svc.authorizeRead(ctx, mc)
@@ -236,6 +248,44 @@ func (svc *MemoryService) SetStatus(ctx context.Context, mc MemoryContext, id, s
 		return err
 	}
 	return svc.store.SetStatus(svc.auditContext(ctx, mc), id, status)
+}
+
+// ResolveReview applies an owner review decision through the governed path.
+func (svc *MemoryService) ResolveReview(ctx context.Context, mc MemoryContext, id, action, targetID string) error {
+	if err := requireOwner(mc); err != nil {
+		return err
+	}
+	mc, err := svc.authorizeWrite(ctx, mc, "")
+	if err != nil {
+		return err
+	}
+	if err := svc.requireTarget(ctx, mc, id); err != nil {
+		return err
+	}
+	if strings.TrimSpace(targetID) != "" {
+		if err := svc.requireTarget(ctx, mc, targetID); err != nil {
+			return err
+		}
+	}
+	return svc.store.ResolveReview(svc.auditContext(ctx, mc), id, action, targetID)
+}
+
+// UpsertPersona creates a persona version through the owner-only governed path.
+func (svc *MemoryService) UpsertPersona(ctx context.Context, mc MemoryContext,
+	id, name, content string, activate bool, realm, audience, scope string,
+) (*Persona, error) {
+	if err := requireOwner(mc); err != nil {
+		return nil, err
+	}
+	if SensitivityForText(content) == SensitivitySecret {
+		return nil, fmt.Errorf("memstore: credentials and secrets are never stored in personas")
+	}
+	mc, err := svc.authorizeWrite(ctx, mc, "")
+	if err != nil {
+		return nil, err
+	}
+	return svc.store.UpsertPersonaScoped(svc.auditContext(ctx, mc),
+		id, name, content, activate, realm, audience, scope)
 }
 
 // SetRelationshipState updates one derived relationship attribute. It is a

@@ -303,6 +303,9 @@ func (s *Store) UpsertPersonaScoped(
 	if trimSpace(content) == "" {
 		return nil, fmt.Errorf("memstore: empty persona content")
 	}
+	if SensitivityForText(content) == SensitivitySecret {
+		return nil, fmt.Errorf("memstore: credentials and secrets are never stored in personas")
+	}
 	realm = normalizeRealm(realm)
 	audience = normalizePersonaAudience(audience)
 	scope = trimSpace(scope)
@@ -334,6 +337,13 @@ func (s *Store) UpsertPersonaScoped(
 		 VALUES(?,?,?,?,?,?,?,?,?)`,
 		id, trimSpace(name), version, trimSpace(content), boolInt(activate),
 		realm, audience, scope, now); err != nil {
+		return nil, err
+	}
+	if err := s.logOperation(ctx, tx, OperationLog{
+		Operation: "persona_upsert", TargetEntryID: "persona:" + id,
+		Reason: "owner persona version", AffectedCount: 1, CreatedAt: now,
+		ReasonCode: "persona_version",
+	}); err != nil {
 		return nil, err
 	}
 	if err := s.bumpRevision(ctx, tx); err != nil {

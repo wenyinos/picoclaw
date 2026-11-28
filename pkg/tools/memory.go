@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/memstore"
 	toolshared "github.com/sipeed/picoclaw/pkg/tools/shared"
@@ -162,6 +163,20 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		ReviewRequired:           t.reviewRequired,
 		PrivateChannelExclusions: append([]string(nil), t.privateExclusions...),
 	})
+	recordOrigin := func(action, text string) (string, error) {
+		nativeID := toolshared.ToolMessageID(ctx)
+		originID := memstore.BuildOriginEventID(
+			mc.Channel, mc.SessionKey, nativeID, "memory_tool", action, text)
+		if err := svc.RecordOriginEvent(ctx, mc, memstore.OriginEvent{
+			EventID: originID, OriginRevision: 1, SourceBackend: "jsonl",
+			SourceLocator: mc.SessionKey, SessionKey: mc.SessionKey,
+			MessageID: nativeID, Role: "assistant", EventAt: time.Now().UnixMilli(),
+			Available: true, DomainID: mc.DomainID,
+		}); err != nil {
+			return "", err
+		}
+		return originID, nil
+	}
 
 	switch action {
 	case "add":
@@ -185,12 +200,17 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		supersedesID, _ := args["supersedes_id"].(string)
 		emotionalWeight, _ := args["emotional_weight"].(float64)
 		valence, _ := args["valence"].(float64)
+		originID, err := recordOrigin("add", text)
+		if err != nil {
+			return ErrorResult(fmt.Sprintf("memory source unavailable: %v", err))
+		}
 		res, err := svc.Add(ctx, mc, memstore.AddInput{
 			Text: text, Realm: realm, Layer: layer, Importance: importance,
 			Subject: subject, Predicate: predicate, Facet: facet, Value: value,
 			SupersedesID: supersedesID, EmotionalWeight: emotionalWeight, Valence: valence,
 			Audience: "private", SourceType: memstore.SourceInferred, EvidenceText: text,
 			SessionKey: mc.SessionKey, EvidenceRootType: "jsonl.tool_text",
+			OriginEventID: originID, OriginRevision: 1,
 			// Model-driven writes stay in the isolated legacy partition and
 			// the classifier can only raise protection, never lower it.
 			DomainID:    memstore.DomainLegacyUnassigned,
@@ -278,10 +298,15 @@ func (t *MemoryTool) Execute(ctx context.Context, args map[string]any) *ToolResu
 		predicate, _ := args["predicate"].(string)
 		facet, _ := args["facet"].(string)
 		value, _ := args["value"].(string)
+		originID, err := recordOrigin("correct", text)
+		if err != nil {
+			return ErrorResult(fmt.Sprintf("memory source unavailable: %v", err))
+		}
 		res, err := svc.Correct(ctx, mc, id, memstore.AddInput{
 			Text: text, Realm: realm, Layer: layer, Predicate: predicate, Facet: facet,
 			Value: value, SourceType: memstore.SourceInferred, EvidenceText: text,
 			SessionKey: mc.SessionKey, EvidenceRootType: "jsonl.tool_text",
+			OriginEventID: originID, OriginRevision: 1,
 		})
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("memory correct failed: %v", err))

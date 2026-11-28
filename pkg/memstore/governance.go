@@ -187,6 +187,9 @@ func (s *Store) Correct(ctx context.Context, id string, in AddInput) (*AddResult
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := s.validateOriginTx(ctx, tx, in); err != nil {
+		return nil, err
+	}
 	norm := Normalize(in.Text)
 	blocked, err := s.forgottenTx(ctx, tx, ContentHash(norm), in.Text)
 	if err != nil {
@@ -294,6 +297,10 @@ func (s *Store) forgetAtRevision(ctx context.Context, id string, dryRun bool, ex
 	if err != nil {
 		return nil, err
 	}
+	originEventIDs, err := s.originEventIDsLocked(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	manifest := ForgetTargetManifest{
 		Version: ForgetManifestVersionV2,
 		Targets: []ForgetTarget{{
@@ -302,6 +309,7 @@ func (s *Store) forgetAtRevision(ctx context.Context, id string, dryRun bool, ex
 		EntryIDs:         []string{id},
 		RelationshipKeys: relKeys,
 		CapsuleIDs:       clusters,
+		OriginEventIDs:   originEventIDs,
 		Locators:         locators,
 	}
 	digest, keyID, hashVersion := s.ledger.Digest(text)

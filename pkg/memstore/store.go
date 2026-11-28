@@ -586,6 +586,34 @@ func (s *Store) forgottenTx(ctx context.Context, tx *sql.Tx, hash, text string) 
 	return false, nil
 }
 
+func (s *Store) validateOriginTx(ctx context.Context, tx *sql.Tx, in AddInput) error {
+	eventID := strings.TrimSpace(in.OriginEventID)
+	if eventID == "" {
+		return nil
+	}
+	var available int
+	var domainID string
+	var revision int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT available,domain_id,origin_revision FROM memory_origin_events WHERE event_id=?`,
+		eventID).Scan(&available, &domainID, &revision); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("memstore: origin event %q was not recorded by the host", eventID)
+		}
+		return err
+	}
+	if available != 1 {
+		return fmt.Errorf("memstore: origin event %q is unavailable", eventID)
+	}
+	if domainID != in.DomainID {
+		return fmt.Errorf("memstore: origin event domain %q does not match write domain %q", domainID, in.DomainID)
+	}
+	if in.OriginRevision > 0 && in.OriginRevision != revision {
+		return fmt.Errorf("memstore: origin event revision %d does not match recorded %d", in.OriginRevision, revision)
+	}
+	return nil
+}
+
 func (s *Store) prepareEvidenceRoot(in *AddInput) error {
 	if strings.TrimSpace(in.EvidenceRoot) != "" {
 		if _, ok := parseEvidenceRoot(in.EvidenceRoot); !ok {
@@ -641,6 +669,9 @@ func (s *Store) Add(ctx context.Context, in AddInput) (*AddResult, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := s.validateOriginTx(ctx, tx, in); err != nil {
+		return nil, err
+	}
 	// 0. forget tombstone: a forgotten sentence must not come back just because
 	// the next turn extracts the same words again. The independent ledger is
 	// checked too, so a restored backup cannot re-learn it either.
@@ -1321,12 +1352,16 @@ func (s *Store) Update(ctx context.Context, id string, in AddInput) (*Entry, err
 	return s.Get(ctx, id)
 }
 
-// SetStatus changes an entry's lifecycle status.
+// SetStatus changes an entry's lifecycle status through an audited transition.
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 	if err := s.checkReady(); err != nil {
 		return err
 	}
-
+	switch status {
+	case StatusActive, StatusPending, StatusArchived, StatusSuperseded:
+	default:
+		return fmt.Errorf("memstore: unsupported entry status %q", status)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1334,8 +1369,10 @@ func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	now := s.now()
 	res, err := tx.ExecContext(ctx,
-		`UPDATE entries SET status=?, updated_at=? WHERE id=?`, status, time.Now().UnixMilli(), id)
+		`UPDATE entries SET status=?, row_revision=row_revision+1, updated_at=? WHERE id=?`,
+		status, now, id)
 	if err != nil {
 		return err
 	}
@@ -1343,6 +1380,12 @@ func (s *Store) SetStatus(ctx context.Context, id, status string) error {
 		return fmt.Errorf("memstore: entry %q not found", id)
 	}
 	if err := s.invalidateSummariesForEntryTx(ctx, tx, id, "status"); err != nil {
+		return err
+	}
+	if err := s.logOperation(ctx, tx, OperationLog{
+		Operation: "status", TargetEntryID: id, Reason: "lifecycle status update",
+		AffectedCount: 1, CreatedAt: now, ReasonCode: "status_" + status,
+	}); err != nil {
 		return err
 	}
 	if err := s.bumpRevision(ctx, tx); err != nil {

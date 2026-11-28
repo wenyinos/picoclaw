@@ -128,6 +128,28 @@ type MessageCleaner interface {
 	CleanLocators(ctx context.Context, locators []SourceLocator) (CleanupOutcome, error)
 }
 
+// originEventIDsLocked returns the distinct source events for one entry. It is
+// stored in the ledger manifest so a restored database can rebuild cleanup
+// targets without the deleted sources rows.
+func (s *Store) originEventIDsLocked(ctx context.Context, entryID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT origin_event_id FROM sources
+		 WHERE entry_id=? AND origin_event_id<>'' ORDER BY origin_event_id`, entryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // sourceLocatorsLocked collects locating hints for an entry's sources before
 // the rows are deleted. The evidence digest uses the active ledger key.
 func (s *Store) sourceLocatorsLocked(ctx context.Context, entryID string) ([]SourceLocator, error) {

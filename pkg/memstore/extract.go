@@ -2,6 +2,7 @@ package memstore
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -69,9 +70,75 @@ func (s *Store) ExtractTurn(
 // Branch order is fixed: mood → role-play guard → imperative remember →
 // names → preferences → birthdays → dated events. Reordering changes results
 // (for example, running names first would capture "叫我" inside dialogue).
+type ExtractSource struct {
+	EventID        string
+	OriginRevision int64
+	Backend        string
+	Locator        string
+	SessionKey     string
+	MessageID      string
+	Role           string
+	EventAt        int64
+	DomainID       string
+}
+
+// ExtractTurnWithSource records the host-derived origin event before running
+// conservative extraction. A failure to record the source fails closed instead
+// of writing a fact with unverifiable provenance.
+func (s *Store) ExtractTurnWithSource(
+	ctx context.Context,
+	source ExtractSource,
+	userText, assistantText string,
+	turnAt time.Time,
+	reviewRequired bool,
+) ([]AddResult, error) {
+	if strings.TrimSpace(source.EventID) == "" {
+		return nil, fmt.Errorf("memstore: extraction source needs an origin event")
+	}
+	if strings.TrimSpace(source.SessionKey) == "" {
+		return nil, fmt.Errorf("memstore: extraction source needs a session key")
+	}
+	if source.OriginRevision <= 0 {
+		source.OriginRevision = 1
+	}
+	if source.Backend == "" {
+		source.Backend = "jsonl"
+	}
+	if source.Role == "" {
+		source.Role = "user"
+	}
+	if source.EventAt <= 0 {
+		source.EventAt = turnAt.UnixMilli()
+	}
+	if source.DomainID == "" {
+		source.DomainID = DomainLegacyUnassigned
+	}
+	if err := s.RecordOriginEvent(ctx, OriginEvent{
+		EventID: source.EventID, OriginRevision: source.OriginRevision,
+		SourceBackend: source.Backend, SourceLocator: source.Locator,
+		SessionKey: source.SessionKey, MessageID: source.MessageID, Role: source.Role,
+		Available: true, EventAt: source.EventAt, DomainID: source.DomainID,
+	}); err != nil {
+		return nil, err
+	}
+	return s.extractTurnWithSource(ctx, source, userText, assistantText, turnAt, reviewRequired)
+}
+
 func (s *Store) ExtractTurnAt(
 	ctx context.Context,
 	userText, assistantText, sessionKey string,
+	turnAt time.Time,
+	reviewRequired bool,
+) ([]AddResult, error) {
+	// Compatibility path for maintenance/tests. Production auto-extraction uses
+	// ExtractTurnWithSource so every source has a stable host-generated origin.
+	return s.extractTurnWithSource(ctx, ExtractSource{SessionKey: sessionKey}, userText, assistantText, turnAt, reviewRequired)
+}
+
+func (s *Store) extractTurnWithSource(
+	ctx context.Context,
+	source ExtractSource,
+	userText, assistantText string,
 	turnAt time.Time,
 	reviewRequired bool,
 ) ([]AddResult, error) {
@@ -87,7 +154,12 @@ func (s *Store) ExtractTurnAt(
 		if in.SourceType == "" {
 			in.SourceType = SourceInferred
 		}
-		in.SessionKey = sessionKey
+		in.SessionKey = source.SessionKey
+		in.OriginEventID = source.EventID
+		in.OriginRevision = source.OriginRevision
+		if source.MessageID != "" {
+			in.SourceID = source.MessageID
+		}
 		in.EvidenceRootType = "jsonl.content"
 		in.Audience = "private"
 		if in.Confidence == 0 {

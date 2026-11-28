@@ -41,6 +41,7 @@ func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/memory/jobs", h.handleMemoryJobs)
 	mux.HandleFunc("POST /api/memory/jobs/{id}/requeue", h.handleMemoryRequeueJob)
 	mux.HandleFunc("GET /api/memory/recovery", h.handleMemoryRecovery)
+	mux.HandleFunc("POST /api/memory/origins/{id}/unavailable", h.handleMemoryOriginUnavailable)
 	mux.HandleFunc("GET /api/memory/plans", h.handleMemoryPlans)
 	mux.HandleFunc("POST /api/memory/plans/{id}/approve", h.handleMemoryApprovePlan)
 	mux.HandleFunc("GET /api/memory/review", h.handleMemoryReview)
@@ -691,6 +692,31 @@ func (h *Handler) handleMemoryRecovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
+func (h *Handler) handleMemoryOriginUnavailable(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	body, err := decodeBody[struct {
+		Confirm bool `json:"confirm"`
+	}](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !body.Confirm {
+		writeError(w, http.StatusBadRequest, "marking a source unavailable requires confirm=true")
+		return
+	}
+	ctx := memstore.WithAudit(r.Context(), "dashboard@owner", "")
+	if err := store.MarkOriginUnavailable(ctx, r.PathValue("id")); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (h *Handler) handleMemoryPlans(w http.ResponseWriter, r *http.Request) {
 	store, cfg, err := h.memoryStore()
 	if err != nil {
@@ -778,7 +804,7 @@ func (h *Handler) handleMemoryReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleMemoryResolveReview(w http.ResponseWriter, r *http.Request) {
-	store, _, err := h.memoryStore()
+	store, cfg, err := h.memoryStore()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -791,7 +817,9 @@ func (h *Handler) handleMemoryResolveReview(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := store.ResolveReview(r.Context(), r.PathValue("id"), body.Action, body.TargetID); err != nil {
+	svc := memstore.NewMemoryService(store, memoryConfigFrom(cfg))
+	if err := svc.ResolveReview(r.Context(), dashboardMemoryContext(),
+		r.PathValue("id"), body.Action, body.TargetID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -859,7 +887,7 @@ func (h *Handler) handleMemoryPersona(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleMemoryUpdatePersona(w http.ResponseWriter, r *http.Request) {
-	store, _, err := h.memoryStore()
+	store, cfg, err := h.memoryStore()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -880,8 +908,9 @@ func (h *Handler) handleMemoryUpdatePersona(w http.ResponseWriter, r *http.Reque
 	if body.ID == "" {
 		body.ID = "default"
 	}
-	p, err := store.UpsertPersonaScoped(
-		r.Context(), body.ID, body.Name, body.Content, body.Activate,
+	svc := memstore.NewMemoryService(store, memoryConfigFrom(cfg))
+	p, err := svc.UpsertPersona(r.Context(), dashboardMemoryContext(),
+		body.ID, body.Name, body.Content, body.Activate,
 		body.Realm, body.Audience, body.Scope,
 	)
 	if err != nil {
