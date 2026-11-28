@@ -97,6 +97,7 @@ type Manager struct {
 	httpServer                *http.Server
 	httpListeners             []net.Listener
 	mu                        sync.RWMutex
+	stopMu                    sync.Mutex
 	placeholders              sync.Map          // "channel:chatID" → placeholderID (string)
 	typingStops               sync.Map          // "channel:chatID" → func()
 	reactionUndos             sync.Map          // "channel:chatID" → reactionEntry
@@ -1376,30 +1377,39 @@ func (m *Manager) StartAll(ctx context.Context) error {
 }
 
 func (m *Manager) StopAll(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.stopMu.Lock()
+	defer m.stopMu.Unlock()
 
+	m.mu.Lock()
 	logger.InfoC("channels", "Stopping all channels")
 
-	// Shutdown shared HTTP server first
-	if m.httpServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		if err := m.httpServer.Shutdown(shutdownCtx); err != nil {
-			logger.ErrorCF("channels", "Shared HTTP server shutdown error", map[string]any{
-				"error": err.Error(),
-			})
-		}
-		m.httpServer = nil
-		m.httpListeners = nil
-	}
-
-	// Cancel dispatcher and wait for it to stop sending into worker queues.
+	// Shutdown shared HTTP server first. Detach it under the lock, then perform
+	// the potentially blocking shutdown without holding m.mu: outbound
+	// dispatchers need the read lock before they can observe cancellation.
+	httpServer := m.httpServer
+	m.httpServer = nil
+	m.httpListeners = nil
 	if m.dispatchTask != nil {
 		m.dispatchTask.cancel()
 		m.dispatchTask = nil
 	}
+	m.mu.Unlock()
+
+	if httpServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			logger.ErrorCF("channels", "Shared HTTP server shutdown error", map[string]any{
+				"error": err.Error(),
+			})
+		}
+	}
+
+	// Cancel dispatcher and wait for it to stop sending into worker queues.
 	m.dispatchers.Wait()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	// Close all worker queues and wait for them to drain
 	for _, w := range m.workers {
