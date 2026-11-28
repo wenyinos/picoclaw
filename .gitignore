@@ -77,3 +77,4 @@ docker/data
 
 # Local agent workspace data (memory logs, plans)
 .workbuddy/
+.security/
