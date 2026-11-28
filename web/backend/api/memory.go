@@ -649,7 +649,16 @@ func (h *Handler) handleMemoryJobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "stats": stats})
+	receipts := map[string]map[string]int{}
+	for _, job := range jobs {
+		if job.Kind != "forget_cleanup" {
+			continue
+		}
+		if summary, summaryErr := store.ReceiptSummaryForJob(r.Context(), job.JobID); summaryErr == nil {
+			receipts[job.JobID] = summary
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "stats": stats, "receipts": receipts})
 }
 
 func (h *Handler) handleMemoryRequeueJob(w http.ResponseWriter, r *http.Request) {

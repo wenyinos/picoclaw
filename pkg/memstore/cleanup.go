@@ -205,6 +205,22 @@ func enqueueCleanupJobTx(ctx context.Context, tx *sql.Tx, requestID, manifest st
 	return err
 }
 
+// enqueueReplayCleanupJobTx creates a fresh execution projection for an
+// explicit owner Replay. Unlike the normal outbox enqueue this must not be
+// ignored just because an older job with the same request ID is already done:
+// the owner may have restored a session copy after that job completed.
+func enqueueReplayCleanupJobTx(ctx context.Context, tx *sql.Tx, requestID, manifest string) error {
+	now := nowMillis()
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO memory_jobs
+		 (job_id,job_kind,input_fingerprint,generation,policy_revision,state,attempts,
+		  next_run_at,priority,payload,created_at,updated_at)
+		 VALUES(?,?,?,0,0,'pending',0,?,0,?,?,?)`,
+		"forget:"+requestID+":replay:"+randomUUID()[:8], "forget_cleanup",
+		requestID, now, manifest, now, now)
+	return err
+}
+
 func normalizeCleanupReceipts(locators []SourceLocator, produced []LocatorReceipt,
 	prior map[string]ForgetReceipt,
 ) ([]LocatorReceipt, int, int) {

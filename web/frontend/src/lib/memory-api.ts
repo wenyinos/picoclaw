@@ -474,9 +474,11 @@ export const memoryApi = {
       body: JSON.stringify({ status, evidence }),
     }),
   jobs: () =>
-    request<{ jobs: MemoryJob[]; stats: Record<string, number> }>(
-      "/api/memory/jobs",
-    ),
+    request<{
+      jobs: MemoryJob[]
+      stats: Record<string, number>
+      receipts: Record<string, Record<string, number>>
+    }>("/api/memory/jobs"),
   requeueJob: (id: string) =>
     request<MemoryJob>(`/api/memory/jobs/${id}/requeue`, {
       method: "POST",

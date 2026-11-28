@@ -529,7 +529,49 @@ type ForgetReceipt struct {
 	UpdatedAt  int64  `json:"updated_at"`
 }
 
-// ReceiptsForIntent returns all persisted locator receipts for one intent.
+// ReceiptsForRequest returns persisted locator receipts for a cleanup job's
+// request ID, across all replayed/successor attempts.
+func (l *ForgetLedger) ReceiptsForRequest(ctx context.Context, requestID string) ([]ForgetReceipt, error) {
+	rows, err := l.db.QueryContext(ctx,
+		`SELECT ledger_uuid,intent_seq,request_id,backend,locator_key,state,reason_code,attempts,updated_at
+		 FROM forget_receipts WHERE request_id=? ORDER BY backend,locator_key`, requestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ForgetReceipt{}
+	for rows.Next() {
+		var r ForgetReceipt
+		if err := rows.Scan(&r.LedgerUUID, &r.IntentSeq, &r.RequestID, &r.Backend,
+			&r.LocatorKey, &r.State, &r.ReasonCode, &r.Attempts, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ReceiptSummaryForJob returns receipt counts by state for the dashboard. It
+// never exposes locator keys or source text.
+func (s *Store) ReceiptSummaryForJob(ctx context.Context, jobID string) (map[string]int, error) {
+	if s.ledger == nil {
+		return nil, fmt.Errorf("memstore: forget ledger unavailable")
+	}
+	var requestID string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT input_fingerprint FROM memory_jobs WHERE job_id=?`, jobID).Scan(&requestID); err != nil {
+		return nil, err
+	}
+	receipts, err := s.ledger.ReceiptsForRequest(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int{}
+	for _, receipt := range receipts {
+		out[receipt.State]++
+	}
+	return out, nil
+}
 func (l *ForgetLedger) ReceiptsForIntent(ctx context.Context, seq int64) ([]ForgetReceipt, error) {
 	rows, err := l.db.QueryContext(ctx,
 		`SELECT ledger_uuid,intent_seq,request_id,backend,locator_key,state,reason_code,attempts,updated_at

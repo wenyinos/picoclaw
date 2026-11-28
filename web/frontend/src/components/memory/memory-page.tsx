@@ -143,6 +143,9 @@ function GovernanceTab({
   const [recovery, setRecovery] = useState<MemoryRecoveryStatus | null>(null)
   const [plans, setPlans] = useState<MemoryChangePlan[]>([])
   const [jobStats, setJobStats] = useState<Record<string, number>>({})
+  const [jobReceipts, setJobReceipts] = useState<
+    Record<string, Record<string, number>>
+  >({})
   const [jobs, setJobs] = useState<MemoryJob[]>([])
   const [domains, setDomains] = useState<MemoryDomain[]>([])
   const [commitments, setCommitments] = useState<MemoryCommitment[]>([])
@@ -166,6 +169,7 @@ function GovernanceTab({
     setPlans(p.plans)
     setJobs(j.jobs)
     setJobStats(j.stats)
+    setJobReceipts(j.receipts ?? {})
     setDomains(d.domains)
     setCommitments(c.commitments)
     setClusters(cl.clusters)
@@ -364,6 +368,15 @@ function GovernanceTab({
                   {job.job_id}
                   {job.last_error ? ` · ${job.last_error}` : ""}
                 </div>
+                {jobReceipts[job.job_id] && (
+                  <div className="text-muted-foreground mt-1 flex flex-wrap gap-2 text-xs">
+                    {Object.entries(jobReceipts[job.job_id]).map(([state, count]) => (
+                      <span key={state} className="rounded border px-1.5 py-0.5">
+                        {state}: {count}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {["blocked", "cancelled", "failed"].includes(job.state) && (
                   <Button
                     className="mt-2"

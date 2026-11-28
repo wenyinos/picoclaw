@@ -171,7 +171,7 @@ func (s *Store) ExecuteForgetReplay(ctx context.Context) (*ForgetReplayResult, e
 				return nil, err
 			}
 		}
-		if err := enqueueCleanupJobTx(ctx, tx, item.intent.RequestID,
+		if err := enqueueReplayCleanupJobTx(ctx, tx, item.intent.RequestID,
 			MarshalManifest(item.manifest)); err != nil {
 			return nil, err
 		}

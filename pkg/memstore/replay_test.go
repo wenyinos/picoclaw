@@ -165,6 +165,46 @@ func TestForgetReplayMultiTargetConflictIsAtomic(t *testing.T) {
 	}
 }
 
+func TestForgetReplayCreatesFreshCleanupProjection(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	added, err := s.Add(ctx, AddInput{
+		Text: "replay projection target", Layer: LayerProfile,
+		SessionKey: "projection-session", SourceType: SourceExplicit,
+		EvidenceText: "replay projection target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Forget(ctx, added.Entry.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RunCleanupJobs(ctx, &fakeCleaner{}, 5); err != nil {
+		t.Fatal(err)
+	}
+	done, err := s.ListJobs(ctx, JobDone, 10)
+	if err != nil || len(done) != 1 {
+		t.Fatalf("initial done jobs = %+v, err=%v", done, err)
+	}
+	if _, err := s.ExecuteForgetReplay(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.ListJobs(ctx, JobPending, 10)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("replay pending jobs = %+v, err=%v", pending, err)
+	}
+	if pending[0].JobID == done[0].JobID {
+		t.Fatal("replay reused a completed cleanup job")
+	}
+	if _, err := s.RunCleanupJobs(ctx, &fakeCleaner{}, 5); err != nil {
+		t.Fatal(err)
+	}
+	done, err = s.ListJobs(ctx, JobDone, 10)
+	if err != nil || len(done) != 2 {
+		t.Fatalf("final done jobs = %+v, err=%v", done, err)
+	}
+}
+
 func TestForgetReplayLegacyManifestRequiresDigestProof(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
