@@ -32,6 +32,26 @@ func TestRunForgetCleanupRunsWhenMemoryDisabled(t *testing.T) {
 	}
 }
 
+func TestRecoveryPreflightKeepsSharedStoreOpen(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{}
+	cfg.Agents.Defaults.Workspace = workspace
+	cfg.Memory.Enabled = true
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	defer al.Close()
+
+	store, err := memstore.OpenForWorkspace(workspace, memstore.Config{
+		Enabled: true, DBPath: "memory/memory.db",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	al.runRecoveryPreflight(context.Background())
+	if _, err := store.Overview(context.Background()); err != nil {
+		t.Fatalf("shared store was closed by recovery preflight: %v", err)
+	}
+}
+
 func TestRunForgetCleanupReconcilesApprovedPendingIntent(t *testing.T) {
 	workspace := t.TempDir()
 	dbPath := filepath.Join(workspace, "memory", "memory.db")

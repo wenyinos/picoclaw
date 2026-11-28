@@ -143,6 +143,7 @@ export interface MemoryUpgradeReport {
   closed_job_ids?: string[]
   residual_risk: boolean
   residual_message?: string
+  restart_required: boolean
   ready: boolean
   recovery: MemoryRecoveryStatus
 }

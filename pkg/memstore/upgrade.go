@@ -51,6 +51,7 @@ type UpgradeReport struct {
 	ClosedJobIDs          []string       `json:"closed_job_ids,omitempty"`
 	ResidualRisk          bool           `json:"residual_risk"`
 	ResidualMessage       string         `json:"residual_message,omitempty"`
+	RestartRequired       bool           `json:"restart_required"`
 	Ready                 bool           `json:"ready"`
 	Recovery              RecoveryStatus `json:"recovery"`
 }
@@ -175,6 +176,7 @@ func (s *Store) ApplyUpgrade(ctx context.Context) (UpgradeReport, error) {
 		Backup:                backup,
 		ClosedLegacyJobs:      len(closedIDs),
 		ClosedJobIDs:          closedIDs,
+		RestartRequired:       true,
 		Ready:                 recovery.Ready,
 		Recovery:              recovery,
 	}

@@ -1360,9 +1360,11 @@ function RepairTab({
       .then((r) => {
         setUpgradeReport(r)
         onNotice(
-          r.ready
-            ? `一次性升级完成；备份：${r.backup}`
-            : "升级已执行，但仍有未解决阻塞，请查看结果",
+          r.restart_required
+            ? `数据库升级完成；请重启 picoclaw gateway/launcher 后再启用长期记忆。备份：${r.backup}`
+            : r.ready
+              ? `一次性升级完成；备份：${r.backup}`
+              : "升级已执行，但仍有未解决阻塞，请查看结果",
         )
         loadOverview()
         loadUpgradePreview()
@@ -1499,6 +1501,12 @@ function RepairTab({
               {upgradeReport.closed_legacy_jobs}
             </div>
             <div className="mt-1 break-all">备份：{upgradeReport.backup}</div>
+            {upgradeReport.restart_required && (
+              <div className="mt-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-amber-700">
+                数据库已修复，但运行中的 gateway 仍持有旧的记忆运行时。请重启后重新检查：
+                <code className="ml-1">systemctl --user restart picoclaw picoclaw-launcher</code>
+              </div>
+            )}
             {upgradeReport.residual_risk && (
               <div className="mt-2 text-amber-700">
                 {upgradeReport.residual_message}

@@ -45,7 +45,8 @@ func TestApplyUpgradeCompletesLegacyDomainAndCleanupBlockers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !report.Ready || report.ClosedLegacyJobs != 1 || !report.ResidualRisk {
+	if !report.Ready || report.ClosedLegacyJobs != 1 || !report.ResidualRisk ||
+		!report.RestartRequired {
 		t.Fatalf("report = %+v", report)
 	}
 	if report.Backup == "" {

@@ -52,7 +52,8 @@ func (al *AgentLoop) runRecoveryPreflight(ctx context.Context) {
 		})
 		return
 	}
-	defer store.Close()
+	// OpenForWorkspace returns the process-wide cached Store. It is shared with
+	// the context builder and memory tools, so preflight must not close it.
 	preflightCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	status, err := store.RecoveryPreflight(preflightCtx)

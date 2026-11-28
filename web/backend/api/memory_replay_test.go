@@ -165,7 +165,7 @@ func TestMemoryAPI_OneTimeUpgradePreviewAndApply(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if !report.Ready || report.Backup == "" {
+	if !report.Ready || !report.RestartRequired || report.Backup == "" {
 		t.Fatalf("report = %+v", report)
 	}
 }
