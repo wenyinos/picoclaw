@@ -135,6 +135,41 @@ func TestMemoryAPI_OriginRetractionRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestMemoryAPI_OneTimeUpgradePreviewAndApply(t *testing.T) {
+	h, _ := newMemoryTestHandler(t)
+	mux := http.NewServeMux()
+	h.registerMemoryRoutes(mux)
+
+	rec := doJSON(t, mux, http.MethodGet, "/api/memory/upgrade/preview", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var preview memstore.UpgradePreview
+	if err := json.Unmarshal(rec.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if !preview.CanComplete {
+		t.Fatalf("preview = %+v", preview)
+	}
+
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/upgrade/apply", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed upgrade status = %d, want 400", rec.Code)
+	}
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/upgrade/apply",
+		map[string]any{"confirm": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upgrade status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var report memstore.UpgradeReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if !report.Ready || report.Backup == "" {
+		t.Fatalf("report = %+v", report)
+	}
+}
+
 func TestMemoryAPI_RecoveryAndRequeueBlockedCleanup(t *testing.T) {
 	h, _ := newMemoryTestHandler(t)
 	store, _, err := h.memoryStore()

@@ -20,6 +20,8 @@ import {
   type MemoryRepairTarget,
   type MemorySettings,
   type MemorySummaryVersion,
+  type MemoryUpgradePreview,
+  type MemoryUpgradeReport,
   type Persona,
   type RelationshipValue,
   memoryApi,
@@ -277,6 +279,7 @@ function GovernanceTab({
               <span>pending cleanup: {recovery.pending_cleanup}</span>
               <span>blocked cleanup: {recovery.blocked_cleanup}</span>
               <span>cancelled cleanup: {recovery.inert_cleanup}</span>
+              <span>legacy closed: {recovery.legacy_closed_cleanup}</span>
               <span>orphan entries: {recovery.orphan_entries}</span>
               <span>schema: {recovery.schema_ready ? "ok" : "blocked"}</span>
               <span>ledger: {recovery.ledger_ready ? "ok" : "blocked"}</span>
@@ -1310,6 +1313,11 @@ function RepairTab({
     layer: "procedural",
   })
   const [preview, setPreview] = useState<MemoryRepairPreview | null>(null)
+  const [upgradePreview, setUpgradePreview] =
+    useState<MemoryUpgradePreview | null>(null)
+  const [upgradeReport, setUpgradeReport] =
+    useState<MemoryUpgradeReport | null>(null)
+  const [upgrading, setUpgrading] = useState(false)
   const [result, setResult] = useState<{
     updated: number
     backup: string
@@ -1323,7 +1331,45 @@ function RepairTab({
       .catch((e: Error) => onError(e.message))
   }
 
-  useEffect(loadOverview, [])
+  const loadUpgradePreview = () => {
+    memoryApi
+      .upgradePreview()
+      .then(setUpgradePreview)
+      .catch((e: Error) => onError(e.message))
+  }
+
+  useEffect(() => {
+    loadOverview()
+    loadUpgradePreview()
+  }, [])
+
+  const applyUpgrade = () => {
+    if (!upgradePreview?.can_complete) return
+    const legacy = upgradePreview.legacy_cleanup_jobs?.length ?? 0
+    if (
+      !window.confirm(
+        `将一次性完成 Schema/默认域修复${legacy ? `，并把 ${legacy} 条无法验证的历史清理任务结案为 legacy_closed` : ""}。` +
+          "\n\n执行前会强制备份主库和账本。历史结案不等于已验证删除，副本可能仍存在。继续吗？",
+      )
+    ) {
+      return
+    }
+    setUpgrading(true)
+    memoryApi
+      .upgradeApply()
+      .then((r) => {
+        setUpgradeReport(r)
+        onNotice(
+          r.ready
+            ? `一次性升级完成；备份：${r.backup}`
+            : "升级已执行，但仍有未解决阻塞，请查看结果",
+        )
+        loadOverview()
+        loadUpgradePreview()
+      })
+      .catch((e: Error) => onError(e.message))
+      .finally(() => setUpgrading(false))
+  }
 
   const setFilterField = (key: keyof MemoryRepairFilter, value: string) => {
     setFilter({ ...filter, [key]: value })
@@ -1380,6 +1426,88 @@ function RepairTab({
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="rounded-lg border p-4">
+        <h2 className="text-sm font-semibold">一次性升级向导（0.7.26）</h2>
+        <p className="text-muted-foreground mt-1 text-sm">
+          用于从旧版恢复数据时一次完成 Schema、默认域和历史清理阻塞处理。执行前强制备份主库与账本；不会把无法验证的历史清理伪装成已删除。
+        </p>
+        {!upgradePreview ? (
+          <p className="text-muted-foreground mt-3 text-sm">检查中…</p>
+        ) : (
+          <>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className="rounded-md border px-2 py-1">
+                Schema {upgradePreview.from_schema_version} →{" "}
+                {upgradePreview.target_schema_version}
+              </span>
+              <span className="rounded-md border px-2 py-1">
+                默认域缺失：{upgradePreview.default_domain_missing ? "是" : "否"}
+              </span>
+              <span className="rounded-md border px-2 py-1">
+                orphan entries：{upgradePreview.orphan_entries}
+              </span>
+              <span className="rounded-md border px-2 py-1">
+                历史清理任务：
+                {upgradePreview.legacy_cleanup_jobs?.length ?? 0}
+              </span>
+              <span className="rounded-md border px-2 py-1">
+                ledger：{upgradePreview.ledger_ready ? "ok" : "blocked"}
+              </span>
+            </div>
+            <div className="mt-3 flex flex-col gap-1 text-sm">
+              {upgradePreview.steps.map((step, index) => (
+                <div key={step.code} className="flex gap-2">
+                  <span className="text-muted-foreground">{index + 1}.</span>
+                  <span>
+                    <strong>{step.title}</strong>
+                    <span className="text-muted-foreground"> — {step.detail}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            {upgradePreview.blocking_reasons?.length ? (
+              <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700">
+                仍有需要人工先解决的阻塞：
+                {upgradePreview.blocking_reasons.join(" · ")}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-emerald-600">
+                所有阻塞都在一次性向导可处理范围内。
+              </p>
+            )}
+            {(upgradePreview.legacy_cleanup_jobs?.length ?? 0) > 0 && (
+              <p className="mt-2 text-xs text-amber-700">
+                历史 cancelled/blocked/failed 清理任务将以{" "}
+                <code>legacy_closed</code> 结案：不阻塞长期记忆，但副本删除状态为
+                unverified，报告中会保留残余风险。
+              </p>
+            )}
+            <Button
+              className="mt-3"
+              disabled={!upgradePreview.can_complete || upgrading}
+              onClick={applyUpgrade}
+            >
+              {upgrading ? "执行中…" : "一次性完成升级"}
+            </Button>
+          </>
+        )}
+        {upgradeReport && (
+          <div className="mt-3 rounded-md border p-3 text-xs">
+            <div>
+              状态：{upgradeReport.ready ? "已就绪" : "仍有阻塞"} · Schema{" "}
+              {upgradeReport.schema_version} · legacy 结案{" "}
+              {upgradeReport.closed_legacy_jobs}
+            </div>
+            <div className="mt-1 break-all">备份：{upgradeReport.backup}</div>
+            {upgradeReport.residual_risk && (
+              <div className="mt-2 text-amber-700">
+                {upgradeReport.residual_message}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="rounded-lg border p-4">
         <h2 className="text-sm font-semibold">数据库修复与批量迁移</h2>
         <p className="text-muted-foreground mt-1 text-sm">

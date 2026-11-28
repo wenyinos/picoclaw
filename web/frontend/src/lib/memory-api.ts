@@ -101,9 +101,50 @@ export interface MemoryRecoveryStatus {
   inert_cleanup: number
   pending_cleanup: number
   running_cleanup: number
+  legacy_closed_cleanup: number
   orphan_entries: number
   issues?: string[]
   checked_at: number
+}
+
+export interface MemoryUpgradeStep {
+  code: string
+  title: string
+  detail: string
+}
+
+export interface MemoryUpgradePreview {
+  from_schema_version: number
+  target_schema_version: number
+  schema_ready: boolean
+  ledger_ready: boolean
+  default_domain_missing: boolean
+  orphan_entries: number
+  legacy_cleanup_jobs?: {
+    job_id: string
+    state: string
+    attempts: number
+  }[]
+  pending_cleanup: number
+  running_cleanup: number
+  pending_intents: number
+  blocked_intents: number
+  steps: MemoryUpgradeStep[]
+  blocking_reasons?: string[]
+  can_complete: boolean
+  recovery: MemoryRecoveryStatus
+}
+
+export interface MemoryUpgradeReport {
+  previous_schema_version: number
+  schema_version: number
+  backup: string
+  closed_legacy_jobs: number
+  closed_job_ids?: string[]
+  residual_risk: boolean
+  residual_message?: string
+  ready: boolean
+  recovery: MemoryRecoveryStatus
 }
 
 export interface MemoryDomain {
@@ -392,6 +433,13 @@ export const memoryApi = {
     request<MemoryRepairResult>("/api/memory/repair/apply", {
       method: "POST",
       body: JSON.stringify({ filter, target }),
+    }),
+  upgradePreview: () =>
+    request<MemoryUpgradePreview>("/api/memory/upgrade/preview"),
+  upgradeApply: () =>
+    request<MemoryUpgradeReport>("/api/memory/upgrade/apply", {
+      method: "POST",
+      body: JSON.stringify({ confirm: true }),
     }),
   migrationStatus: () =>
     request<MemoryMigrationStatus>("/api/memory/migration/status"),

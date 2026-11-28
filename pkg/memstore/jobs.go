@@ -18,6 +18,10 @@ const (
 	JobBlocked    = "blocked"
 	JobCancelled  = "cancelled"
 	JobSuperseded = "superseded"
+	// JobLegacyClosed is a terminal maintenance state for pre-upgrade cleanup
+	// obligations whose original locator can no longer be verified. It records
+	// that deletion was not proven; recovery must not treat it as done.
+	JobLegacyClosed = "legacy_closed"
 )
 
 // Job is one durable background unit: extraction, summary rebuild, cleanup or

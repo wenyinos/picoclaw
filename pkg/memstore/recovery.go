@@ -25,6 +25,7 @@ type RecoveryStatus struct {
 	InertCleanup     int      `json:"inert_cleanup"`
 	PendingCleanup   int      `json:"pending_cleanup"`
 	RunningCleanup   int      `json:"running_cleanup"`
+	LegacyClosed     int      `json:"legacy_closed_cleanup"`
 	OrphanEntries    int      `json:"orphan_entries"`
 	Issues           []string `json:"issues,omitempty"`
 	CheckedAt        int64    `json:"checked_at"`
@@ -120,7 +121,7 @@ func (s *Store) RecoveryStatus(ctx context.Context) (RecoveryStatus, error) {
 		rows, err := s.db.QueryContext(ctx,
 			`SELECT state, COUNT(*) FROM memory_jobs
 			 WHERE job_kind='forget_cleanup'
-			   AND state IN ('pending','running','blocked','cancelled')
+			   AND state IN ('pending','running','blocked','cancelled','legacy_closed')
 			 GROUP BY state`)
 		if err != nil {
 			return status, err
@@ -141,6 +142,8 @@ func (s *Store) RecoveryStatus(ctx context.Context) (RecoveryStatus, error) {
 				status.BlockedCleanup += count
 			case JobCancelled:
 				status.InertCleanup += count
+			case JobLegacyClosed:
+				status.LegacyClosed += count
 			}
 		}
 		if err := rows.Close(); err != nil {

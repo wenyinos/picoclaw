@@ -55,6 +55,8 @@ func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/memory/compact", h.handleMemoryCompact)
 	mux.HandleFunc("POST /api/memory/repair/preview", h.handleMemoryRepairPreview)
 	mux.HandleFunc("POST /api/memory/repair/apply", h.handleMemoryRepairApply)
+	mux.HandleFunc("GET /api/memory/upgrade/preview", h.handleMemoryUpgradePreview)
+	mux.HandleFunc("POST /api/memory/upgrade/apply", h.handleMemoryUpgradeApply)
 	mux.HandleFunc("GET /api/memory/migration/status", h.handleMemoryMigrationStatus)
 	mux.HandleFunc("POST /api/memory/migration/apply", h.handleMemoryMigrationApply)
 	mux.HandleFunc("GET /api/memory/ops", h.handleMemoryOps)
@@ -1181,4 +1183,44 @@ func (h *Handler) handleMemoryRepairApply(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "backup": backup})
+}
+
+func (h *Handler) handleMemoryUpgradePreview(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	preview, err := store.PreviewUpgrade(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (h *Handler) handleMemoryUpgradeApply(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	body, err := decodeBody[struct {
+		Confirm bool `json:"confirm"`
+	}](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !body.Confirm {
+		writeError(w, http.StatusBadRequest, "one-time upgrade requires confirm=true")
+		return
+	}
+	ctx := memstore.WithAudit(r.Context(), "dashboard@owner", "")
+	report, err := store.ApplyUpgrade(ctx)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
 }
