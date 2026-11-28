@@ -39,7 +39,7 @@ workspace/
 ```
 
 - `enabled`：为 `false` 时完全关闭长期记忆，不会回退到 Markdown。
-- `budget_tokens`：固定块与检索块的总注入预算；`boundary` 在固定块预算之外单独拼接，不参与裁剪，但仍受 audience / 渠道可见性 / fictional 过滤。
+- `budget_tokens`：固定块与检索块的总注入预算。固定块（persona/relationship/profile/boundary）先取总预算的 50%，基础内容再限制为固定块的 70%；`boundary` 参与固定块预算裁剪，但至少保留第一条核心规则，溢出通过 `FixedUsage.CoreOverflow/OverflowTokens` 报告。边界仍受 audience / 渠道可见性 / fictional 过滤。
 - `auto_extract`：每轮结束后用规则抽取候选记忆；群聊/公开会话不参与抽取。
 - `review_required`：新抽取的未知领域记忆进入待审核队列，不进入提示词。
 - `private_channel_exclusions`（0.7.3）：默认所有渠道都能读取 `audience=private` 的记忆；把不想读取的渠道加进排除列表即可，设置页提供默认全选的复选框。旧字段 `private_channels` 已废弃且不再读取。群聊/公开会话无论配置如何始终不可见（0.7.10 起提示词与工具路径同样强制执行）。
@@ -54,7 +54,7 @@ workspace/
 | `layer` | persona / profile / relationship / episodic / procedural / boundary | 人设 / 画像 / 关系 / 事件 / 流程 / 边界 |
 | `status` | active / pending_review / superseded / archived | 生命周期 |
 
-`relationship_state` 保存称呼、关系阶段、亲密度、纪念日等当前状态；`personas` 保存版本化人设。`predicate` 使用受控词表，`facet` 区分同一 predicate 下的不同侧面；只有 profile 的单值事实或显式 `supersedes_id` 会自动覆盖旧值。`boundary` 规则不参与固定块预算裁剪：它们作为安全块单独拼接，避免被过长的 profile / relationship 挤掉。
+`relationship_state` 保存称呼、关系阶段、亲密度、纪念日等当前状态；`personas` 保存版本化人设。`predicate` 使用受控词表，`facet` 区分同一 predicate 下的不同侧面；只有 profile 的单值事实或显式 `supersedes_id` 会自动覆盖旧值。`boundary` 规则与基础内容共享固定块预算，但基础内容最多使用固定块的 70%，为边界保留独立额度；第一条核心规则不会被静默丢弃，超出部分记入 `FixedUsage.OverflowTokens` 并置 `CoreOverflow`。
 
 schema v3 新增：
 
@@ -79,6 +79,14 @@ schema v3 新增：
 - 称呼提取忽略引号内的内容和「你叫我什么？」这类疑问句。
 - 情绪短句（`今天好累`、`抱抱`、`想你了`）只更新带 24 小时 TTL 的 `current_mood`，不落条目。
 
+`auto_extract` 开启时，turn 结束会写入 `memory_jobs` 的 `extraction` 任务；payload 只含 session、origin event 和来源正文的 keyed digest，不保存聊天正文。worker 从已持久化会话中重新读取消息并校验 digest；成功（包括 0 条候选）写入不含正文的治理回执，载荷无效等永久失败进入 blocked，暂时失败按退避重试。进程退出后未完成任务仍可由后续 worker 处理。
+
+## 来源事件与撤回
+
+0.7.25 起，入站自动抽取和 `memory` 工具写路径都由宿主生成稳定的 `origin_event_id`（`"oe_" + content hash`），模型不能提供或覆盖；来源行指向对应 origin event。同一条事实来自多条消息时会合并为一个条目，但保留多个 `sources`，每个来源各自指向一个 origin event。
+
+`POST /api/memory/origins/{id}/unavailable`（必须 `confirm=true`）记录可信编辑或撤回：只把该 origin event 标记为不可用，然后重新评估条目支持度。仍有其他可用来源时保持 `supported`；没有任何可用来源时把条目置为 `evidence_status=unsupported`、`freshness=stale`，事实本身不删除，留给 owner 复核。
+
 ## 去重与冲突
 
 写入时按顺序执行：
@@ -91,7 +99,7 @@ schema v3 新增：
 
 ## 搜索语义
 
-`memory` 工具的 search 默认查全部 layer，支持 `realm` / `layer` / `predicate` / `facet` / `status` 过滤。0.7 起它使用真实请求渠道，与注入共用同一套可见性规则：`audience=private` 的记忆对所有未排除的渠道可见（`private_channel_exclusions`），群聊/公开会话永远不可见。提示词注入使用更窄的检索路径：只取 active 的 relationship / episodic / procedural，按相关性过滤，并继续执行 audience / 渠道 / fictional 隔离。relationship 条目单次最多注入 2 条，避免长关系设定挤掉事件和流程。
+`memory` 工具的 search 默认查全部 layer，支持 `realm` / `layer` / `predicate` / `facet` / `status` 过滤。0.7 起它使用真实请求渠道，与注入共用同一套可见性规则：`audience=private` 的记忆对所有未排除的渠道可见（`private_channel_exclusions`），群聊/公开会话永远不可见。群聊/公开会话还只允许 `realm=real`：显式请求 `fictional/work` 返回 `ErrRealmNotAllowed`，低层 Store 也在 SQL 中以 `e.realm='real'` 交集强制。提示词注入使用更窄的检索路径：只取 active 的 relationship / episodic / procedural，按相关性过滤，并继续执行 audience / 渠道 / fictional 隔离。relationship 条目单次最多注入 2 条，避免长关系设定挤掉事件和流程。
 
 0.7.20 起，模型只保留 `add / search / inspect / 非核心 correct / legacy capsule / forget 预览` 白名单，全部经过 `MemoryService` 并携带可信 domain / channel / chat kind。`confirm`、归档/恢复、所有关系状态写入，以及任何 force/pinned/boundary 变更都只能由 owner 在 dashboard 或 CLI 执行；模型不能创建执行计划。密码、验证码、API Key、私钥在 `Store.Add` 层直接拒绝，工具、API、自动抽取和导入都不能绕过；英文 `password/passwd/bearer/常见 token 格式` 同样拦截。
 
@@ -105,7 +113,7 @@ FTS/LIKE 的 status/domain/realm/audience 过滤进入 SQL 后再应用候选上
 4. **时间通道**：相对时间短语转成区间，与 `event_at` 或 `valid_from/valid_to` 求重叠。
 5. **1-Hop**：从 Top 种子沿 related/caused/fulfilled/next_scene 扩展，目标节点重新做 status / realm / scope / audience 校验。
 
-固定块、边界块、检索块共用一个总目标预算：基础内容最多使用 70%，剩余额度给边界与检索；固定块耗尽预算时检索为 0，不再强制注入最低 200 token。过期条目在 Search、FTS/LIKE、时间、1-hop 和 capsule 中都在 SQL 过滤阶段排除。核心 boundary 不做静默丢弃，溢出通过 `FixedUsage` 的 overflow/cut 指标暴露。
+固定块（基础内容 + boundary）最多使用总预算的 50%，其中基础内容再限制为固定块的 70%；`budget_tokens` 的剩余额度给检索。boundary 参与固定块预算，但第一条核心规则始终保留，即使它单独超限；裁剪与溢出通过 `FixedUsage.BoundaryCut/OverflowTokens/CoreOverflow` 暴露且为真实赋值。固定块耗尽预算时检索为 0，不再强制注入最低 200 token。过期条目在 Search、FTS/LIKE、时间、1-hop 和 capsule 中都在 SQL 过滤阶段排除。
 
 ## 数据库迁移（schema v4）
 
@@ -135,7 +143,8 @@ FTS/LIKE 的 status/domain/realm/audience 过滤进入 SQL 后再应用候选上
 - 迁移/修复备份会同时保存主库与账本快照；恢复时必须成对使用。
 - 已有 v4 库的账本缺失、key 损坏或身份字段不完整时，读取仍可用，但 `forget` / `replay-forget` 故障关闭，不会静默创建新账本或重置身份。
 - 全新数据库和 v3 → v4 迁移允许创建第一份账本；并发首次打开通过 `_txlock=immediate` 保证只产生一个身份。
-- `replay-forget` 只按账本 manifest 的 entry ID + domain 删除，不再全库扫描正文哈希；恢复后不会误删同文的其他域。默认 dry-run，`--yes` 才执行。
+- 0.7.25 起账本新增 `forget_receipts`（按 `backend + locator_key` 记录状态）和 `forget_journal.blocked_reason/updated_at`；这些是独立账本的增量，主库 schema 仍为 v4。
+- `replay-forget` 默认只输出 preview；只重放 eligible intent，`blocked/unsupported/unapproved` 一律不执行。manifest v2 逐目标记录 domain 与 `expected_revision`；legacy manifest 没有 revision 时要求内容 HMAC digest proof。API 需 `confirm=true`，CLI 需 `--yes`；blocked/failed/cancelled cleanup 通过 `requeue-job` 创建 successor。
 - `memory forget-audit` 只读报告历史 forget 操作，不自动补账本或删除；历史 `content_hash` 没有 domain，不能用于自动清理。
 - 恢复后用 `picoclaw memory ledger-verify --backup <账本快照>` 校验 UUID/key_id 与 seq/pending 水位；身份不一致返回非零退出码，不能继续用它重放遗忘。
 
@@ -156,7 +165,7 @@ picoclaw memory migrate
 - 记忆库：服务端分页（每页 100 条）、搜索、筛选、编辑、归档、恢复；表格固定列宽，详情面板独立滚动。
 - 审核：确认真实记忆 / 标记虚构 / 标记工作 / 忽略。
 - 关系与人格：称呼、阶段、纪念日、边界、人设版本；人设可设置 realm / audience / scope。
-- 设置：预算、自动抽取、私有渠道、导入旧 workspace。
+- 设置：预算、自动抽取、私有渠道；旧 workspace 导入只提供 CLI 命令说明，不在页面读取宿主机路径。
 - 数据库修复：按 realm / layer / status / audience / 关键词预览并批量迁移；执行前自动用 SQLite `VACUUM INTO` 备份。
 
 ## CLI
@@ -170,6 +179,8 @@ picoclaw memory forget <id> [--yes --expected-revision <r>]
 picoclaw memory forget-audit --limit 1000
 picoclaw memory replay-forget [--yes]
 picoclaw memory cleanup          # 消费 forget_cleanup；gateway 启动时也会自动运行
+picoclaw memory requeue-job <job-id> --yes   # 为 blocked/failed/cancelled cleanup 创建 successor
+picoclaw memory recovery-status             # 输出长期记忆就绪状态；未就绪时非零退出
 picoclaw memory ledger-verify --backup <账本快照>
 picoclaw memory capsule --preset t0_compact
 picoclaw memory import --from /path/to/old-workspace
@@ -180,7 +191,21 @@ picoclaw memory export --out memories.jsonl
 picoclaw memory render   # 可选 Markdown 导出，不会被运行时读回
 ```
 
-`memory import` 是唯一会读取旧 `MEMORY.md` 的命令；运行时不读取。`memory forget` 不带 `--yes` 时只预览；真实删除必须同时提供预览中的 `--expected-revision`，修订变化会冲突。`memory replay-forget` 默认 dry-run，`--yes` 才按 manifest 重放。`memory cleanup` 必须离线运行（检测到 gateway PID 会拒绝），同时清理 JSONL 与 Seahorse；存在 `unavailable` 或 `outcome_unknown` 时返回非零。`memory forget-audit` 只报告历史操作，不修改数据。
+`memory import` 是唯一会读取旧 `MEMORY.md` 的命令，且只允许 CLI；HTTP `POST /api/memory/import` 返回 410。导入内容默认 `private`、`pending`、`legacy_unassigned`。`memory forget` 不带 `--yes` 时只预览；真实删除必须同时提供预览中的 `--expected-revision`，修订变化会冲突。`memory replay-forget` 默认 dry-run，`--yes` 才按 manifest 重放。`memory cleanup` 必须离线运行（检测到 gateway PID 会拒绝），同时清理 JSONL 与 Seahorse；存在 `unavailable/outcome_unknown`、missing locator 回执或 pending/running/blocked/cancelled backlog 时返回非零。`memory requeue-job` 为 blocked/failed/cancelled cleanup 创建 successor，旧行标记 `superseded`。`memory recovery-status` 输出就绪状态，未就绪时非零退出。`memory forget-audit` 只报告历史操作，不修改数据。
+
+## 0.7.25 完整性与恢复修复
+
+- **预算**：boundary 纳入固定块预算；基础内容最多占固定块 70%，第一条核心边界即使超限也保留；`FixedUsage` 的 `BaseTokens/BoundaryTokens/TotalTokens/BoundaryCut/OverflowTokens/CoreOverflow` 均为真实赋值，并有回归测试覆盖。
+- **Replay**：`replay-forget` 默认只输出 preview；manifest v2 逐目标记录 domain 与 `expected_revision`，legacy manifest 用 HMAC digest proof；`blocked`、`unsupported`、`unapproved` intent 一律不执行。API 需 `confirm=true`，CLI 需 `--yes`；blocked/failed/cancelled cleanup 通过 `requeue-job` 创建 successor。
+- **账本与清理回执**：独立 `forget-ledger.db` 新增 `forget_receipts`（按 backend + locator_key 记录状态）和 `forget_journal.blocked_reason/updated_at`；主库 schema 仍是 v4。回执区分 `removed/verified_absent/unavailable/outcome_unknown`，缺少 locator 回执计为 missing，不能按 done 或 removed=0 判定完成。
+- **恢复门禁**：`recovery-status` 与启动预检汇总 pending/blocked intent、pending/running/blocked/cancelled cleanup、缺失域等；任一存在时长期记忆 fail closed（`ErrMemoryNotReady`），普通聊天可以无记忆继续运行。`memory cleanup` 在 backlog、blocked、cancelled 或回执不完整时返回非零。
+- **requeue**：`memory requeue-job <job-id> --yes` 只接受 blocked/failed/cancelled cleanup，创建 successor 并把旧行标记 `superseded`，保留原审计行与账本批准不变。
+- **来源事件**：入站自动抽取与 `memory` 工具写路径由宿主生成稳定 `origin_event_id`；同一事实来自多条消息时保留多个 `sources`。`POST /api/memory/origins/{id}/unavailable` 使没有其他可用来源的条目变为 `unsupported/stale`，不删除事实。
+- **导入**：只允许 `picoclaw memory import --from`；HTTP `POST /api/memory/import` 返回 410。导入内容默认 `private`、`pending`、`legacy_unassigned`。
+- **群聊/公开聊天**：只允许 `realm=real`；显式 `fictional/work` 返回 `ErrRealmNotAllowed`，低层 Store 的 SQL 同样强制交集。
+- **审计**：owner 的 review/persona/审批写入口统一经 `MemoryService` 与宿主审计上下文；模型仍不能自批或创建执行计划。
+- **接口**：CLI 新增 `requeue-job`、`recovery-status`；API 新增 `GET /api/memory/recovery`、`POST /api/memory/origins/{id}/unavailable`、`POST /api/memory/jobs/{id}/requeue`；契约见 `docs/reference/memory-v4.openapi.yaml`。
+- **历史说明**：以下 0.7.20 记录按当时发布原文保留。后续复测发现 0.7.20 的 Seahorse race 门禁与 Replay 声明并不成立，0.7.25 修复后重新验证；不回写 0.7.20 为当时已知。
 
 ## 0.7.20 安全与清理修复
 
@@ -237,7 +262,12 @@ GET    /api/memory/migration/status
 POST   /api/memory/migration/apply
 GET    /api/memory/ops
 GET    /api/memory/capsule/{id}
-POST   /api/memory/import
+POST   /api/memory/import          # 410：仅允许 CLI
 GET    /api/memory/export
 GET    /api/memory/stats
+GET    /api/memory/recovery
+POST   /api/memory/origins/{id}/unavailable
+POST   /api/memory/jobs/{id}/requeue
 ```
+
+完整的 owner API 契约见 [memory-v4.openapi.yaml](../reference/memory-v4.openapi.yaml)。

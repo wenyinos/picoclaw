@@ -1,11 +1,40 @@
 # PicoClaw 记忆系统完整性修复实施计划
 
-> - 文档状态：待评审，未实施
+> - 文档状态：0.7.25 已实施 A 段主要项；B/C 与完整 V4 产品能力仍待后续，见下方实施记录
 > - 编制日期：2026-11-28
-> - 代码基线：`fcdb2dcd`（`v0.7.20` tag 为 `d1fccbe7`，tag 后仅文档与 `.gitignore` 变化）
+> - 代码基线：`ddeec945`（0.7.25 发布前分支 tip；`v0.7.20` 原 tag 为 `d1fccbe7`）
 > - Schema 基线：主库 Schema v4；不在 `Open` 中自动迁移或自愈业务数据
 > - 审计依据：当前源码、根 `AGENTS.md`、V4 实施计划 FR-01—FR-41、0.7.20 整改计划与发布说明、用户提供的只读参考快照
-> - 重要边界：本文件只给出实施与验收计划，不代表缺陷已修复；不授权修改真实数据库、执行迁移、Replay、Cleanup、提交、打 tag、发布或线上部署
+> - 重要边界：计划正文仍是验收设计；已落地范围以 0.7.25 实施记录为准，未列入记录的项目仍按计划待办。本文件不授权修改真实数据库、执行迁移、Replay、Cleanup、提交、打 tag、发布或线上部署
+
+## 0.7.25 实施记录（2026-11-28）
+
+本节记录 `feat/memory-completeness-0.7.25` 的实际落地范围；计划正文仍是验收设计，不能用本记录替代逐项源码与测试证据。
+
+**已完成**
+
+- Replay：默认只输出 preview；`blocked/unsupported/unapproved` intent 不执行；manifest v2 逐目标记录 domain 与 expected revision，legacy manifest 用 HMAC digest proof；API 需 `confirm=true`，CLI 需 `--yes`。
+- Seahorse assembler 懒初始化竞态修复，race 门禁重新验证。
+- 群聊/公开聊天只允许 `realm=real`；显式 fictional/work 返回 `ErrRealmNotAllowed`，低层 Store SQL 同样强制交集。
+- 旧 workspace 导入改为 CLI-only，HTTP `POST /api/memory/import` 返回 410；导入默认 `private/pending/legacy_unassigned`。
+- 独立账本新增 `forget_receipts`（backend + locator）与 `forget_journal.blocked_reason/updated_at`；cleanup 回执支持 missing、`verified_absent`、`outcome_unknown`。
+- `cleanup` 在 backlog、blocked、cancelled 或回执不完整时非零；`requeue-job` 创建 successor 并把旧行标记 `superseded`。
+- `recovery-status` 与启动预检：存在 pending/blocked intent 或 pending/running/blocked/cancelled cleanup 时长期记忆 fail closed，普通聊天可无记忆运行。
+- origin event 已在生产路径接线：入站自动抽取与 `memory` 工具由宿主生成稳定 ID；同一事实多消息保留多 sources；`MarkOriginUnavailable` 只撤回来源、不删除事实。
+- 自动抽取改为 `memory_jobs` durable 引用：payload 只保存 source keyed digest、session 与 origin，不保存正文；worker 从持久会话校验原文并写无正文回执。
+- 固定块预算：boundary 参与预算，第一条核心规则保留，`FixedUsage` 指标真实赋值并补回归测试。
+- owner review/persona/审批写入口统一经 `MemoryService` 审计。
+- API 新增 recovery、origin unavailable、job requeue 路由；OpenAPI 更新到 0.7.25。
+
+**仍保持关闭 / 后续**
+
+- `MemoryUseManifest` 未实现，仅有保守依赖与隔离基础。
+- 主动投递/发送调度未接通；commitments/recalls 没有真实数据验证。
+- 多域 relationship/capsule 继续 fail-closed，未交付。
+- 长文分块与时间抽取未接线。
+- 外部 LLM 抽取、embedding/向量检索、MMR 保持关闭。
+- 来源撤回目前只覆盖主库支持度与依赖摘要失效；跨会话副本、备份与 HMAC 轮换仍属后续。
+- 本记录不宣称完整 V4 产品能力已交付，不授权真实迁移、Replay、Cleanup、提交或发布。
 
 ## 0. 结论与执行摘要
 

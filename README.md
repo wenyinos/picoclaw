@@ -25,7 +25,7 @@
 
 PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home server, or a $10 board. It connects to the chat apps and model providers you already use, executes tools, and keeps a workspace you own.
 
-**0.7.20 is the current stable release.** The 0.7 line turns the memory V4 foundation into a governed, fail-closed memory system: ownership domains, an independent forget ledger with backups, evidence-bound summaries, and a send-point egress gate that also covers `/btw`, subagent calls and background summaries. Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation.
+**0.7.25 is the current stable release.** The 0.7 line turns the memory V4 foundation into a governed, fail-closed memory system: ownership domains, an independent forget ledger with backups, evidence-bound summaries, durable per-backend cleanup receipts, and a send-point egress gate that also covers `/btw`, subagent calls and background summaries. Instead of asking the model to rewrite a Markdown file, PicoClaw keeps structured memories in SQLite, deduplicates them, separates real facts from role-play, and injects only what is relevant to the current conversation.
 
 ### 0.7 progress
 
@@ -37,9 +37,10 @@ PicoClaw is a small, self-hosted AI assistant that runs on a laptop, a home serv
 | 0.7.3 | released | Private-channel opt-out semantics; group/public chats skipped by extraction |
 | 0.7.4 | released | Deprecated `private_channels` compatibility; fixes the 0.7.3 startup block |
 | 0.7.10 | released | Chat-kind enforcement across prompts/tools, tool governance, storage-level secret rejection, single-provider egress, ledger backup/verify, FTS/LIKE permission before `LIMIT`, Correct/summary/cleanup consistency |
-| 0.7.20 | current stable | Correct tombstone enforcement, owner-only model governance, strict write DTOs, audit actors/request IDs, atomic fresh bootstrap and repair backup, Seahorse conversation isolation and per-message cleanup, evidence roots, full egress send-point coverage, pre-`LIMIT` TTL/layer filtering |
+| 0.7.20 | released | Correct tombstone enforcement, owner-only model governance, strict write DTOs, audit actors/request IDs, atomic fresh bootstrap and repair backup, Seahorse conversation isolation and per-message cleanup, evidence roots, full egress send-point coverage, pre-`LIMIT` TTL/layer filtering |
+| 0.7.25 | current stable | Replay blocked/revision gates, recovery readiness gate, per-locator ledger receipts, successor cleanup jobs, origin-event production wiring, durable extraction references, realm/import isolation, Seahorse race fix, budget/LIKE/egress corrections, OpenAPI 3.1 |
 
-There is no schema change after v4; 0.7.20 is a security, recovery and cleanup release. Remaining boundaries are explicit: external LLM extraction, embeddings/vector retrieval, MMR, automatic reconciliation of legacy pending ledger intents, proactive delivery scheduling, full multi-domain relationship support, and long-document chunking/time extraction are not wired.
+There is no main-database schema change after v4; 0.7.25 adds internal forget-ledger receipt tables and recovery gates. Remaining boundaries are explicit: the full persistent MemoryUseManifest, temporary no-memory sessions, external LLM extraction, embeddings/vector retrieval, MMR, proactive delivery scheduling, full multi-domain relationship support, and long-document chunking/time extraction are not wired.
 
 ### Memory that lasts
 
@@ -244,8 +245,8 @@ See [Long-term memory](docs/guides/memory.md) for the data model, deduplication 
 
 Notes:
 
-- The v0.4.6 tag remains available; install 0.7.20 to get schema v4, the fail-closed forget ledger, ledger verification, cross-store cleanup and the Launcher migration page.
-- After restoring a database backup, verify the ledger pair with `picoclaw memory ledger-verify --backup <forget-ledger snapshot>` before replaying forgets.
+- The v0.4.6 tag remains available; install 0.7.25 to get schema v4, the fail-closed forget ledger, per-locator cleanup receipts, recovery readiness gating and the Launcher migration page.
+- After restoring a database backup, verify the ledger pair with `picoclaw memory ledger-verify --backup <forget-ledger snapshot>` before replaying forgets. Check `picoclaw memory recovery-status` before enabling long-term memory again.
 - Historical 0.3.x → 0.4.0 guide: [migration/0.4.0.md](docs/migration/0.4.0.md).
 - The old `MEMORY.md` is only an import source; raw session history stays in `workspace/sessions/*.jsonl`.
 - `memory.db` is WAL-mode SQLite; stop the process before copying the workspace, or run `picoclaw memory audit` once to checkpoint an idle store.
@@ -282,7 +283,7 @@ Chat channels include Telegram, Discord, Slack, Feishu/Lark, WeCom, WeChat, QQ, 
 
 ## About this repository
 
-This repository maintains PicoClaw 0.7.20 with the SQLite memory V4 system (permission domains, independent forget ledger, evidence-bound summaries, owner-only governance, evidence-root cleanup across JSONL and Seahorse, full send-point egress, hybrid retrieval and scene capsules), QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
+This repository maintains PicoClaw 0.7.25 with the SQLite memory V4 system (permission domains, independent forget ledger and receipt backends, recovery readiness gate, evidence-bound summaries, owner-only governance, evidence-root cleanup across JSONL and Seahorse, full send-point egress, hybrid retrieval and scene capsules), QQ channel fixes, and OpenCode Go session-header support. Release binaries are published from this repository.
 
 ## License
 

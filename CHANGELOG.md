@@ -1,5 +1,43 @@
 # 变更日志
 
+## v0.7.25
+
+### 安全与治理
+
+- **Replay 不再执行 blocked**：manifest v2 保存逐目标 domain/expected revision；旧 manifest 必须通过 keyed content digest 证明。API/CLI 默认预览，多目标冲突整批零修改。
+- **群聊 realm 隔离**：显式 fictional/work 不能覆盖群聊 `IncludeFic=false`；Service 与 Store SQL 双层交集，低层调用同样受限。
+- **导入收口**：HTTP 导入返回 410，不再接受任意本机路径；CLI 导入经 `MemoryService`，默认 private、pending、legacy。
+- **审计补齐**：review、persona、状态、Replay、日志重排和来源撤回写入 actor/request/reason；persona 秘密内容拒绝写入。
+- **来源撤回**：新增 owner API；无剩余可用来源的条目变为 unsupported/stale，摘要失效，不自动删事实。
+
+### 恢复与清理
+
+- **启动恢复门禁**：pending/blocked intent、pending/running/blocked/cancelled cleanup、缺默认域或孤儿 domain 会让长期记忆 fail closed；普通聊天可无记忆运行。
+- **分后端回执**：`forget-ledger.db` 新增 `forget_receipts`（不改主库 Schema v4），记录每个 backend/locator 状态；缺回执、partial、unknown 不会报 done。
+- **cancelled/blocked 恢复**：新增 `requeue-job --yes` 与 API successor；旧 job 保留为 superseded，不回写历史。
+- **清理退出码**：blocked/cancelled/pending backlog 和恢复未就绪时返回非零。
+- **默认域修复**：显式 repair 先备份，再只补 `legacy_unassigned`。
+
+### 来源、并发与运行时
+
+- **origin event 生产接线**：自动抽取和 memory 工具由宿主生成稳定来源；同事实多消息保留多个 sources。
+- **持久抽取引用**：自动抽取改为 memory_jobs 引用，仅保存 keyed digest/session/origin，不保存聊天正文；worker 从持久会话重新校验。
+- **Seahorse race 修复**：assembler/compaction 构造期初始化，恢复可重复 race 门禁。
+- **Channel 停止死锁**：`StopAll` 先取消并等待 outbound dispatcher，再持锁关闭 worker，避免并发发送时挂起。
+- **egress 补测**：legacy 摘要每次 retry 检查；Seahorse 摘要缺可信 session fail closed；子代理/排除渠道不自动抽取。
+
+### 检索、预算与接口
+
+- LIKE 转义 `%`/`_`；`FixedUsage` overflow/core overflow 实际赋值；context usage 使用实际记忆 token。
+- 新增恢复、来源撤回、任务重排 API 与 OpenAPI 3.1 契约；HTTP 导入禁用。
+- dashboard 显示恢复门禁、清理积压和任务后继操作。
+
+### 升级与边界
+
+- 主库仍为 v4；账本内部表自动创建，旧账本只读兼容。覆盖二进制后先运行 `memory recovery-status` 和 `memory cleanup`。
+- 完整 MemoryUseManifest、临时无记忆会话、外部 LLM/向量/主动投递、多域 relationship、历史 HMAC 轮换和来源实时撤回仍未交付。
+- 历史无账本 forget、无 root 来源、cancelled job 不自动修复，需 owner 审计和显式后继动作。
+
 ## v0.7.20
 
 ### 安全与权限

@@ -2,13 +2,13 @@
 
 本文件是 PicoClaw 仓库的工程规范，供人和 AI 代理共同遵守。与全局 `~/.zcode/AGENTS.md` 同时生效；冲突时以更具体、更严格的本文件为准。
 
-**本次核查基线：0.7.2，提交 `1e992157`，当前 Schema v4。** 该基线用于说明实现状态，不是后续任务可以跳过源码核对的依据。
+**本次核查基线：0.7.25，代码提交 `ddeec945`，分支 `feat/memory-completeness-0.7.25`；主库 Schema v4，0.7.25 只对独立 `forget-ledger.db` 增加回执与意图列。** 该基线用于说明实现状态，不是后续任务可以跳过源码核对的依据。
 
 ## 0. 开始工作前
 
 - 先核对当前分支、HEAD、上游和工作区 diff；保留用户已有的修改，不根据压缩对话、旧版本号或旧设计结论假定当前状态。发现基线变化先说明，不回退代码去迁就旧方案。
 - 根 `AGENTS.md` 是开发指令；`workspace/AGENT.md` 是随包分发的运行时模板。两者用途不同，不把仓库指令、审批信息或本机开发路径写入助手的运行时人格。
-- 实现事实以当前源码、配置/命令定义和实际验证结果核实；本文件的安全硬约束不因代码尚有旁路而放宽。必须区分“已实现”“工程约束”“已知差异/待实现”，详见第 4.9 节。
+- 实现事实以当前源码、配置/命令定义和实际验证结果核实；本文件的安全硬约束不因代码尚有旁路而放宽。必须区分“已实现”“工程约束”“已知差异/待实现”，并在交付中给出来源或验证证据。
 - 历史设计和 `docs/design/PicoClaw-伴侣记忆系统-V4实施计划.md` 用于追溯需求，不能单凭其中的“已实施”清单宣称当前实现完整，也不能据此自动恢复旧迁移链、增加 Schema v5/v6 或扩大外发授权。
 - 开始非小改动前列出范围、依赖、风险、回滚及验证点；任务只要求分析/文档时，不顺带实施功能、修改真实配置、启动 gateway 或执行迁移。
 - 网络、仓库外写入、Git 元数据操作依照当前工具权限申请；不通过更换代理、关闭安全检查或扩大文件权限绕过授权。
@@ -119,7 +119,10 @@ pnpm run format
 | `migrate` | 显式备份/DDL/数据迁移，执行前需要数据操作授权 |
 | `repair` | 可修复数据并进入显式迁移维护路径，不是只读诊断 |
 | `forget ID` | 默认预览；`--yes` 才执行，不能由模型参数创造审批权限 |
-| `replay-forget`、`cleanup` | 重放删除/消费清理任务，均可能修改持久数据，不可当作查询命令 |
+| `replay-forget`、`cleanup` | 重放 eligible 删除/消费清理任务，均可能修改持久数据，不可当作查询命令；`cleanup` 在 backlog 或回执不完整时非零退出 |
+| `requeue-job ID` | 仅 blocked/failed/cancelled cleanup；创建 successor 并把旧行标记 `superseded`，需 `--yes` |
+| `recovery-status` | 只读就绪状态；未就绪（intent/cleanup 未决）时非零退出 |
+| `import --from PATH` | 唯一读取旧 workspace 的入口，仅 CLI；HTTP 导入返回 410 |
 
 不要在 shell 示例里用 `migrate | repair | ...` 表示“任选一个”；`|` 会真的启动管道，可能先执行迁移。
 
@@ -167,9 +170,9 @@ pnpm run format
 2. **禁止在 `Open`/启动路径自动迁移或自愈业务 Schema。** 已有 v3 库或缺对象的 v4 库必须以故障关闭模式打开，受保护读写返回 `ErrMigrationRequired`。主入口是 `picoclaw memory migrate` 或仪表盘迁移页；`memory repair` 也能进入迁移维护路径，必须按显式数据变更对待。全新空库可直接初始化为 v4；未知/未来版本不得猜测修复。
 3. **迁移顺序固定：** 只读预检 → `VACUUM INTO` 备份 → 单事务 DDL/数据转换 → 最后写 `schema_version=4`。重复执行必须幂等，第二次零变更。
 4. **迁移不得猜测归属。** 旧数据进入 `legacy_unassigned` 隔离域；`sources` 逐字段保留证据原文、模型、prompt 版本、置信度、确认标志与 `message_id`，缺失列才用显式默认值。
-5. **备份/恢复必须保全独立账本及 HMAC 身份。** `forget-ledger.db` 当前与 `memory.db` 同目录、权限 0600，但主库 `VACUUM INTO` 不会包含它。恢复旧主库必须使用最新有效账本，不能拿旧账本覆盖最新墓碑；身份缺失/损坏时应故障关闭，不得静默换新身份。本项是硬约束，当前自动化缺口见第 4.9 节。
+5. **备份/恢复必须保全独立账本及 HMAC 身份。** `forget-ledger.db` 当前与 `memory.db` 同目录、权限 0600，但主库 `VACUUM INTO` 不会包含它。恢复旧主库必须使用最新有效账本，不能拿旧账本覆盖最新墓碑；身份缺失/损坏时应故障关闭，不得静默换新身份。主库与账本没有共同原子事务，恢复后必须用 `ledger-verify` 核对身份并重放未完成的删除义务。
 6. **文档一致性。** 前端、API 文案、guides、迁移参考与发布说明中不得再出现“v1/v2 → v3”的现行迁移描述；修改迁移行为必须同步 `docs/reference/memory-schema-v4.md`（及 `.zh.md`）、`docs/guides/memory*.md`、`CHANGELOG.md` 与 `docs/releases/`。
-7. 迁移测试入口：`go test -tags 'goolm stdjson' ./pkg/memstore -count=1 -timeout=120s`；用例见 `migrate_test.go`（v3 库必须 pending、受保护读写拒绝、显式迁移后可用、缺对象需再次显式迁移）。维护入口的预检/备份例外不得冒充完整保证，见第 4.9 节。
+7. 迁移测试入口：`go test -tags 'goolm stdjson' ./pkg/memstore -count=1 -timeout=120s`；用例见 `migrate_test.go`（v3 库必须 pending、受保护读写拒绝、显式迁移后可用、缺对象需再次显式迁移）。维护入口的预检/备份例外不构成完整恢复保证，必须用 `ledger-verify`、`recovery-status` 和恢复演练核对。
 
 ### 4.3 写入、去重与治理
 
@@ -179,20 +182,26 @@ pnpm run format
 - 用户确认必须绑定批准事件；不得用 `confidence >= 0.95` 或模型自述冒充确认。
 - 模型工具只能预览永久遗忘，不能自批；审批计划带 `expected_revision`，变更后必须报冲突。确认、核心修改、遗忘的可信 actor/批准事件来自宿主，不能使用模型生成的 `Force`、`ForceStatus`、`BypassForgetTombstone` 或 confirmed 标志替代。
 - 渠道/chat/session/scope 必须从 `pkg/tools/shared` 的请求级上下文取得；查询或工具参数只能缩小权限。不要把管理查询 `Get/List/SearchEntries` 当成普通请求的自动鉴权入口。
+- **来源事件必须由宿主生成。** 入站自动抽取（`pipeline_finalize.go`）和 `memory` 工具（`pkg/tools/memory.go`）用 `BuildOriginEventID` 生成稳定 `origin_event_id`，模型不能提供或覆盖。同一事实来自多条消息时保留多个 `sources`；`MarkOriginUnavailable` 只把来源标记不可用并重算支持度，没有其他来源的 entry 置为 `evidence_status=unsupported`、`freshness=stale`，不删除事实。
+- **owner 写入口统一审计。** review/persona/审批等 owner 动作经 `MemoryService` 携带宿主 actor、request ID 与 reason code；不得在 API 层直接调用 Store 绕过审计。模型仍不能自批、创建可执行计划或修改 force/pinned/boundary。
+- **旧 workspace 导入只允许 CLI。** HTTP `POST /api/memory/import` 固定返回 410；导入内容默认 `private`、`pending`、`legacy_unassigned`，由 owner 复核后再提升，不得由模型触发或读取宿主机任意路径。
 
 ### 4.4 遗忘与账本
 
 - `Forget` 顺序：校验 → 独立 journal 写 pending（HMAC 选择器 + 目标清单 + request_id）→ **主库删除、摘要失效与 `forget_cleanup` 入队在同一主库事务提交** → 独立账本 `MarkApplied`。两个 SQLite 库没有共同原子事务，不能把 MarkApplied 与主库入队写成同一个事务。
 - 账本不存正文；选择器用版本化 HMAC。`ReplayForget` 按账本重放，不依赖主库墓碑；`applied` 仅表示主库阶段，不等于会话、摘要、备份等外部副本全部清理。
-- 主库/outbox 回滚后仍需保留并核验独立删除义务；不能因旧主库查不到条目就宣称所有目标已清除。现有 ReplayForget 的覆盖限制见第 4.9 节。
+- **Replay 只执行 eligible intent。** 默认只输出 preview；manifest v2 逐目标记录 `domain` 与 `expected_revision`，legacy manifest 没有 revision 时要求内容 HMAC digest proof。`blocked/unsupported/unapproved` intent 一律不执行；API 需 `confirm=true`，CLI 需 `--yes`。blocked/failed/cancelled cleanup 只能通过 `requeue-job` 创建 successor，不能直接改状态或自动解除。
+- **主库/outbox 回滚后仍需保留并核验独立删除义务。** 不能因旧主库查不到条目就宣称所有目标已清除；Replay 只重放 manifest 中可证明的目标，其余保持 blocked/unsupported 并报告。
+- **账本回执按后端与 locator 记录。** 0.7.25 起独立账本新增 `forget_receipts` 和 `forget_journal.blocked_reason/updated_at`；主库 schema 仍为 v4。回执状态为 `removed/verified_absent/unavailable/outcome_unknown`，缺少 locator 回执计为 missing，不能按 done 或 removed=0 判定完成。
 - 清理执行器只消费 `forget_cleanup`。当前 JSONL 依赖 session 定位与整段 Content/ReasoningContent 的规范化 HMAC 匹配，不是逐词语义删除或仅凭 MessageID 精确定位。无法核验必须报告 `partial/unavailable`。
-- 必须检查 `CleanupOutcome.Details/Unavailable`；任务 `done`、退出码 0 或 removed=0 都不能单独证明完整遗忘。不能声称 JSONL cleaner 同时覆盖 Seahorse、所有摘要、导出和备份。
-- 关系状态及历史按来源依赖清理；`relationshipKeysForPredicate` 当前回退映射为 nickname/birthday/anniversary，不能据此声称所有情绪/任意副本均自动覆盖。
+- 必须检查 `CleanupOutcome.Details/Unavailable/OutcomeUnknown`；任务 `done`、退出码 0 或 removed=0 都不能单独证明完整遗忘。`memory cleanup` 在 pending/running/blocked/cancelled backlog 或回执不完整时返回非零。不能声称 JSONL cleaner 同时覆盖 Seahorse、所有摘要、导出和备份。
+- **恢复门禁 fail closed。** `recovery-status` 与启动预检在存在 pending/blocked intent、pending/running/blocked/cancelled cleanup、缺失域或账本不可用时把长期记忆置为未就绪（`ErrMemoryNotReady`），普通聊天可无记忆运行；管理路径仍可用于检查和修复。
+- 关系状态及历史只按显式来源标记清理；删除时不得按 predicate 猜测映射 nickname/birthday/anniversary，不能据此声称所有情绪/任意副本均自动覆盖。
 
 ### 4.5 检索与权限
 
 - 权限（status/domain/realm/audience）必须在 SQL 的 `LIMIT` 之前生效，不得先取候选再过滤。
-- 群聊/公开会话永远不能读取 `audience=private`，也不能进入自动抽取；渠道可见性自 0.7.3 起是**排除制**（`private_channel_exclusions`，默认全渠道私密），旧 `private_channels` 白名单字段已废弃，不得恢复。
+- 群聊/公开会话永远不能读取 `audience=private`，也不能进入自动抽取；渠道可见性自 0.7.3 起是**排除制**（`private_channel_exclusions`，默认全渠道私密），旧 `private_channels` 白名单字段已废弃，不得恢复。群聊/公开聊天只允许 `realm=real`：显式请求 `fictional/work` 返回 `ErrRealmNotAllowed`，低层 Store 检索也必须以 SQL `e.realm='real'` 交集强制，不能靠上层参数单独兜底。
 - 时间命中是独立相关性依据，不要求正文含时间词；`created_at` 不等于事件时间。
 - 1-Hop 与主检索共享去重集合和层配额（relationship ≤2、其他 ≤6）；预算按最终渲染文本计，含分隔符。
 - 空上下文不等于管理员：普通域感知查询/写入的无域兼容默认是 `legacy_unassigned`，不是所有低层 Store API 都自带该限制。敏感操作缺可信身份时拒绝，不能降级为全库视图或借管理接口扩大权限。
@@ -201,15 +210,13 @@ pnpm run format
 
 - 读取许可 ≠ 外发许可。每次实际 Provider 调用（主调用、fallback、重试、流式）都必须按策略检查；未授权返回不可重试的 `ErrMemoryEgressDenied`（`memory egress denied`），不得静默改投或复用旧上下文。
 - 当前配置入口是 `memory.allowed_chat_recipients`：匹配不区分大小写的 `provider` 或 `provider/model`，空列表是兼容放行，**不是已经实现严格默认拒绝**；也不等同于数据库 processing grant 或 endpoint 级授权。
-- `budget_tokens=0` 不是关闭记忆的可靠方式：上下文装配会使用默认预算，而现有 egress 检查又以正预算为条件。需要停用时使用明确的 enabled/权限控制并核对运行时是否生效；漏检分支见第 4.9 节。
+- `budget_tokens=0` 不是关闭记忆的可靠方式：上下文装配会回落到默认固定预算，而现有 egress 检查又以正预算为条件。需要停用时使用明确的 enabled/权限控制并核对运行时是否生效。
+- **预算边界契约：** 固定块（persona/relationship/profile/boundary）先取总预算的 50%，基础内容再限制为固定块的 70%；boundary 参与固定块预算裁剪，但第一条核心规则即使超限也保留。`FixedUsage.BaseTokens/BoundaryTokens/TotalTokens/BoundaryCut/OverflowTokens/CoreOverflow` 必须真实赋值，不能用字段存在代替最终装配与账单一致性。
 - 当前自动抽取与默认阶段摘要为本地规则；外部抽取/摘要/embedding、语义召回和主动发送不能仅凭配置字段存在就宣称已接通。未来接入需独立用途/接收方许可、成本上限与故障降级，不得默认外发历史。
 - 主动回忆候选/状态持久化不等于发送调度器。接通发送前必须默认关闭、重检目标/授权/限频/静默时段；到期不自动判违约。
 
 ---
 
----
- |。线接已经消息主动、回召义语、embedding、取抽部外证明不存在选候或表、字段配置。递投度调于等 不 CRUD态 状mentcommit/allrec；规则地本 为izer summar默认 与`.goextract ` |时运行选 可
-| |。删除端后全或词逐/消息逐充冒，不Unavailable/ Details检查须；配匹无法可能消息长， rune120 为断 截_text evidence 的`Sourceinsert `，而MAC H化规范段整赖
 ## 5. 前端规范
 
 - React Hooks + 函数式组件；样式优先 Tailwind，其次 CSS Modules。

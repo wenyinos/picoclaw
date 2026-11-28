@@ -39,7 +39,7 @@ workspace/
 ```
 
 - `enabled`: disables long-term memory entirely when `false`; there is no Markdown fallback.
-- `budget_tokens`: total injection budget for fixed and retrieved blocks. `boundary` rules are appended outside the fixed-block budget; they are not trimmed by it, but still obey audience, channel-visibility, and fictional filtering.
+- `budget_tokens`: total injection budget for fixed and retrieved blocks. The fixed block (persona/relationship/profile/boundary) first takes 50% of the total budget, and base content is capped at 70% of that fixed block. `boundary` participates in the fixed-block budget, but at least the first core rule is kept even when it alone exceeds the cap; overflow is reported through `FixedUsage.CoreOverflow/OverflowTokens`. Boundaries still obey audience, channel-visibility, and fictional filtering.
 - `auto_extract`: run rule-based extraction after each turn. Group/public chats are skipped: shared conversation never enters the personal profile.
 - `review_required`: uncertain memories enter `pending_review` and are not injected.
 - `private_channel_exclusions` (0.7.3): every channel reads `audience=private` memories by default; add the channels you want to opt out. The settings page renders this as checkboxes, checked by default. The old `private_channels` field is no longer read. Group/public chats stay invisible regardless of this setting; since 0.7.10 the prompt and tool paths enforce this as well.
@@ -54,7 +54,7 @@ workspace/
 | `layer` | persona / profile / relationship / episodic / procedural / boundary | character / profile / relationship / event / procedure / boundary |
 | `status` | active / pending_review / superseded / archived | lifecycle |
 
-`relationship_state` stores names, stage, intimacy, anniversaries, and boundaries as versioned current values. `personas` stores versioned character definitions. `predicate` uses a controlled vocabulary and `facet` distinguishes different sides of the same predicate; only scalar profile facts or an explicit `supersedes_id` automatically replace old values. `boundary` rules are not part of the fixed-block budget: they are appended as a safety block so a long profile or relationship section cannot evict them.
+`relationship_state` stores names, stage, intimacy, anniversaries, and boundaries as versioned current values. `personas` stores versioned character definitions. `predicate` uses a controlled vocabulary and `facet` distinguishes different sides of the same predicate; only scalar profile facts or an explicit `supersedes_id` automatically replace old values. `boundary` rules share the fixed-block budget with base content, but base content may use at most 70% so boundaries keep their own allowance; the first core rule is never silently dropped, and any overflow is recorded in `FixedUsage.OverflowTokens` with `CoreOverflow` set.
 
 Schema v3 adds:
 
@@ -79,6 +79,14 @@ The write firewall runs before those branches:
 - Name extraction ignores matches inside quotes and interrogatives such as 「你叫我什么？」.
 - Emotional one-liners (`今天好累`, `抱抱`, `想你了`) only update `current_mood` with a 24-hour TTL; they do not create entries.
 
+With `auto_extract` enabled, the turn end enqueues a durable `extraction` job in `memory_jobs`. Its payload stores only the session, origin event and a keyed digest of the source text, never the chat body. A worker reloads the persisted session, verifies the digest, and writes a text-free governance receipt on success (including zero candidates). Invalid permanent input becomes blocked; transient failures retry with backoff. Jobs left by a process exit remain available to a later worker.
+
+## Origin events and retraction
+
+Since 0.7.25 both inbound auto-extraction and the `memory` tool write path have the host generate a stable `origin_event_id` (`"oe_" + content hash`), which the model cannot supply or override; source rows point at that event. When the same fact arrives in several messages it merges into one entry but keeps multiple `sources`, each pointing at its own origin event.
+
+`POST /api/memory/origins/{id}/unavailable` (requires `confirm=true`) records a trusted edit or retraction: it marks only that origin event unavailable and re-evaluates support. If other available sources remain, the entry stays `supported`; with none left it becomes `evidence_status=unsupported` and `freshness=stale`. The fact itself is not deleted and is left for owner review.
+
 ## Deduplication and conflicts
 
 Writes are processed in order:
@@ -91,7 +99,7 @@ Writes are processed in order:
 
 ## Search semantics
 
-The `memory` tool's search covers all layers by default and supports `realm` / `layer` / `predicate` / `facet` / `status` filters. Since 0.7 it uses the real request channel and the same visibility rules as injection: private memories are visible in every channel that is not excluded (`private_channel_exclusions`), and never in group/public chats. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures.
+The `memory` tool's search covers all layers by default and supports `realm` / `layer` / `predicate` / `facet` / `status` filters. Since 0.7 it uses the real request channel and the same visibility rules as injection: private memories are visible in every channel that is not excluded (`private_channel_exclusions`), and never in group/public chats. Group/public chats also accept only `realm=real`: an explicit `fictional/work` request returns `ErrRealmNotAllowed`, and the low-level Store enforces the same intersection with `e.realm='real'` in SQL. Prompt injection uses a narrower retrieval path: active relationship/episodic/procedural only, relevance-filtered, with audience, channel, and fictional isolation still applied. At most two relationship entries are injected per turn so long relationship notes cannot crowd out events and procedures.
 
 Since 0.7.20, models have a controlled allowlist: `add / search / inspect / non-core correct / legacy capsule / forget preview`. `confirm`, archive/restore, all relationship writes, and every force/pinned/boundary change are owner-only in the dashboard or CLI; models cannot create execution plans. All actions pass through `MemoryService` with the trusted domain, channel and chat kind. Passwords, verification codes, API keys, private keys and common English credential formats are rejected at the `Store.Add` layer. FTS/LIKE apply status/domain/realm/audience and TTL filters in SQL before the candidate limit.
 
@@ -103,7 +111,7 @@ Both paths share the hybrid candidate set:
 4. **Temporal** — relative-time phrases become an interval that overlaps `event_at` or `valid_from/valid_to`.
 5. **1-Hop** — related/caused/fulfilled/next-scene edges from the top seeds; targets are re-checked for status, realm, scope and audience.
 
-Fixed, boundary, and retrieval blocks share one target budget: base content uses at most 70%, and the remainder covers boundaries and retrieval. When fixed content consumes the target, retrieval is zero instead of forcing a 200-token minimum. Expired entries are filtered in SQL across Search, FTS/LIKE, temporal, 1-hop and capsule paths. Core boundaries are not silently dropped; overflow/cut counts are exposed through `FixedUsage`.
+The fixed block (base content + boundary) uses at most 50% of the total budget, and base content is capped at 70% of that fixed block; the rest of `budget_tokens` goes to retrieval. Boundaries participate in the fixed-block budget, but the first core rule is always kept even if it alone overflows; cuts and overflow are exposed with real values through `FixedUsage.BoundaryCut/OverflowTokens/CoreOverflow`. When fixed content consumes the target, retrieval is zero instead of forcing a 200-token minimum. Expired entries are filtered in SQL across Search, FTS/LIKE, temporal, 1-hop and capsule paths.
 
 ## Database migration (schema v4)
 
@@ -133,7 +141,8 @@ Other guarantees:
 - Migration/repair backups include both the database and the ledger; restore them as a pair.
 - A v4 database whose ledger is missing, whose key is damaged, or whose identity fields are incomplete stays readable, but `forget` / `replay-forget` fail closed. No empty ledger or new identity is created silently.
 - Concurrent first opens use `_txlock=immediate`, so only one ledger identity can be created.
-- `replay-forget` follows manifest entry IDs and permission domains instead of scanning all content hashes. It is dry-run by default and executes only with `--yes`.
+- Since 0.7.25 the ledger adds `forget_receipts` (state per `backend + locator_key`) and `forget_journal.blocked_reason/updated_at`. These are additive changes to the independent ledger; the main database schema stays v4.
+- `replay-forget` prints a preview by default and replays only eligible intents; `blocked`, `unsupported` and `unapproved` intents are never executed. Manifest v2 records domain and `expected_revision` per target; a legacy manifest without revisions requires a content HMAC digest proof. The API requires `confirm=true` and the CLI requires `--yes`; a blocked/failed/cancelled cleanup needs `requeue-job` to create a successor.
 - `memory forget-audit` reports historical forget operations without writing a ledger or deleting rows; legacy content hashes have no domain and cannot drive automatic cleanup.
 - `ledger-verify` reports UUID/key_id plus sequence and pending watermarks; an identity mismatch exits non-zero.
 
@@ -154,7 +163,7 @@ Open `/memory` in the launcher:
 - Memory library: server-side pagination (100 per page), search, filter, edit, archive, restore; fixed table columns and an independently scrollable detail panel.
 - Review: confirm real, mark fictional, mark work, ignore.
 - Relationship and persona: names, stage, anniversaries, boundaries, persona versions; persona realm / audience / scope.
-- Settings: budget, auto-extraction, private channels, import.
+- Settings: budget, auto-extraction, private channels; legacy workspace import is shown as a CLI command only and the page never reads host paths.
 - Database repair: preview and bulk-reclassify by realm / layer / status / audience / keyword; a SQLite `VACUUM INTO` backup is created before applying.
 
 ## CLI
@@ -168,6 +177,8 @@ picoclaw memory forget <id> [--yes --expected-revision <r>]
 picoclaw memory forget-audit --limit 1000
 picoclaw memory replay-forget [--yes]
 picoclaw memory cleanup          # drains forget_cleanup; gateway also runs it at startup
+picoclaw memory requeue-job <job-id> --yes   # successor for blocked/failed/cancelled cleanup
+picoclaw memory recovery-status             # readiness; exits non-zero when not ready
 picoclaw memory ledger-verify --backup <ledger snapshot>
 picoclaw memory capsule --preset t0_compact
 picoclaw memory import --from /path/to/old-workspace
@@ -178,7 +189,21 @@ picoclaw memory export --out memories.jsonl
 picoclaw memory render   # optional Markdown export, never read back
 ```
 
-`memory import` is the only command that reads a legacy `MEMORY.md`; the runtime never does. `memory forget` without `--yes` is a dry run; a real delete also requires the `--expected-revision` from the preview. `memory replay-forget` is dry-run by default and needs `--yes` to follow ledger manifests. `memory cleanup` refuses to run while a gateway PID is live and covers both JSONL and Seahorse; `unavailable` or `outcome_unknown` returns non-zero. `memory forget-audit` is report-only.
+`memory import` is the only command that reads a legacy `MEMORY.md`, and it is CLI-only; HTTP `POST /api/memory/import` returns 410. Imported content defaults to `private`, `pending` and `legacy_unassigned`. `memory forget` without `--yes` is a dry run; a real delete also requires the `--expected-revision` from the preview. `memory replay-forget` is dry-run by default and needs `--yes` to follow ledger manifests. `memory cleanup` refuses to run while a gateway PID is live and covers both JSONL and Seahorse; it returns non-zero for `unavailable/outcome_unknown`, a missing locator receipt, or pending/running/blocked/cancelled backlog. `memory requeue-job` creates a successor for a blocked/failed/cancelled cleanup and marks the old row `superseded`. `memory recovery-status` prints readiness and exits non-zero when not ready. `memory forget-audit` is report-only.
+
+## 0.7.25 completeness and recovery fixes
+
+- **Budget**: boundaries are part of the fixed-block budget; base content is capped at 70% of the fixed block and the first core boundary is kept even when over the cap. `FixedUsage` fields `BaseTokens/BoundaryTokens/TotalTokens/BoundaryCut/OverflowTokens/CoreOverflow` carry real values and are covered by regression tests.
+- **Replay**: `replay-forget` prints a preview by default. Manifest v2 records domain and `expected_revision` per target; a legacy manifest uses an HMAC digest proof. `blocked`, `unsupported` and `unapproved` intents are never executed. The API requires `confirm=true` and the CLI requires `--yes`; blocked/failed/cancelled cleanup needs `requeue-job` to create a successor.
+- **Ledger and cleanup receipts**: the independent `forget-ledger.db` adds `forget_receipts` (state per backend + locator_key) and `forget_journal.blocked_reason/updated_at`; the main schema remains v4. Receipts distinguish `removed/verified_absent/unavailable/outcome_unknown`; a missing locator receipt counts as missing, and done or removed=0 is not proof of completion.
+- **Recovery gate**: `recovery-status` and startup preflight aggregate pending/blocked intents, pending/running/blocked/cancelled cleanup, missing domains and related issues. If any remain, long-term memory fails closed (`ErrMemoryNotReady`) while ordinary chat can run without memory. `memory cleanup` returns non-zero on backlog, blocked, cancelled, or incomplete receipts.
+- **Requeue**: `memory requeue-job <job-id> --yes` accepts only blocked/failed/cancelled cleanup, creates a successor and marks the old row `superseded`, leaving the original audit row and ledger approval intact.
+- **Origin events**: inbound auto-extraction and the `memory` tool write path have the host generate a stable `origin_event_id`; the same fact from several messages keeps multiple `sources`. `POST /api/memory/origins/{id}/unavailable` turns an entry with no other available source into `unsupported/stale` without deleting the fact.
+- **Import**: only `picoclaw memory import --from` is allowed; HTTP `POST /api/memory/import` returns 410. Imported content defaults to `private`, `pending` and `legacy_unassigned`.
+- **Group/public chats**: only `realm=real` is allowed; explicit `fictional/work` returns `ErrRealmNotAllowed`, and the low-level Store enforces the same intersection in SQL.
+- **Audit**: owner review/persona/approval writes go through `MemoryService` and the host audit context; models still cannot self-approve or create execution plans.
+- **Interfaces**: the CLI gains `requeue-job` and `recovery-status`; the API gains `GET /api/memory/recovery`, `POST /api/memory/origins/{id}/unavailable` and `POST /api/memory/jobs/{id}/requeue`. The contract is in `docs/reference/memory-v4.openapi.yaml`.
+- **History note**: the 0.7.20 section below is preserved as published. Later retests found that its Seahorse race gate and Replay claims did not hold; 0.7.25 fixes and re-verifies them, without rewriting 0.7.20 as if those gaps were known at the time.
 
 ## 0.7.20 security and cleanup fixes
 
@@ -235,7 +260,12 @@ GET    /api/memory/migration/status
 POST   /api/memory/migration/apply
 GET    /api/memory/ops
 GET    /api/memory/capsule/{id}
-POST   /api/memory/import
+POST   /api/memory/import          # 410: CLI only
 GET    /api/memory/export
 GET    /api/memory/stats
+GET    /api/memory/recovery
+POST   /api/memory/origins/{id}/unavailable
+POST   /api/memory/jobs/{id}/requeue
 ```
+
+The full owner API contract is in [memory-v4.openapi.yaml](../reference/memory-v4.openapi.yaml).
