@@ -78,6 +78,12 @@ func (al *AgentLoop) extractMemoryAsync(
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if err := store.RequireOperational(ctx); err != nil {
+			logger.DebugCF("memory", "extraction skipped until recovery completes", map[string]any{
+				"reason": err.Error(),
+			})
+			return
+		}
 		results, err := store.ExtractTurnAt(ctx, userText, assistantText, sessionKey, turnAt, cfg.ReviewRequired)
 		if err != nil {
 			logger.DebugCF("memory", "extraction failed", map[string]any{"error": err.Error()})

@@ -90,6 +90,22 @@ export interface MemoryReplayResult {
   unsupported: number
 }
 
+export interface MemoryRecoveryStatus {
+  ready: boolean
+  schema_ready: boolean
+  ledger_ready: boolean
+  domain_registry_ok: boolean
+  pending_intents: number
+  blocked_intents: number
+  blocked_cleanup: number
+  inert_cleanup: number
+  pending_cleanup: number
+  running_cleanup: number
+  orphan_entries: number
+  issues?: string[]
+  checked_at: number
+}
+
 export interface MemoryDomain {
   domain_id: string
   owner_principal_id?: string
@@ -461,6 +477,13 @@ export const memoryApi = {
     request<{ jobs: MemoryJob[]; stats: Record<string, number> }>(
       "/api/memory/jobs",
     ),
+  requeueJob: (id: string) =>
+    request<MemoryJob>(`/api/memory/jobs/${id}/requeue`, {
+      method: "POST",
+      body: JSON.stringify({ confirm: true }),
+    }),
+  recovery: () =>
+    request<MemoryRecoveryStatus>("/api/memory/recovery"),
   plans: (status = "pending") =>
     request<{ plans: MemoryChangePlan[] }>(
       `/api/memory/plans?status=${status}`,

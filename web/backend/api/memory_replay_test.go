@@ -90,3 +90,78 @@ func TestMemoryAPI_ImportIsCLIOnly(t *testing.T) {
 		t.Fatalf("import status = %d, want 410; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestMemoryAPI_RecoveryAndRequeueBlockedCleanup(t *testing.T) {
+	h, _ := newMemoryTestHandler(t)
+	store, _, err := h.memoryStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	entry, err := store.Add(ctx, memstore.AddInput{
+		Text: "api requeue target without a locator", Layer: memstore.LayerProfile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Forget(ctx, entry.Entry.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RunCleanupJobs(ctx, &apiFakeCleaner{}, 5); err != nil {
+		t.Fatal(err)
+	}
+	// OpenForWorkspace caches stores for the process; do not close it while the
+	// API handler still resolves the same path.
+
+	mux := http.NewServeMux()
+	h.registerMemoryRoutes(mux)
+	rec := doJSON(t, mux, http.MethodGet, "/api/memory/recovery", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recovery status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var recovery memstore.RecoveryStatus
+	if err := json.Unmarshal(rec.Body.Bytes(), &recovery); err != nil {
+		t.Fatal(err)
+	}
+	if recovery.Ready || recovery.BlockedCleanup != 1 {
+		t.Fatalf("recovery = %+v", recovery)
+	}
+
+	rec = doJSON(t, mux, http.MethodGet, "/api/memory/jobs?state=blocked", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("jobs status = %d", rec.Code)
+	}
+	var jobs struct {
+		Jobs []memstore.Job `json:"jobs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &jobs); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Jobs) != 1 {
+		t.Fatalf("blocked jobs = %+v", jobs.Jobs)
+	}
+	jobID := jobs.Jobs[0].JobID
+
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/jobs/"+jobID+"/requeue", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed requeue status = %d, want 400", rec.Code)
+	}
+	rec = doJSON(t, mux, http.MethodPost, "/api/memory/jobs/"+jobID+"/requeue",
+		map[string]any{"confirm": true})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("requeue status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var successor memstore.Job
+	if err := json.Unmarshal(rec.Body.Bytes(), &successor); err != nil {
+		t.Fatal(err)
+	}
+	if successor.State != memstore.JobPending || successor.JobID == jobID {
+		t.Fatalf("successor = %+v", successor)
+	}
+}
+
+type apiFakeCleaner struct{}
+
+func (c *apiFakeCleaner) CleanLocators(_ context.Context, locators []memstore.SourceLocator) (memstore.CleanupOutcome, error) {
+	return memstore.CleanupOutcome{}, nil
+}

@@ -35,6 +35,7 @@ func (g cliCleanerGroup) CleanLocators(ctx context.Context, locators []memstore.
 		total.OutcomeUnknown += outcome.OutcomeUnknown
 		total.Sessions += outcome.Sessions
 		total.Details = append(total.Details, outcome.Details...)
+		total.Receipts = append(total.Receipts, outcome.Receipts...)
 	}
 	return total, nil
 }
@@ -54,6 +55,8 @@ func NewMemoryCommand() *cobra.Command {
 		newForgetAuditCommand(),
 		newReplayForgetCommand(),
 		newCleanupCommand(),
+		newRequeueJobCommand(),
+		newRecoveryStatusCommand(),
 		newLedgerVerifyCommand(),
 		newCapsuleCommand(),
 		newImportCommand(),
@@ -377,11 +380,81 @@ func newCleanupCommand() *cobra.Command {
 				return fmt.Errorf("cleanup incomplete: unavailable=%d outcome_unknown=%d",
 					outcome.Unavailable, outcome.OutcomeUnknown)
 			}
+			status, err := store.RecoveryStatus(context.Background())
+			if err != nil {
+				return err
+			}
+			stats, err := store.JobStats(context.Background())
+			if err != nil {
+				return err
+			}
+			backlog := stats[memstore.JobPending] + stats[memstore.JobRunning]
+			if !status.Ready || backlog > 0 {
+				return fmt.Errorf(
+					"cleanup incomplete: ready=%v blocked_jobs=%d cancelled_jobs=%d blocked_intents=%d pending_intents=%d backlog=%d",
+					status.Ready, status.BlockedCleanup, status.InertCleanup,
+					status.BlockedIntents, status.PendingIntents, backlog)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&maxJobs, "max-jobs", 20, "maximum cleanup jobs to process")
 	return cmd
+}
+
+func newRequeueJobCommand() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "requeue-job <job-id>",
+		Short: "Create a successor for a blocked, failed or cancelled cleanup job",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !yes {
+				return fmt.Errorf("requeue-job creates new work; pass --yes to confirm")
+			}
+			store, _, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			job, err := store.RequeueJob(cliAuditContext(store), args[0])
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(job)
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm creation of the successor job")
+	return cmd
+}
+
+func newRecoveryStatusCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "recovery-status",
+		Short: "Show whether long-term memory is ready or waiting for recovery",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			store, _, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			status, err := store.RecoveryStatus(context.Background())
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(status); err != nil {
+				return err
+			}
+			if !status.Ready {
+				return fmt.Errorf("memory recovery incomplete: %s", strings.Join(status.Issues, ","))
+			}
+			return nil
+		},
+	}
 }
 
 func newLedgerVerifyCommand() *cobra.Command {

@@ -262,6 +262,12 @@ func (s *JSONLStore) sessionExists(key string) bool {
 	return false
 }
 
+// OwnsSession reports whether this JSONL store currently holds the session.
+// Cleanup uses it to avoid reporting another agent store's session as missing.
+func (s *JSONLStore) OwnsSession(key string) bool {
+	return s.sessionExists(key)
+}
+
 // GetSessionMeta returns the current metadata snapshot for sessionKey.
 func (s *JSONLStore) GetSessionMeta(_ context.Context, sessionKey string) (SessionMeta, error) {
 	l := s.sessionLock(sessionKey)

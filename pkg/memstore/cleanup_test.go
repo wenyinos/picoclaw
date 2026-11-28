@@ -13,7 +13,14 @@ type fakeCleaner struct {
 func (f *fakeCleaner) CleanLocators(_ context.Context, locators []SourceLocator) (CleanupOutcome, error) {
 	f.calls++
 	f.locs = append(f.locs, locators...)
-	return CleanupOutcome{Removed: 1, Sessions: 1}, nil
+	out := CleanupOutcome{Removed: 1, Sessions: 1}
+	for _, loc := range locators {
+		out.Receipts = append(out.Receipts, LocatorReceipt{
+			Backend: cleanupBackendForLocator(loc), LocatorKey: LocatorReceiptKey(loc),
+			State: ReceiptRemoved, ReasonCode: "fake_removed", Removed: 1,
+		})
+	}
+	return out, nil
 }
 
 // TestForgetQueuesCleanupJob verifies the cross-store obligation is committed

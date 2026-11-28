@@ -29,8 +29,52 @@ func (c compositeCleaner) CleanLocators(ctx context.Context, locators []memstore
 		total.OutcomeUnknown += outcome.OutcomeUnknown
 		total.Sessions += outcome.Sessions
 		total.Details = append(total.Details, outcome.Details...)
+		total.Receipts = append(total.Receipts, outcome.Receipts...)
 	}
 	return total, nil
+}
+
+// runRecoveryPreflight completes safe ledger reconciliation before the agent
+// starts accepting turns. A failed or incomplete preflight does not stop normal
+// chat, but MemoryService and context assembly stay fail-closed.
+func (al *AgentLoop) runRecoveryPreflight(ctx context.Context) {
+	if al == nil || al.cfg == nil {
+		return
+	}
+	workspace := strings.TrimSpace(al.cfg.Agents.Defaults.Workspace)
+	if workspace == "" {
+		return
+	}
+	store, err := memstore.OpenForWorkspace(workspace, memstoreConfigFrom(al.cfg.Memory))
+	if err != nil {
+		logger.WarnCF("memory", "recovery preflight skipped: store unavailable", map[string]any{
+			"error": err.Error(),
+		})
+		return
+	}
+	defer store.Close()
+	preflightCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	status, err := store.RecoveryPreflight(preflightCtx)
+	if err != nil {
+		logger.WarnCF("memory", "recovery preflight failed", map[string]any{"error": err.Error()})
+		return
+	}
+	fields := map[string]any{
+		"ready":           status.Ready,
+		"pending_intents": status.PendingIntents,
+		"blocked_intents": status.BlockedIntents,
+		"blocked_cleanup": status.BlockedCleanup,
+		"inert_cleanup":   status.InertCleanup,
+		"orphan_entries":  status.OrphanEntries,
+		"domain_registry": status.DomainRegistryOK,
+	}
+	if status.Ready {
+		logger.InfoCF("memory", "recovery preflight ready", fields)
+	} else {
+		fields["issues"] = status.Issues
+		logger.WarnCF("memory", "recovery preflight requires owner action", fields)
+	}
 }
 
 // runForgetCleanup drains accepted forget obligations at gateway start and on

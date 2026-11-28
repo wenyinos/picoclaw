@@ -978,8 +978,17 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 
 		// Fixed memory blocks plus query-relevant memories. Both are filtered
 		// by audience/channel here, where the current channel is known.
+		memoryEnabled := cb.longTerm != nil && cb.longTermCfg.Enabled
+		if memoryEnabled {
+			if err := cb.longTerm.RequireOperational(context.Background()); err != nil {
+				memoryEnabled = false
+				logger.WarnCF("memory", "long-term memory disabled until recovery completes", map[string]any{
+					"reason": err.Error(),
+				})
+			}
+		}
 		fixedUsage := memstore.FixedUsage{}
-		if cb.longTerm != nil && cb.longTermCfg.Enabled {
+		if memoryEnabled {
 			fixedBudget := cb.longTermCfg.BudgetTokens * 50 / 100
 			if fixedBudget <= 0 {
 				fixedBudget = 600
@@ -1005,7 +1014,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			}
 		}
 
-		if cb.longTerm != nil && cb.longTermCfg.Enabled && strings.TrimSpace(req.CurrentMessage) != "" {
+		if memoryEnabled && strings.TrimSpace(req.CurrentMessage) != "" {
 			budget := cb.longTermCfg.BudgetTokens - fixedUsage.TotalTokens
 			if budget < 0 {
 				budget = 0

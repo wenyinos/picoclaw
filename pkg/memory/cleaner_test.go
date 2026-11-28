@@ -57,6 +57,14 @@ func TestLocatorCleanerRemovesEveryVerifiedDuplicateAndToolText(t *testing.T) {
 	if outcome.Removed != 3 || outcome.Unavailable != 0 || outcome.Sessions != 1 {
 		t.Fatalf("outcome = %+v", outcome)
 	}
+	if len(outcome.Receipts) != 2 {
+		t.Fatalf("receipts = %+v", outcome.Receipts)
+	}
+	for _, receipt := range outcome.Receipts {
+		if receipt.Backend != "jsonl" || receipt.State != memstore.ReceiptRemoved {
+			t.Fatalf("receipt = %+v", receipt)
+		}
+	}
 	history, err := store.GetHistory(ctx, key)
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +97,9 @@ func TestLocatorCleanerReportsUnverifiableWithoutDeleting(t *testing.T) {
 	}
 	if outcome.Removed != 0 || outcome.Unavailable != 1 {
 		t.Fatalf("outcome = %+v", outcome)
+	}
+	if len(outcome.Receipts) != 1 || outcome.Receipts[0].State != memstore.ReceiptUnavailable {
+		t.Fatalf("receipts = %+v", outcome.Receipts)
 	}
 	history, err := store.GetHistory(ctx, key)
 	if err != nil {

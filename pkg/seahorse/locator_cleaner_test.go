@@ -52,6 +52,10 @@ func TestSeahorseLocatorCleanerDeletesMessagesAndSummaries(t *testing.T) {
 	if outcome.Removed != 1 || outcome.Unavailable != 0 {
 		t.Fatalf("outcome = %+v", outcome)
 	}
+	if len(outcome.Receipts) != 1 || outcome.Receipts[0].Backend != "seahorse" ||
+		outcome.Receipts[0].State != memstore.ReceiptRemoved {
+		t.Fatalf("receipts = %+v", outcome.Receipts)
+	}
 	remaining, err := engine.store.GetMessages(ctx, conv.ConversationID, 10, 0)
 	if err != nil {
 		t.Fatal(err)

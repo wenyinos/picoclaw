@@ -48,7 +48,9 @@ type ForgetIntent struct {
 	TargetManifest string `json:"target_manifest,omitempty"`
 	Status         string `json:"status"`
 	AppliedSeq     int64  `json:"applied_seq,omitempty"`
+	BlockedReason  string `json:"blocked_reason,omitempty"`
 	CreatedAt      int64  `json:"created_at"`
+	UpdatedAt      int64  `json:"updated_at,omitempty"`
 }
 
 // ForgetManifestVersionV2 adds per-target domain and revision proofs. The
@@ -159,11 +161,71 @@ func openForgetLedger(path string, allowCreate bool) (*ForgetLedger, error) {
 		)`,
 		`CREATE INDEX IF NOT EXISTS ix_forget_journal_status ON forget_journal(status, seq)`,
 		`CREATE INDEX IF NOT EXISTS ix_forget_journal_digest ON forget_journal(selector_digest)`,
+		`CREATE TABLE IF NOT EXISTS forget_receipts (
+			ledger_uuid TEXT NOT NULL,
+			intent_seq INTEGER NOT NULL,
+			request_id TEXT NOT NULL,
+			backend TEXT NOT NULL,
+			locator_key TEXT NOT NULL,
+			state TEXT NOT NULL,
+			reason_code TEXT NOT NULL DEFAULT '',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(intent_seq, backend, locator_key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS ix_forget_receipts_request ON forget_receipts(request_id, state)`,
+		`CREATE INDEX IF NOT EXISTS ix_forget_receipts_state ON forget_receipts(state, updated_at)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("memstore: ledger schema: %w", err)
 		}
+	}
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("memstore: ledger column transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	existingColumns := map[string]bool{}
+	rows, err := tx.Query(`PRAGMA table_info(forget_journal)`)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("memstore: ledger column plan: %w", err)
+	}
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("memstore: ledger column scan: %w", err)
+		}
+		existingColumns[name] = true
+	}
+	if err := rows.Close(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{"blocked_reason", "TEXT NOT NULL DEFAULT ''"},
+		{"updated_at", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if existingColumns[column.name] {
+			continue
+		}
+		if _, err := tx.Exec(`ALTER TABLE forget_journal ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("memstore: ledger column %s: %w", column.name, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("memstore: ledger column commit: %w", err)
 	}
 	_ = os.Chmod(path, 0o600)
 
@@ -311,12 +373,14 @@ func (l *ForgetLedger) RecordIntent(ctx context.Context, in ForgetIntent) (Forge
 	var existing ForgetIntent
 	err = tx.QueryRowContext(ctx,
 		`SELECT seq,ledger_uuid,request_id,namespace,domain_id,scope_json,selector_type,
-		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at
+		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at,
+		        blocked_reason,updated_at
 		 FROM forget_journal WHERE request_id=? ORDER BY seq LIMIT 1`, in.RequestID).
 		Scan(&existing.Seq, &existing.LedgerUUID, &existing.RequestID, &existing.Namespace,
 			&existing.DomainID, &existing.ScopeJSON, &existing.SelectorType,
 			&existing.SelectorDigest, &existing.HashVersion, &existing.KeyID,
-			&existing.TargetManifest, &existing.Status, &existing.AppliedSeq, &existing.CreatedAt)
+			&existing.TargetManifest, &existing.Status, &existing.AppliedSeq, &existing.CreatedAt,
+			&existing.BlockedReason, &existing.UpdatedAt)
 	if err == nil {
 		if existing.DomainID != in.DomainID || existing.SelectorDigest != in.SelectorDigest ||
 			existing.TargetManifest != in.TargetManifest {
@@ -353,9 +417,9 @@ func (l *ForgetLedger) MarkApplied(ctx context.Context, seq, appliedSeq int64) e
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	res, err := l.db.ExecContext(ctx,
-		`UPDATE forget_journal SET status='applied', applied_seq=?
+		`UPDATE forget_journal SET status='applied', applied_seq=?, blocked_reason='', updated_at=?
 		 WHERE seq=? AND status IN ('pending','applied')`,
-		appliedSeq, seq)
+		appliedSeq, time.Now().UnixMilli(), seq)
 	if err != nil {
 		return err
 	}
@@ -371,8 +435,9 @@ func (l *ForgetLedger) MarkBlocked(ctx context.Context, seq int64, reason string
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	res, err := l.db.ExecContext(ctx,
-		`UPDATE forget_journal SET status='blocked'
-		 WHERE seq=? AND status IN ('pending','blocked')`, seq)
+		`UPDATE forget_journal SET status='blocked', blocked_reason=?, updated_at=?
+		 WHERE seq=? AND status IN ('pending','blocked')`,
+		truncateRunes(strings.TrimSpace(reason), 200), time.Now().UnixMilli(), seq)
 	if err != nil {
 		return err
 	}
@@ -380,7 +445,6 @@ func (l *ForgetLedger) MarkBlocked(ctx context.Context, seq int64, reason string
 	if n == 0 {
 		return fmt.Errorf("memstore: forget intent %d is not markable blocked", seq)
 	}
-	_ = reason // Persisted blocked reason is added by the receipt state migration.
 	return nil
 }
 
@@ -388,7 +452,8 @@ func (l *ForgetLedger) MarkBlocked(ctx context.Context, seq int64, reason string
 func (l *ForgetLedger) Pending(ctx context.Context) ([]ForgetIntent, error) {
 	return l.queryIntents(ctx,
 		`SELECT seq,ledger_uuid,request_id,namespace,domain_id,scope_json,selector_type,
-		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at
+		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at,
+		        blocked_reason,updated_at
 		 FROM forget_journal WHERE status='pending' ORDER BY seq`)
 }
 
@@ -397,7 +462,8 @@ func (l *ForgetLedger) Pending(ctx context.Context) ([]ForgetIntent, error) {
 func (l *ForgetLedger) AllIntents(ctx context.Context) ([]ForgetIntent, error) {
 	return l.queryIntents(ctx,
 		`SELECT seq,ledger_uuid,request_id,namespace,domain_id,scope_json,selector_type,
-		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at
+		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at,
+		        blocked_reason,updated_at
 		 FROM forget_journal ORDER BY seq`)
 }
 
@@ -408,7 +474,8 @@ func (l *ForgetLedger) Recent(ctx context.Context, limit int) ([]ForgetIntent, e
 	}
 	return l.queryIntents(ctx,
 		`SELECT seq,ledger_uuid,request_id,namespace,domain_id,scope_json,selector_type,
-		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at
+		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at,
+		        blocked_reason,updated_at
 		 FROM forget_journal ORDER BY seq DESC LIMIT ?`, limit)
 }
 
@@ -423,12 +490,97 @@ func (l *ForgetLedger) queryIntents(ctx context.Context, q string, args ...any) 
 		var in ForgetIntent
 		if err := rows.Scan(&in.Seq, &in.LedgerUUID, &in.RequestID, &in.Namespace, &in.DomainID,
 			&in.ScopeJSON, &in.SelectorType, &in.SelectorDigest, &in.HashVersion, &in.KeyID,
-			&in.TargetManifest, &in.Status, &in.AppliedSeq, &in.CreatedAt); err != nil {
+			&in.TargetManifest, &in.Status, &in.AppliedSeq, &in.CreatedAt,
+			&in.BlockedReason, &in.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, in)
 	}
 	return out, rows.Err()
+}
+
+// IntentByRequestID returns the authoritative obligation for a cleanup job.
+func (l *ForgetLedger) IntentByRequestID(ctx context.Context, requestID string) (*ForgetIntent, error) {
+	rows, err := l.queryIntents(ctx,
+		`SELECT seq,ledger_uuid,request_id,namespace,domain_id,scope_json,selector_type,
+		        selector_digest,hash_version,key_id,target_manifest,status,applied_seq,created_at,
+		        blocked_reason,updated_at
+		 FROM forget_journal WHERE request_id=? ORDER BY seq LIMIT 1`, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
+
+// ForgetReceipt is the durable per-backend, per-locator cleanup state. It
+// contains locator digests and reason codes, never source text.
+type ForgetReceipt struct {
+	LedgerUUID string `json:"ledger_uuid"`
+	IntentSeq  int64  `json:"intent_seq"`
+	RequestID  string `json:"request_id"`
+	Backend    string `json:"backend"`
+	LocatorKey string `json:"locator_key"`
+	State      string `json:"state"`
+	ReasonCode string `json:"reason_code,omitempty"`
+	Attempts   int    `json:"attempts"`
+	UpdatedAt  int64  `json:"updated_at"`
+}
+
+// ReceiptsForIntent returns all persisted locator receipts for one intent.
+func (l *ForgetLedger) ReceiptsForIntent(ctx context.Context, seq int64) ([]ForgetReceipt, error) {
+	rows, err := l.db.QueryContext(ctx,
+		`SELECT ledger_uuid,intent_seq,request_id,backend,locator_key,state,reason_code,attempts,updated_at
+		 FROM forget_receipts WHERE intent_seq=? ORDER BY backend,locator_key`, seq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ForgetReceipt{}
+	for rows.Next() {
+		var r ForgetReceipt
+		if err := rows.Scan(&r.LedgerUUID, &r.IntentSeq, &r.RequestID, &r.Backend,
+			&r.LocatorKey, &r.State, &r.ReasonCode, &r.Attempts, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SaveReceipts atomically upserts the latest outcome of one cleanup attempt.
+func (l *ForgetLedger) SaveReceipts(ctx context.Context, intent ForgetIntent, receipts []LocatorReceipt, attempt int) error {
+	if len(receipts) == 0 {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := time.Now().UnixMilli()
+	for _, receipt := range receipts {
+		if strings.TrimSpace(receipt.Backend) == "" || strings.TrimSpace(receipt.LocatorKey) == "" ||
+			strings.TrimSpace(receipt.State) == "" {
+			return fmt.Errorf("memstore: cleanup receipt needs backend, locator and state")
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO forget_receipts
+			 (ledger_uuid,intent_seq,request_id,backend,locator_key,state,reason_code,attempts,updated_at)
+			 VALUES(?,?,?,?,?,?,?,?,?)
+			 ON CONFLICT(intent_seq,backend,locator_key) DO UPDATE SET
+			   state=excluded.state, reason_code=excluded.reason_code,
+			   attempts=MAX(forget_receipts.attempts,excluded.attempts), updated_at=excluded.updated_at`,
+			l.uuid, intent.Seq, intent.RequestID, receipt.Backend, receipt.LocatorKey,
+			receipt.State, truncateRunes(receipt.ReasonCode, 80), attempt, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // HasDigest reports whether a digest was ever forgotten. It is the cross-

@@ -40,7 +40,10 @@ func (svc *MemoryService) Store() *Store { return svc.store }
 
 // authorizeRead rejects contexts that carry no identity at all for sensitive
 // material. Ordinary reads are constrained by domain/audience in SQL.
-func (svc *MemoryService) authorizeRead(mc MemoryContext) (MemoryContext, error) {
+func (svc *MemoryService) authorizeRead(ctx context.Context, mc MemoryContext) (MemoryContext, error) {
+	if err := svc.store.RequireOperational(ctx); err != nil {
+		return mc, err
+	}
 	mc = mc.Normalize()
 	if strings.TrimSpace(mc.DomainID) == "" {
 		return mc, fmt.Errorf("memstore: no domain binding for this request")
@@ -50,7 +53,10 @@ func (svc *MemoryService) authorizeRead(mc MemoryContext) (MemoryContext, error)
 
 // authorizeWrite blocks personal long-term writes from shared chats and
 // secrets from every chat (FR-12).
-func (svc *MemoryService) authorizeWrite(mc MemoryContext, sensitivity string) (MemoryContext, error) {
+func (svc *MemoryService) authorizeWrite(ctx context.Context, mc MemoryContext, sensitivity string) (MemoryContext, error) {
+	if err := svc.store.RequireOperational(ctx); err != nil {
+		return mc, err
+	}
 	mc = mc.Normalize()
 	if mc.ChatKind == ChatKindGroup || mc.ChatKind == ChatKindPublic {
 		return mc, fmt.Errorf("memstore: shared chats cannot write personal long-term memory")
@@ -95,7 +101,7 @@ func (svc *MemoryService) Add(ctx context.Context, mc MemoryContext, in AddInput
 	if strings.TrimSpace(in.Sensitivity) == "" {
 		in.Sensitivity = SensitivityForText(in.Text)
 	}
-	mc, err := svc.authorizeWrite(mc, in.Sensitivity)
+	mc, err := svc.authorizeWrite(ctx, mc, in.Sensitivity)
 	if err != nil {
 		return &AddResult{Action: "blocked_policy"}, err
 	}
@@ -104,7 +110,7 @@ func (svc *MemoryService) Add(ctx context.Context, mc MemoryContext, in AddInput
 
 // Search applies the visibility predicate.
 func (svc *MemoryService) Search(ctx context.Context, mc MemoryContext, opts SearchOptions) ([]Entry, error) {
-	mc, err := svc.authorizeRead(mc)
+	mc, err := svc.authorizeRead(ctx, mc)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +133,7 @@ func (svc *MemoryService) Search(ctx context.Context, mc MemoryContext, opts Sea
 
 // Get returns one entry after the visibility check.
 func (svc *MemoryService) Get(ctx context.Context, mc MemoryContext, id string) (*Entry, error) {
-	mc, err := svc.authorizeRead(mc)
+	mc, err := svc.authorizeRead(ctx, mc)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +161,7 @@ func (svc *MemoryService) Confirm(ctx context.Context, mc MemoryContext, id, evi
 	if err := requireOwner(mc); err != nil {
 		return err
 	}
-	mc, err := svc.authorizeWrite(mc, "")
+	mc, err := svc.authorizeWrite(ctx, mc, "")
 	if err != nil {
 		return err
 	}
@@ -167,7 +173,7 @@ func (svc *MemoryService) Confirm(ctx context.Context, mc MemoryContext, id, evi
 
 // Correct creates a new version.
 func (svc *MemoryService) Correct(ctx context.Context, mc MemoryContext, id string, in AddInput) (*AddResult, error) {
-	mc, err := svc.authorizeWrite(mc, "")
+	mc, err := svc.authorizeWrite(ctx, mc, "")
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +208,7 @@ func (svc *MemoryService) Correct(ctx context.Context, mc MemoryContext, id stri
 // UpdateMetadata applies non-content, non-status metadata through the governed
 // write path. Text changes must use Correct.
 func (svc *MemoryService) UpdateMetadata(ctx context.Context, mc MemoryContext, id string, in AddInput) (*Entry, error) {
-	mc, err := svc.authorizeWrite(mc, "")
+	mc, err := svc.authorizeWrite(ctx, mc, "")
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +228,7 @@ func (svc *MemoryService) SetStatus(ctx context.Context, mc MemoryContext, id, s
 	if err := requireOwner(mc); err != nil {
 		return err
 	}
-	mc, err := svc.authorizeWrite(mc, "")
+	mc, err := svc.authorizeWrite(ctx, mc, "")
 	if err != nil {
 		return err
 	}
@@ -242,7 +248,7 @@ func (svc *MemoryService) SetRelationshipState(ctx context.Context, mc MemoryCon
 		return fmt.Errorf("memstore: relationship value exceeds %d characters", maxRelationshipValueRunes)
 	}
 	sensitivity := SensitivityForText(update.Value)
-	mc, err := svc.authorizeWrite(mc, sensitivity)
+	mc, err := svc.authorizeWrite(ctx, mc, sensitivity)
 	if err != nil {
 		return err
 	}
@@ -260,7 +266,7 @@ func (svc *MemoryService) Forget(ctx context.Context, mc MemoryContext, id strin
 
 // ForgetAtRevision binds a permanent delete to the expected entry revision.
 func (svc *MemoryService) ForgetAtRevision(ctx context.Context, mc MemoryContext, id string, dryRun bool, expectedRevision int64) (*ForgetPreview, error) {
-	mc, err := svc.authorizeWrite(mc, "")
+	mc, err := svc.authorizeWrite(ctx, mc, "")
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +309,7 @@ func (svc *MemoryService) CreateChangePlan(ctx context.Context, mc MemoryContext
 	if err := requireOwner(mc); err != nil {
 		return nil, err
 	}
-	mc, err := svc.authorizeWrite(mc, "")
+	mc, err := svc.authorizeWrite(ctx, mc, "")
 	if err != nil {
 		return nil, err
 	}

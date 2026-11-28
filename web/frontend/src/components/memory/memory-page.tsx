@@ -14,6 +14,7 @@ import {
   type MemoryMigrationReport,
   type MemoryMigrationStatus,
   type MemoryOverview,
+  type MemoryRecoveryStatus,
   type MemoryRepairFilter,
   type MemoryRepairPreview,
   type MemoryRepairTarget,
@@ -139,6 +140,7 @@ function GovernanceTab({
   onNotice: (v: string) => void
 }) {
   const [health, setHealth] = useState<MemoryLedgerHealth | null>(null)
+  const [recovery, setRecovery] = useState<MemoryRecoveryStatus | null>(null)
   const [plans, setPlans] = useState<MemoryChangePlan[]>([])
   const [jobStats, setJobStats] = useState<Record<string, number>>({})
   const [jobs, setJobs] = useState<MemoryJob[]>([])
@@ -150,8 +152,9 @@ function GovernanceTab({
   >({})
 
   const load = async () => {
-    const [h, p, j, d, c, cl] = await Promise.all([
+    const [h, r, p, j, d, c, cl] = await Promise.all([
       memoryApi.ledgerHealth(),
+      memoryApi.recovery(),
       memoryApi.plans("pending"),
       memoryApi.jobs(),
       memoryApi.domains(),
@@ -159,6 +162,7 @@ function GovernanceTab({
       memoryApi.clusters(),
     ])
     setHealth(h)
+    setRecovery(r)
     setPlans(p.plans)
     setJobs(j.jobs)
     setJobStats(j.stats)
@@ -170,6 +174,23 @@ function GovernanceTab({
   useEffect(() => {
     load().catch((e: Error) => onError(e.message))
   }, [])
+
+  const requeue = async (job: MemoryJob) => {
+    if (
+      !window.confirm(
+        `为 ${job.job_id} 创建新的清理后继任务？原任务会保留为 superseded，清理回执和账本义务不变。`,
+      )
+    ) {
+      return
+    }
+    try {
+      const next = await memoryApi.requeueJob(job.job_id)
+      onNotice(`已创建后继任务 ${next.job_id}`)
+      await load()
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
 
   const approve = async (id: string) => {
     try {
@@ -230,6 +251,36 @@ function GovernanceTab({
 
   return (
     <div className="flex flex-col gap-6">
+      <section className="rounded-lg border p-4">
+        <h2 className="mb-3 text-sm font-semibold">恢复门禁</h2>
+        {!recovery ? (
+          <p className="text-muted-foreground text-sm">加载中…</p>
+        ) : recovery.ready ? (
+          <p className="text-sm text-emerald-600">
+            长期记忆已就绪：账本、清理回执和域注册检查通过。
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2 text-sm">
+            <p className="text-amber-600">
+              长期记忆已故障关闭；普通聊天可继续，但不会注入或写入长期记忆。
+            </p>
+            <div className="text-muted-foreground text-xs break-all">
+              {recovery.issues?.join(" · ") || "unknown readiness issue"}
+            </div>
+            <div className="grid grid-cols-2 gap-1 text-xs sm:grid-cols-4">
+              <span>pending intents: {recovery.pending_intents}</span>
+              <span>blocked intents: {recovery.blocked_intents}</span>
+              <span>pending cleanup: {recovery.pending_cleanup}</span>
+              <span>blocked cleanup: {recovery.blocked_cleanup}</span>
+              <span>cancelled cleanup: {recovery.inert_cleanup}</span>
+              <span>orphan entries: {recovery.orphan_entries}</span>
+              <span>schema: {recovery.schema_ready ? "ok" : "blocked"}</span>
+              <span>ledger: {recovery.ledger_ready ? "ok" : "blocked"}</span>
+            </div>
+          </div>
+        )}
+      </section>
+
       <section className="rounded-lg border p-4">
         <h2 className="mb-3 text-sm font-semibold">遗忘账本</h2>
         {!health ? (
@@ -313,6 +364,16 @@ function GovernanceTab({
                   {job.job_id}
                   {job.last_error ? ` · ${job.last_error}` : ""}
                 </div>
+                {["blocked", "cancelled", "failed"].includes(job.state) && (
+                  <Button
+                    className="mt-2"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => requeue(job)}
+                  >
+                    创建后继清理任务
+                  </Button>
+                )}
               </div>
             ))}
           </div>

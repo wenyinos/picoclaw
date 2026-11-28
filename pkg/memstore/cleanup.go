@@ -23,16 +23,61 @@ type SourceLocator struct {
 	RootVersion    int    `json:"root_version,omitempty"`
 }
 
+// Cleanup receipt states are terminal only when the current backend state has
+// been verified. "removed" means this attempt deleted at least one matching
+// message; "verified_absent" means the target is absent now without claiming
+// which earlier run removed it.
+const (
+	ReceiptPending        = "pending"
+	ReceiptRunning        = "running"
+	ReceiptRemoved        = "removed"
+	ReceiptVerifiedAbsent = "verified_absent"
+	ReceiptUnavailable    = "unavailable"
+	ReceiptOutcomeUnknown = "outcome_unknown"
+	ReceiptBlocked        = "blocked"
+)
+
+// LocatorReceipt is the per-backend result for one manifest locator.
+type LocatorReceipt struct {
+	Backend    string `json:"backend"`
+	LocatorKey string `json:"locator_key"`
+	State      string `json:"state"`
+	ReasonCode string `json:"reason_code,omitempty"`
+	Removed    int    `json:"removed,omitempty"`
+}
+
+// LocatorReceiptKey identifies a locator without storing source text or a
+// reversible session locator in the receipt table.
+func LocatorReceiptKey(loc SourceLocator) string {
+	raw, _ := json.Marshal(struct {
+		SessionKey     string `json:"session_key,omitempty"`
+		ConversationID string `json:"conversation_id,omitempty"`
+		MessageID      *int64 `json:"message_id,omitempty"`
+		OriginEventID  string `json:"origin_event_id,omitempty"`
+		EvidenceHMAC   string `json:"evidence_hmac,omitempty"`
+		KeyID          string `json:"key_id,omitempty"`
+		RootType       string `json:"root_type,omitempty"`
+		RootVersion    int    `json:"root_version,omitempty"`
+	}{
+		SessionKey: loc.SessionKey, ConversationID: loc.ConversationID,
+		MessageID: loc.MessageID, OriginEventID: loc.OriginEventID,
+		EvidenceHMAC: loc.EvidenceHMAC, KeyID: loc.KeyID,
+		RootType: loc.RootType, RootVersion: loc.RootVersion,
+	})
+	return ContentHash(Normalize(string(raw)))
+}
+
 // CleanupOutcome reports what a backend could and could not clean. Unavailable
 // locators are reported as partial, never as success.
 type CleanupOutcome struct {
-	Backend        string   `json:"backend,omitempty"`
-	Removed        int      `json:"removed"`
-	AlreadyAbsent  int      `json:"already_absent"`
-	Unavailable    int      `json:"unavailable"`
-	OutcomeUnknown int      `json:"outcome_unknown"`
-	Sessions       int      `json:"sessions"`
-	Details        []string `json:"details,omitempty"`
+	Backend        string           `json:"backend,omitempty"`
+	Removed        int              `json:"removed"`
+	AlreadyAbsent  int              `json:"already_absent"`
+	Unavailable    int              `json:"unavailable"`
+	OutcomeUnknown int              `json:"outcome_unknown"`
+	Sessions       int              `json:"sessions"`
+	Details        []string         `json:"details,omitempty"`
+	Receipts       []LocatorReceipt `json:"receipts,omitempty"`
 }
 
 // EvidenceRootV1 is the host-generated locator for one complete source unit.
@@ -68,6 +113,12 @@ func parseEvidenceRoot(raw string) (EvidenceRootV1, bool) {
 		return root, false
 	}
 	return root, true
+}
+
+// SessionOwnership lets a multi-store cleaner skip sessions that another
+// backend owns instead of falsely reporting them unavailable.
+type SessionOwnership interface {
+	OwnsSession(sessionKey string) bool
 }
 
 // MessageCleaner removes specific messages from a session/transcript backend.
@@ -132,6 +183,82 @@ func enqueueCleanupJobTx(ctx context.Context, tx *sql.Tx, requestID, manifest st
 	return err
 }
 
+func normalizeCleanupReceipts(locators []SourceLocator, produced []LocatorReceipt,
+	prior map[string]ForgetReceipt,
+) ([]LocatorReceipt, int, int) {
+	byKey := map[string]LocatorReceipt{}
+	for _, receipt := range produced {
+		if receipt.LocatorKey == "" || receipt.Backend == "" {
+			continue
+		}
+		if existing, ok := byKey[receipt.LocatorKey]; ok {
+			if receiptSeverity(receipt.State) > receiptSeverity(existing.State) {
+				byKey[receipt.LocatorKey] = receipt
+			}
+			continue
+		}
+		byKey[receipt.LocatorKey] = receipt
+	}
+	out := make([]LocatorReceipt, 0, len(locators))
+	missing := 0
+	recoveredAbsent := 0
+	for _, loc := range locators {
+		key := LocatorReceiptKey(loc)
+		receipt, ok := byKey[key]
+		if !ok {
+			receipt = LocatorReceipt{
+				Backend: cleanupBackendForLocator(loc), LocatorKey: key,
+				State: ReceiptUnavailable, ReasonCode: "no_backend_receipt",
+			}
+			missing++
+		}
+		previous := prior[key]
+		if receipt.State == ReceiptUnavailable && receipt.ReasonCode == "root_no_match" &&
+			(previous.State == ReceiptRunning || previous.State == ReceiptRemoved) {
+			// A prior attempt reached this locator before the receipt could be
+			// finalized. The current run proves the target is absent now, but it
+			// cannot truthfully claim which attempt removed it.
+			receipt.State = ReceiptVerifiedAbsent
+			receipt.ReasonCode = "verified_after_prior_attempt"
+			recoveredAbsent++
+		}
+		out = append(out, receipt)
+	}
+	return out, missing, recoveredAbsent
+}
+
+func cleanupBackendForLocator(loc SourceLocator) string {
+	if strings.HasPrefix(loc.RootType, "seahorse.") {
+		return "seahorse"
+	}
+	return "jsonl"
+}
+
+func receiptSeverity(state string) int {
+	switch state {
+	case ReceiptBlocked, ReceiptOutcomeUnknown, ReceiptUnavailable:
+		return 3
+	case ReceiptPending, ReceiptRunning:
+		return 2
+	case ReceiptRemoved, ReceiptVerifiedAbsent:
+		return 1
+	default:
+		return 3
+	}
+}
+
+func cleanupReceiptsIncomplete(receipts []LocatorReceipt) (unknown, unavailable int) {
+	for _, receipt := range receipts {
+		switch receipt.State {
+		case ReceiptOutcomeUnknown:
+			unknown++
+		case ReceiptUnavailable, ReceiptBlocked, ReceiptPending, ReceiptRunning:
+			unavailable++
+		}
+	}
+	return unknown, unavailable
+}
+
 // RunCleanupJobs consumes forget_cleanup jobs and hands the manifests to a
 // backend cleaner. It is safe to call on every gateway start or from the
 // `memory cleanup` CLI command.
@@ -155,6 +282,29 @@ func (s *Store) RunCleanupJobs(ctx context.Context, cleaner MessageCleaner, maxJ
 		if job == nil {
 			break
 		}
+		if s.ledger == nil {
+			total.Unavailable++
+			total.Details = append(total.Details, fmt.Sprintf("job %s: forget ledger unavailable", job.JobID))
+			_ = s.BlockJob(ctx, job.JobID, "forget ledger unavailable; cleanup cannot persist receipts")
+			continue
+		}
+		requestID := strings.TrimSpace(job.InputFingerprint)
+		if requestID == "" {
+			requestID = strings.TrimPrefix(job.JobID, "forget:")
+		}
+		intent, err := s.ledger.IntentByRequestID(ctx, requestID)
+		if err != nil {
+			total.Unavailable++
+			total.Details = append(total.Details, fmt.Sprintf("job %s: receipt lookup failed: %v", job.JobID, err))
+			_ = s.FailJob(ctx, job.JobID, "receipt lookup failed", 0, 5)
+			continue
+		}
+		if intent == nil {
+			total.Unavailable++
+			total.Details = append(total.Details, fmt.Sprintf("job %s: ledger intent missing", job.JobID))
+			_ = s.BlockJob(ctx, job.JobID, "ledger intent missing; cleanup cannot be attributed")
+			continue
+		}
 		manifest, err := ParseManifest(job.Payload)
 		if err != nil {
 			total.Unavailable++
@@ -172,34 +322,91 @@ func (s *Store) RunCleanupJobs(ctx context.Context, cleaner MessageCleaner, maxJ
 			_ = s.BlockJob(ctx, job.JobID, "no locator recorded; cleanup is partial")
 			continue
 		}
+		priorList, err := s.ledger.ReceiptsForIntent(ctx, intent.Seq)
+		if err != nil {
+			total.Unavailable++
+			total.Details = append(total.Details, fmt.Sprintf("job %s: prior receipts unavailable", job.JobID))
+			_ = s.FailJob(ctx, job.JobID, "prior receipts unavailable", 0, 5)
+			continue
+		}
+		prior := map[string]ForgetReceipt{}
+		for _, receipt := range priorList {
+			prior[receipt.LocatorKey] = receipt
+		}
+		running := make([]LocatorReceipt, 0, len(manifest.Locators))
+		for _, loc := range manifest.Locators {
+			running = append(running, LocatorReceipt{
+				Backend: cleanupBackendForLocator(loc), LocatorKey: LocatorReceiptKey(loc),
+				State: ReceiptRunning, ReasonCode: "cleanup_started",
+			})
+		}
+		if err := s.ledger.SaveReceipts(ctx, *intent, running, job.Attempts); err != nil {
+			total.Unavailable += len(manifest.Locators)
+			total.Details = append(total.Details, fmt.Sprintf("job %s: cannot persist running receipts", job.JobID))
+			_ = s.FailJob(ctx, job.JobID, "cannot persist cleanup receipts", 0, 5)
+			continue
+		}
 		outcome, err := cleaner.CleanLocators(ctx, manifest.Locators)
 		if err != nil {
 			total.Unavailable += len(manifest.Locators)
 			total.Details = append(total.Details,
 				fmt.Sprintf("job %s: backend error: %v", job.JobID, err))
+			failed := make([]LocatorReceipt, 0, len(manifest.Locators))
+			for _, loc := range manifest.Locators {
+				failed = append(failed, LocatorReceipt{
+					Backend: cleanupBackendForLocator(loc), LocatorKey: LocatorReceiptKey(loc),
+					State: ReceiptUnavailable, ReasonCode: "backend_error",
+				})
+			}
+			_ = s.ledger.SaveReceipts(ctx, *intent, failed, job.Attempts)
 			_ = s.FailJob(ctx, job.JobID, err.Error(), 0, 5)
 			continue
 		}
+
+		receipts, missing, recoveredAbsent := normalizeCleanupReceipts(
+			manifest.Locators, outcome.Receipts, prior)
 		total.Removed += outcome.Removed
-		total.AlreadyAbsent += outcome.AlreadyAbsent
-		total.Unavailable += outcome.Unavailable
+		total.AlreadyAbsent += outcome.AlreadyAbsent + recoveredAbsent
+		total.Unavailable += outcome.Unavailable + missing - recoveredAbsent
+		if total.Unavailable < 0 {
+			total.Unavailable = 0
+		}
 		total.OutcomeUnknown += outcome.OutcomeUnknown
 		total.Sessions += outcome.Sessions
 		total.Details = append(total.Details, outcome.Details...)
-		if outcome.OutcomeUnknown > 0 {
-			reason := fmt.Sprintf("%d locator(s) have an indeterminate backend outcome", outcome.OutcomeUnknown)
+		total.Receipts = append(total.Receipts, receipts...)
+		if missing > 0 {
+			total.Details = append(total.Details,
+				fmt.Sprintf("job %s: %d locator(s) had no backend receipt", job.JobID, missing))
+		}
+		if recoveredAbsent > 0 {
+			total.Details = append(total.Details,
+				fmt.Sprintf("job %s: %d locator(s) verified absent after a prior attempt", job.JobID, recoveredAbsent))
+		}
+		if err := s.ledger.SaveReceipts(ctx, *intent, receipts, job.Attempts); err != nil {
+			total.Unavailable += len(manifest.Locators)
+			total.Details = append(total.Details,
+				fmt.Sprintf("job %s: cannot persist final receipts", job.JobID))
+			_ = s.FailJob(ctx, job.JobID, "cannot persist cleanup receipts", 0, 5)
+			continue
+		}
+		unknown, unavailable := cleanupReceiptsIncomplete(receipts)
+		if unknown > 0 {
+			reason := fmt.Sprintf("%d locator(s) have an indeterminate backend outcome", unknown)
 			total.Details = append(total.Details, fmt.Sprintf("job %s: %s", job.JobID, reason))
 			_ = s.BlockJob(ctx, job.JobID, reason)
 			continue
 		}
-		if outcome.Unavailable > 0 {
-			reason := fmt.Sprintf("%d locator(s) unverifiable; cleanup is partial", outcome.Unavailable)
+		if unavailable > 0 {
+			reason := fmt.Sprintf("%d locator(s) unverifiable; cleanup is partial", unavailable)
 			total.Details = append(total.Details,
 				fmt.Sprintf("job %s: %s", job.JobID, reason))
 			_ = s.BlockJob(ctx, job.JobID, reason)
 			continue
 		}
-		_ = s.CompleteJob(ctx, job.JobID)
+		if err := s.CompleteJob(ctx, job.JobID); err != nil {
+			return total, err
+		}
 	}
 	return total, nil
 }

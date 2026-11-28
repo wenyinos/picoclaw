@@ -39,6 +39,8 @@ func (h *Handler) registerMemoryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/memory/recalls", h.handleMemoryRecalls)
 	mux.HandleFunc("POST /api/memory/recalls/{id}/feedback", h.handleMemoryRecallFeedback)
 	mux.HandleFunc("GET /api/memory/jobs", h.handleMemoryJobs)
+	mux.HandleFunc("POST /api/memory/jobs/{id}/requeue", h.handleMemoryRequeueJob)
+	mux.HandleFunc("GET /api/memory/recovery", h.handleMemoryRecovery)
 	mux.HandleFunc("GET /api/memory/plans", h.handleMemoryPlans)
 	mux.HandleFunc("POST /api/memory/plans/{id}/approve", h.handleMemoryApprovePlan)
 	mux.HandleFunc("GET /api/memory/review", h.handleMemoryReview)
@@ -647,6 +649,46 @@ func (h *Handler) handleMemoryJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "stats": stats})
+}
+
+func (h *Handler) handleMemoryRequeueJob(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	body, err := decodeBody[struct {
+		Confirm bool `json:"confirm"`
+	}](r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !body.Confirm {
+		writeError(w, http.StatusBadRequest, "requeue requires confirm=true")
+		return
+	}
+	ctx := memstore.WithAudit(r.Context(), "dashboard@owner", "")
+	job, err := store.RequeueJob(ctx, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, job)
+}
+
+func (h *Handler) handleMemoryRecovery(w http.ResponseWriter, r *http.Request) {
+	store, _, err := h.memoryStore()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	status, err := store.RecoveryStatus(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (h *Handler) handleMemoryPlans(w http.ResponseWriter, r *http.Request) {

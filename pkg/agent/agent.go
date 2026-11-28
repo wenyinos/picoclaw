@@ -152,6 +152,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	if err := al.ensureMCPInitialized(ctx); err != nil {
 		return err
 	}
+	al.runRecoveryPreflight(ctx)
 	al.cleanupOnce.Do(func() { go al.runForgetCleanup(ctx) })
 
 	idleTicker := time.NewTicker(100 * time.Millisecond)

@@ -32,6 +32,10 @@ func (c *LocatorCleaner) CleanLocators(ctx context.Context, locators []memstore.
 		if strings.TrimSpace(loc.SessionKey) == "" || loc.EvidenceHMAC == "" {
 			out.Unavailable++
 			out.Details = append(out.Details, "seahorse: locator lacks session/root digest")
+			out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+				Backend: "seahorse", LocatorKey: memstore.LocatorReceiptKey(loc),
+				State: memstore.ReceiptUnavailable, ReasonCode: "locator_incomplete",
+			})
 			continue
 		}
 		bySession[loc.SessionKey] = append(bySession[loc.SessionKey], loc)
@@ -39,9 +43,19 @@ func (c *LocatorCleaner) CleanLocators(ctx context.Context, locators []memstore.
 
 	for sessionKey, locs := range bySession {
 		conv, err := c.engine.store.GetConversationBySessionKey(ctx, sessionKey)
-		if err != nil || conv == nil {
+		if err != nil {
 			out.Unavailable += len(locs)
-			out.Details = append(out.Details, fmt.Sprintf("seahorse session %q: conversation unavailable", sessionKey))
+			out.Details = append(out.Details, fmt.Sprintf("seahorse session %q: conversation lookup failed", sessionKey))
+			for _, loc := range locs {
+				out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+					Backend: "seahorse", LocatorKey: memstore.LocatorReceiptKey(loc),
+					State: memstore.ReceiptUnavailable, ReasonCode: "conversation_lookup_failed",
+				})
+			}
+			continue
+		}
+		if conv == nil {
+			// Another Seahorse engine may own this session; leave receipt absent.
 			continue
 		}
 		remove := map[int64]bool{}
@@ -108,6 +122,10 @@ func (c *LocatorCleaner) CleanLocators(ctx context.Context, locators []memstore.
 				out.Unavailable++
 				out.Details = append(out.Details,
 					fmt.Sprintf("seahorse session %q: %s no longer matches", sessionKey, loc.RootType))
+				out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+					Backend: "seahorse", LocatorKey: memstore.LocatorReceiptKey(loc),
+					State: memstore.ReceiptUnavailable, ReasonCode: "root_no_match",
+				})
 			}
 		}
 		if len(remove) == 0 {
@@ -121,7 +139,21 @@ func (c *LocatorCleaner) CleanLocators(ctx context.Context, locators []memstore.
 		if err != nil {
 			out.Unavailable += len(locs)
 			out.Details = append(out.Details, fmt.Sprintf("seahorse session %q: delete failed: %v", sessionKey, err))
+			for _, loc := range locs {
+				out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+					Backend: "seahorse", LocatorKey: memstore.LocatorReceiptKey(loc),
+					State: memstore.ReceiptUnavailable, ReasonCode: "delete_failed",
+				})
+			}
 			continue
+		}
+		for i, loc := range locs {
+			if matched[i] {
+				out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+					Backend: "seahorse", LocatorKey: memstore.LocatorReceiptKey(loc),
+					State: memstore.ReceiptRemoved, ReasonCode: "exact_root_match", Removed: 1,
+				})
+			}
 		}
 		out.Removed += removed
 		out.Sessions++

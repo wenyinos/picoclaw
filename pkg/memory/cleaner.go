@@ -54,12 +54,22 @@ func (c *LocatorCleaner) CleanLocators(
 			out.Unavailable++
 			out.Details = append(out.Details,
 				fmt.Sprintf("session %q: no exact content locator", loc.SessionKey))
+			out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+				Backend: "jsonl", LocatorKey: memstore.LocatorReceiptKey(loc),
+				State: memstore.ReceiptUnavailable, ReasonCode: "locator_incomplete",
+			})
 			continue
 		}
 		bySession[loc.SessionKey] = append(bySession[loc.SessionKey], loc)
 	}
 
+	owner, hasOwnership := c.store.(memstore.SessionOwnership)
 	for sessionKey, locs := range bySession {
+		if hasOwnership && !owner.OwnsSession(sessionKey) {
+			// Another agent's JSONL store owns this session. Leaving the receipt
+			// absent lets the composite decide whether any backend covered it.
+			continue
+		}
 		matched := make([]bool, len(locs))
 		removed := 0
 		err := mutator.MutateHistory(ctx, sessionKey, func(history []providers.Message) ([]providers.Message, error) {
@@ -84,6 +94,12 @@ func (c *LocatorCleaner) CleanLocators(
 			out.Unavailable += len(locs)
 			out.Details = append(out.Details,
 				fmt.Sprintf("session %q: atomic rewrite failed: %v", sessionKey, err))
+			for _, loc := range locs {
+				out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+					Backend: "jsonl", LocatorKey: memstore.LocatorReceiptKey(loc),
+					State: memstore.ReceiptUnavailable, ReasonCode: "atomic_rewrite_failed",
+				})
+			}
 			continue
 		}
 		for i, loc := range locs {
@@ -92,7 +108,16 @@ func (c *LocatorCleaner) CleanLocators(
 				out.Details = append(out.Details,
 					fmt.Sprintf("session %q: root %s no longer matches (unverifiable)",
 						sessionKey, rootLabel(loc)))
+				out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+					Backend: "jsonl", LocatorKey: memstore.LocatorReceiptKey(loc),
+					State: memstore.ReceiptUnavailable, ReasonCode: "root_no_match",
+				})
+				continue
 			}
+			out.Receipts = append(out.Receipts, memstore.LocatorReceipt{
+				Backend: "jsonl", LocatorKey: memstore.LocatorReceiptKey(loc),
+				State: memstore.ReceiptRemoved, ReasonCode: "exact_root_match", Removed: 1,
+			})
 		}
 		if removed > 0 {
 			out.Removed += removed

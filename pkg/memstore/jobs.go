@@ -11,11 +11,13 @@ import (
 
 // Job states. Accepted forget work never gets dropped by capacity pressure.
 const (
-	JobPending = "pending"
-	JobRunning = "running"
-	JobDone    = "done"
-	JobFailed  = "failed"
-	JobBlocked = "blocked"
+	JobPending    = "pending"
+	JobRunning    = "running"
+	JobDone       = "done"
+	JobFailed     = "failed"
+	JobBlocked    = "blocked"
+	JobCancelled  = "cancelled"
+	JobSuperseded = "superseded"
 )
 
 // Job is one durable background unit: extraction, summary rebuild, cleanup or
@@ -202,6 +204,80 @@ func (s *Store) BlockJob(ctx context.Context, jobID, reason string) error {
 		`UPDATE memory_jobs SET state='blocked', last_error=?, lease_owner='', lease_until=NULL, updated_at=?
 		 WHERE job_id=?`, truncateRunes(reason, 200), s.now(), jobID)
 	return err
+}
+
+// RequeueJob creates a successor projection for a blocked, cancelled or failed
+// job without mutating the original audit row. The independent ledger intent
+// and its approval remain unchanged; only the cleanup execution is retried.
+func (s *Store) RequeueJob(ctx context.Context, jobID string) (*Job, error) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return nil, fmt.Errorf("memstore: job id is required")
+	}
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var old Job
+	var nextRun sql.NullInt64
+	var leaseUntil sql.NullInt64
+	err = tx.QueryRowContext(ctx,
+		`SELECT id,job_id,job_kind,input_fingerprint,generation,policy_revision,
+		        lease_owner,lease_until,state,attempts,next_run_at,priority,last_error,payload,
+		        created_at,updated_at
+		 FROM memory_jobs WHERE job_id=?`, jobID).
+		Scan(&old.ID, &old.JobID, &old.Kind, &old.InputFingerprint, &old.Generation,
+			&old.PolicyRevision, &old.LeaseOwner, &leaseUntil, &old.State, &old.Attempts,
+			&nextRun, &old.Priority, &old.LastError, &old.Payload, &old.CreatedAt, &old.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("memstore: job %q not found", jobID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch old.State {
+	case JobBlocked, JobCancelled, JobFailed:
+	default:
+		return nil, fmt.Errorf("memstore: job %q is %s and cannot be requeued", jobID, old.State)
+	}
+	newID := old.Kind + ":requeue:" + randomUUID()
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO memory_jobs
+		 (job_id,job_kind,input_fingerprint,generation,policy_revision,state,attempts,
+		  next_run_at,priority,last_error,payload,created_at,updated_at)
+		 VALUES(?,?,?,?,?,'pending',0,?,?,'',?,?,?)`,
+		newID, old.Kind, old.InputFingerprint, old.Generation, old.PolicyRevision,
+		now, old.Priority, old.Payload, now, now)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE memory_jobs SET state='superseded', last_error=?, updated_at=? WHERE job_id=?`,
+		"requeued as "+newID, now, jobID); err != nil {
+		return nil, err
+	}
+	if err := s.logOperation(ctx, tx, OperationLog{
+		Operation: "job_requeue", TargetEntryID: jobID, Reason: "owner requeue of blocked cleanup",
+		AffectedCount: 1, CreatedAt: now, ReasonCode: "job_requeue",
+	}); err != nil {
+		return nil, err
+	}
+	if err := s.bumpRevision(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	return &Job{
+		ID: id, JobID: newID, Kind: old.Kind, InputFingerprint: old.InputFingerprint,
+		Generation: old.Generation, PolicyRevision: old.PolicyRevision, State: JobPending,
+		Priority: old.Priority, Payload: old.Payload, CreatedAt: now, UpdatedAt: now,
+	}, nil
 }
 
 // ListJobs returns jobs, optionally filtered by state.
