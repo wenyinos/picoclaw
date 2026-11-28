@@ -76,20 +76,18 @@ func shouldAutoExtractMemoryForConfig(ts *turnState, cfg config.MemoryConfig) bo
 	return true
 }
 
-// extractMemoryAsync applies conservative rule-based extraction after a turn.
-// It never blocks the response path; database failures only log.
+// extractMemoryAsync persists a durable extraction reference after a turn. The
+// message text stays in the session backend; a keyed digest identifies it when
+// the worker runs. If the process dies, the job remains visible for the
+// periodic recovery worker.
 func (al *AgentLoop) extractMemoryAsync(
 	workspace string,
 	cfg config.MemoryConfig,
 	source memstore.ExtractSource,
-	userText, assistantText string,
-	turnAt time.Time,
+	userText string,
 ) {
 	if !cfg.Enabled || !cfg.AutoExtract || strings.TrimSpace(userText) == "" {
 		return
-	}
-	if turnAt.IsZero() {
-		turnAt = time.Now()
 	}
 	store, err := memstore.OpenForWorkspace(workspace, memstoreConfigFrom(cfg))
 	if err != nil {
@@ -99,26 +97,18 @@ func (al *AgentLoop) extractMemoryAsync(
 		})
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := store.RequireOperational(ctx); err != nil {
-			logger.DebugCF("memory", "extraction skipped until recovery completes", map[string]any{
-				"reason": err.Error(),
-			})
-			return
-		}
-		results, err := store.ExtractTurnWithSource(
-			ctx, source, userText, assistantText, turnAt, cfg.ReviewRequired)
+	materialize := func(ctx context.Context) {
+		jobID, err := store.EnqueueExtractionJob(ctx, source, userText)
 		if err != nil {
-			logger.DebugCF("memory", "extraction failed", map[string]any{"error": err.Error()})
+			logger.DebugCF("memory", "extraction enqueue failed", map[string]any{"error": err.Error()})
 			return
 		}
-		if len(results) > 0 {
-			logger.InfoCF("memory", "memories extracted", map[string]any{
-				"count":   len(results),
-				"session": source.SessionKey,
-			})
+		if jobID != "" {
+			logger.DebugCF("memory", "extraction job queued", map[string]any{"job_id": jobID})
+			go al.runExtractionJobs(context.Background())
 		}
-	}()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	materialize(ctx)
+	cancel()
 }

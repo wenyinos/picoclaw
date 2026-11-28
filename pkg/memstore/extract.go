@@ -92,6 +92,9 @@ func (s *Store) ExtractTurnWithSource(
 	turnAt time.Time,
 	reviewRequired bool,
 ) ([]AddResult, error) {
+	if err := s.RequireOperational(ctx); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(source.EventID) == "" {
 		return nil, fmt.Errorf("memstore: extraction source needs an origin event")
 	}

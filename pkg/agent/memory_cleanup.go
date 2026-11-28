@@ -174,6 +174,7 @@ func (al *AgentLoop) runForgetCleanup(ctx context.Context) {
 				"details":     len(outcome.Details),
 			})
 		}
+		al.runExtractionJobs(runCtx)
 	}
 
 	run()

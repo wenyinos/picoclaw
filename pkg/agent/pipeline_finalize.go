@@ -94,7 +94,7 @@ func (p *Pipeline) Finalize(
 	// not private evidence and must not enter the owner's profile (0.7.3).
 	// Async follow-ups carry session-derived tool output without trusted
 	// domain/source provenance, so they are never auto-extracted.
-	if shouldAutoExtractMemoryForConfig(ts, p.Cfg.Memory) {
+	if !ts.opts.NoHistory && shouldAutoExtractMemoryForConfig(ts, p.Cfg.Memory) {
 		nativeMessageID := strings.TrimSpace(ts.opts.Dispatch.MessageID())
 		if nativeMessageID == "" {
 			nativeMessageID = ts.turnID
@@ -106,7 +106,7 @@ func (p *Pipeline) Finalize(
 			EventID: originID, OriginRevision: 1, Backend: "jsonl",
 			Locator: ts.sessionKey, SessionKey: ts.sessionKey, MessageID: nativeMessageID,
 			Role: "user", EventAt: turnAt.UnixMilli(), DomainID: memstore.DomainLegacyUnassigned,
-		}, ts.userMessage, finalContent, turnAt)
+		}, ts.userMessage)
 	}
 
 	// If streaming never became visible, keep the legacy Pico interim publish path
