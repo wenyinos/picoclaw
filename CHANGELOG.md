@@ -18,6 +18,8 @@
 - **共享 Store 生命周期修复**：`runRecoveryPreflight` 不再关闭 `OpenForWorkspace` 返回的进程级缓存 Store，修复预检后 `sql: database is closed` 及重启仍无效的问题。
 - 新增 `GET /api/memory/upgrade/preview` 与 `POST /api/memory/upgrade/apply`；OpenAPI 同步。
 - 任务状态新增 `legacy_closed`，恢复状态显示历史结案数但不把它当作 blocker。
+- **修复设置页保存失败**：`available_channels` 是 GET 时计算出的只读字段，前端不再回传，后端在合并设置时忽略它，不再报 `json: unknown field "available_channels"`；补充 GET→PUT 整包往返测试。
+- **设置生效提示**：保存后提示 gateway 需 `/reload` 或重启才应用（`gateway.hot_reload` 默认关闭）。
 
 ### 测试
 

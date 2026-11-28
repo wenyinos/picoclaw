@@ -272,6 +272,8 @@ PUT    /api/memory/settings
 POST   /api/memory/compact
 POST   /api/memory/repair/preview
 POST   /api/memory/repair/apply
+GET    /api/memory/upgrade/preview
+POST   /api/memory/upgrade/apply
 GET    /api/memory/migration/status
 POST   /api/memory/migration/apply
 GET    /api/memory/ops
