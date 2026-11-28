@@ -19,10 +19,18 @@ func newTestEngine(t *testing.T) *Engine {
 		t.Fatalf("migration: %v", err)
 	}
 	store := &Store{db: db}
-	return &Engine{
-		store:  store,
-		config: Config{},
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	eng := &Engine{
+		store:     store,
+		config:    Config{},
+		assembler: &Assembler{store: store, config: Config{}},
+		compaction: &CompactionEngine{
+			store: store, config: Config{}, shutdownCtx: shutdownCtx,
+			shutdownCancel: shutdownCancel,
+		},
 	}
+	eng.compaction.sessionLock = eng.getSessionMutex
+	return eng
 }
 
 func prepareBootstrapRepairConversation(
@@ -1957,8 +1965,7 @@ func TestSelectShallowestCondensationWithNonConsecutiveDepths(t *testing.T) {
 		}
 	}
 
-	// Initialize compaction engine (lazy init)
-	e.initCompactionOnce()
+	// Compaction is initialized with the engine.
 
 	// Call selectShallowestCondensationCandidate
 	candidates, err := e.compaction.selectShallowestCondensationCandidate(ctx, conv.ConversationID, false)

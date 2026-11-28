@@ -57,9 +57,7 @@ const numSessionShards = 256
 type Engine struct {
 	store             *Store
 	compaction        *CompactionEngine
-	compactionMu      sync.Mutex
 	assembler         *Assembler
-	assemblerMu       sync.Mutex
 	retrieval         *RetrievalEngine
 	config            Config
 	complete          CompleteFn
@@ -140,16 +138,25 @@ func NewEngine(config Config, completeFn CompleteFn) (*Engine, error) {
 
 	retrieval := &RetrievalEngine{store: store, config: config}
 
-	return &Engine{
-		store:             store,
-		compaction:        nil,
-		assembler:         nil,
-		retrieval:         retrieval,
-		config:            config,
-		complete:          completeFn,
-		ignorePatterns:    compileSessionPatterns(ignorePatterns),
-		statelessPatterns: compileSessionPatterns(config.StatelessSessionPatterns),
-	}, nil
+	engine := &Engine{
+		store:     store,
+		assembler: &Assembler{store: store, config: config},
+		retrieval: retrieval,
+		config:    config,
+		complete:  completeFn,
+	}
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	engine.compaction = &CompactionEngine{
+		store:          store,
+		config:         config,
+		complete:       completeFn,
+		shutdownCtx:    shutdownCtx,
+		shutdownCancel: shutdownCancel,
+		sessionLock:    engine.getSessionMutex,
+	}
+	engine.ignorePatterns = compileSessionPatterns(ignorePatterns)
+	engine.statelessPatterns = compileSessionPatterns(config.StatelessSessionPatterns)
+	return engine, nil
 }
 
 // compileSessionPattern converts a glob pattern to a compiled regex.
@@ -337,7 +344,6 @@ func (e *Engine) Assemble(ctx context.Context, sessionKey string, input Assemble
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 
-	e.initAssemblerOnce()
 	return e.assembler.Assemble(ctx, conv.ConversationID, input)
 }
 
@@ -355,7 +361,6 @@ func (e *Engine) Compact(ctx context.Context, sessionKey string, input CompactIn
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 
-	e.initCompactionOnce()
 	return e.compaction.Compact(ctx, conv.ConversationID, input)
 }
 
@@ -374,38 +379,7 @@ func (e *Engine) CompactUntilUnder(ctx context.Context, sessionKey string, budge
 		return nil, fmt.Errorf("get conversation: %w", err)
 	}
 
-	e.initCompactionOnce()
 	return e.compaction.CompactUntilUnder(ctx, conv.ConversationID, budget)
-}
-
-// initCompactionOnce lazily initializes the compaction engine.
-func (e *Engine) initCompactionOnce() {
-	if e.compaction == nil {
-		e.compactionMu.Lock()
-		defer e.compactionMu.Unlock()
-		if e.compaction == nil {
-			shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
-			e.compaction = &CompactionEngine{
-				store:          e.store,
-				config:         e.config,
-				complete:       e.complete,
-				shutdownCtx:    shutdownCtx,
-				shutdownCancel: shutdownCancel,
-				sessionLock:    e.getSessionMutex,
-			}
-		}
-	}
-}
-
-// initAssemblerOnce lazily initializes the assembler.
-func (e *Engine) initAssemblerOnce() {
-	if e.assembler == nil {
-		e.assemblerMu.Lock()
-		defer e.assemblerMu.Unlock()
-		if e.assembler == nil {
-			e.assembler = &Assembler{store: e.store, config: e.config}
-		}
-	}
 }
 
 // IngestMessages is an alias for Ingest.
